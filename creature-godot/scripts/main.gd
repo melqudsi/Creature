@@ -5,8 +5,36 @@ extends Node3D
 @onready var hud: Control = $CanvasLayer/SC2Hud
 @onready var pain_test: Node = $PainTest
 
+const ONBOARDING_SCENE := preload("res://scenes/ui/creature_create.tscn")
+
+var _onboarding: Control
+var _world_started := false
+
 func _ready() -> void:
 	await NetworkService.boot()
+	if GameState.player_data.is_empty():
+		_show_onboarding()
+		return
+	_enter_world()
+
+func _show_onboarding() -> void:
+	hud.visible = false
+	_onboarding = ONBOARDING_SCENE.instantiate() as Control
+	$CanvasLayer.add_child(_onboarding)
+	if _onboarding.has_signal("profile_ready"):
+		_onboarding.profile_ready.connect(_on_profile_ready)
+
+func _on_profile_ready() -> void:
+	if _onboarding and is_instance_valid(_onboarding):
+		_onboarding.queue_free()
+	_onboarding = null
+	_enter_world()
+
+func _enter_world() -> void:
+	if _world_started:
+		return
+	_world_started = true
+	hud.visible = true
 	world_map.spawn_player()
 	if NetworkService.is_online():
 		NetworkService.start_creature_poll(world_map)
@@ -42,6 +70,8 @@ func _is_ui_pointer_event(event: InputEvent) -> bool:
 		screen_pos = event.position
 	else:
 		return false
+	if _onboarding and is_instance_valid(_onboarding) and _onboarding.visible:
+		return true
 	if hud.has_method("consumes_pointer_at") and hud.consumes_pointer_at(screen_pos):
 		return true
 	return false

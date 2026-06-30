@@ -104,13 +104,8 @@ func _boot_online() -> bool:
 		_last_error = "Auth succeeded but user id was empty"
 		return false
 	var row := await fetch_my_creature(user_id)
-	var is_new_player := row.is_empty()
-	if is_new_player:
-		row = await create_creature(_new_creature_row(user_id))
-		if row.is_empty():
-			_online = false
-			return false
-	GameState.player_data = db_row_to_player_data(row)
+	if not row.is_empty():
+		GameState.player_data = db_row_to_player_data(row)
 	return true
 
 func ensure_auth() -> bool:
@@ -130,6 +125,44 @@ func fetch_my_creature(user_id: String) -> Dictionary:
 		return {}
 	return rows[0]
 
+func fetch_creature_by_name(profile_name: String) -> Dictionary:
+	var path := "/rest/v1/creatures?name=eq.%s&select=*&limit=1" % profile_name.uri_encode()
+	var resp := await _rest_request(HTTPClient.METHOD_GET, path)
+	if not resp.ok:
+		_last_error = "fetch creature by name: %s" % resp.error
+		push_warning("fetch_creature_by_name failed: %s" % resp.error)
+		return {}
+	var rows: Variant = resp.data
+	if typeof(rows) != TYPE_ARRAY or rows.is_empty():
+		return {}
+	return rows[0]
+
+func register_or_claim_profile(profile_name: String, color: Color) -> Dictionary:
+	var cleaned_name := profile_name.strip_edges().substr(0, GameConfig.NAME_MAX_LEN)
+	if cleaned_name.is_empty():
+		cleaned_name = GameConfig.DEFAULT_CREATURE_NAME
+	if not _online and not await _boot_online():
+		var local := GameConfig.default_player_data()
+		local["name"] = cleaned_name
+		local["color"] = color
+		GameState.player_data = local
+		return local
+
+	var existing := await fetch_creature_by_name(cleaned_name)
+	if not existing.is_empty():
+		var claimed := await claim_creature(existing)
+		if not claimed.is_empty():
+			GameState.player_data = db_row_to_player_data(claimed)
+			return GameState.player_data
+		return {}
+
+	var row := _new_creature_row(get_user_id(), cleaned_name, color)
+	var created := await create_creature(row)
+	if created.is_empty():
+		return {}
+	GameState.player_data = db_row_to_player_data(created)
+	return GameState.player_data
+
 func create_creature(row: Dictionary) -> Dictionary:
 	var headers_extra := PackedStringArray(["Prefer: return=representation"])
 	var resp := await _rest_request(HTTPClient.METHOD_POST, "/rest/v1/creatures", row, headers_extra)
@@ -143,6 +176,26 @@ func create_creature(row: Dictionary) -> Dictionary:
 		return resp.data
 	return {}
 
+func claim_creature(row: Dictionary) -> Dictionary:
+	var id := str(row.get("id", ""))
+	if id.is_empty() or get_user_id().is_empty():
+		return {}
+	var patch := {
+		"user_id": get_user_id(),
+		"last_active": _iso_now(),
+		"updated_at": _iso_now(),
+	}
+	return await _patch_creature_returning("/rest/v1/creatures?id=eq.%s" % id.uri_encode(), patch)
+
+func delete_creature_profile(creature_id: String) -> bool:
+	if not _online or creature_id.is_empty():
+		return false
+	var resp := await _rest_request(HTTPClient.METHOD_DELETE, "/rest/v1/creatures?id=eq.%s" % creature_id.uri_encode())
+	if not resp.ok:
+		push_warning("delete_creature_profile failed: %s" % resp.error)
+		return false
+	return true
+
 func update_creature(id: String, patch: Dictionary) -> void:
 	if not _online or id.is_empty():
 		return
@@ -152,6 +205,19 @@ func update_creature(id: String, patch: Dictionary) -> void:
 	var resp := await _rest_request(HTTPClient.METHOD_PATCH, path, body)
 	if not resp.ok:
 		push_warning("update_creature failed: %s" % resp.error)
+
+func _patch_creature_returning(path: String, patch: Dictionary) -> Dictionary:
+	var headers_extra := PackedStringArray(["Prefer: return=representation"])
+	var resp := await _rest_request(HTTPClient.METHOD_PATCH, path, patch, headers_extra)
+	if not resp.ok:
+		_last_error = "patch creature: %s" % resp.error
+		push_warning("_patch_creature_returning failed: %s" % resp.error)
+		return {}
+	if typeof(resp.data) == TYPE_ARRAY and not resp.data.is_empty():
+		return resp.data[0]
+	if typeof(resp.data) == TYPE_DICTIONARY:
+		return resp.data
+	return {}
 
 func save_creature_position(creature_id: String, x: float, y: float, flush_now: bool = false) -> void:
 	if not _online or creature_id.is_empty():
@@ -195,12 +261,13 @@ func creature_to_dict(creature: Creature) -> Dictionary:
 		"size_level": creature.size_level,
 	}
 
-func _new_creature_row(user_id: String) -> Dictionary:
+func _new_creature_row(user_id: String, profile_name: String = "", color: Color = GameConfig.DEFAULT_CREATURE_COLOR) -> Dictionary:
 	var defaults := GameConfig.default_player_data()
+	var final_name := profile_name if not profile_name.is_empty() else str(defaults["name"])
 	return {
 		"user_id": user_id,
-		"name": defaults["name"],
-		"color": GameConfig.color_to_hex(defaults["color"]),
+		"name": final_name,
+		"color": GameConfig.color_to_hex(color),
 		"appearance": DB_APPEARANCE,
 		"x": defaults["x"],
 		"y": defaults["y"],

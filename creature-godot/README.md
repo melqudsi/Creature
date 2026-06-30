@@ -2,7 +2,7 @@
 
 Local-first 3D port pivoting from the web Creature game. Isometric RTS camera with procedural worm assets.
 
-**Current scope:** default worm, fluid movement, A* pathfinding, **Supabase session save**, **live field** (other players via 1.5s REST poll). Camera starts fully zoomed in. Name-only HUD + pain test button. PWA supports portrait and landscape. No health/stamina, fight, eat, or customization.
+**Current scope:** onboarding spawn screen (name + color), default worm, fluid movement, A* pathfinding, **Supabase session save**, **live field** (other players via 1.5s REST poll). Camera starts fully zoomed in. Name-only HUD + admin panel. PWA supports portrait and landscape. No health/stamina, fight, eat, or appearance customization.
 
 ## Requirements
 
@@ -18,7 +18,8 @@ Boot chain:
 
 ```
 main.gd _ready()
-  → await NetworkService.boot()              # auth + load/create creatures row
+  → await NetworkService.boot()              # auth + load existing session profile
+  → show onboarding if no profile exists     # name + color
   → world_map.spawn_player()                 # spawn at saved x,y
   → NetworkService.start_creature_poll(...)  # when online
   → camera follow
@@ -31,7 +32,7 @@ Boot is silent on success (no save/restore toasts). Offline boot toasts **"Could
 | Input | Action |
 |-------|--------|
 | Tap / click ground | Move creature |
-| **pain test** (top-right) | 30s stress test |
+| **admin** (top-right) | Pain test controls + profile deletion |
 | Pinch / mouse wheel | Zoom camera (starts fully zoomed in) |
 | WASD / screen edge | Pan camera |
 
@@ -43,10 +44,11 @@ Boot is silent on success (no save/restore toasts). Offline boot toasts **"Could
 | Fluid movement + A* pathfinding | Done |
 | Supabase anonymous session + position save | Done |
 | Live field: poll + render other players | Done |
+| Onboarding spawn screen: name + color | Done |
+| Admin panel: configurable pain test + profile deletion | Done |
 | Top stat bar (name only) | Done |
 | Mobile web tap + pinch | Done |
 | PWA portrait + landscape (no forced landscape) | Done |
-| Pain test stress button | Done |
 | Health / stamina | **Removed** |
 | Creature create / fight / eat / AI / minimap | Removed or bypassed |
 
@@ -58,7 +60,8 @@ Boot is silent on success (no save/restore toasts). Offline boot toasts **"Could
 |------|------|
 | Auth | Anonymous sign-in or refresh; session persisted |
 | Load | `GET /rest/v1/creatures?user_id=eq.<uuid>` |
-| Create | Insert row on first visit (defaults from `GameConfig.default_player_data()`) |
+| Onboarding | If no row exists for the session, ask for name + color |
+| Create / claim | Insert a new row, or claim an existing typed name by changing its `user_id` |
 | Save | Debounced `PATCH {x, y}` on move; flush when path completes |
 | Poll | `GET /rest/v1/creatures?select=*` every 1.5s → `world_map.sync_remote_creatures()` |
 
@@ -81,6 +84,8 @@ Boot is silent on success (no save/restore toasts). Offline boot toasts **"Could
 Godot re-export may flip these — verify after each export.
 
 **DB appearance:** inserts use `"cute"` (schema constraint); client renders worm. Optional SQL: [`../supabase/migration-godot-session.sql`](../supabase/migration-godot-session.sql).
+
+**Temporary profile migration:** name-claim login and admin profile deletion require [`../supabase/migration-temp-profile-admin.sql`](../supabase/migration-temp-profile-admin.sql). It is intentionally permissive and should be replaced by passkeys/password phrases before shipping.
 
 Keys: [`scripts/config.gd`](scripts/config.gd) (`SUPABASE_URL`, `SUPABASE_ANON_KEY`) — same publishable key as [`../js/config.example.js`](../js/config.example.js).
 
@@ -105,7 +110,11 @@ Procedural in [`scripts/units/creature.gd`](scripts/units/creature.gd). Segments
 
 ## Pain test
 
-[`scripts/debug/pain_test.gd`](scripts/debug/pain_test.gd) — 20 wandering worms + 50 props for 30s. Top-right HUD button.
+[`scripts/debug/pain_test.gd`](scripts/debug/pain_test.gd) — configurable wandering worms + props for 30s. Launched from the top-right **admin** panel.
+
+## Map
+
+`GameConfig` sets a **32×24** map with 16 tree tiles and 6 building tiles. `GameState.blocked_tiles` includes trees and buildings; `world_map.gd` renders both as simple procedural props.
 
 ## PWA / mobile orientation
 
@@ -117,14 +126,15 @@ Procedural in [`scripts/units/creature.gd`](scripts/units/creature.gd). Segments
 
 | File | Role |
 |------|------|
-| `scripts/main.gd` | Async boot, pointer forwarding, starts creature poll |
-| `scripts/autoload/network_service.gd` | Supabase REST, web bridge, poll loop |
+| `scripts/main.gd` | Async boot, onboarding, pointer forwarding, starts creature poll |
+| `scripts/autoload/network_service.gd` | Supabase REST, web bridge, profile create/claim/delete, poll loop |
 | `scripts/autoload/game_state.gd` | Player data, creatures registry |
 | `scripts/world/world_map.gd` | Map, `spawn_player()`, `sync_remote_creatures()` |
 | `scripts/units/creature.gd` | Worm mesh, movement, remote interpolation |
 | `scripts/world/grid_nav.gd` | Pathfinding |
 | `scripts/camera/rts_camera.gd` | Tap-to-move, zoom (starts at `zoom_min`) |
-| `scripts/ui/sc2_hud.gd` | Name bar + pain test |
+| `scripts/ui/creature_create.gd` | Onboarding name/color screen |
+| `scripts/ui/sc2_hud.gd` | Name bar + admin panel |
 | `web/custom_shell.html` | PWA shell, dev mode, **CreatureNet** |
 
 ## Web export
@@ -138,9 +148,9 @@ Dev mode on `:8443` / `:8080` clears service worker cache (no incognito needed).
 
 ## Agent handoff — next tasks
 
-1. Remote player names on HUD / minimap
-2. Re-enable customization or new create flow for pivot game
-3. Account linking (passkey / email) atop anonymous sessions
+1. Replace temporary name-claim login with passkeys/password phrases
+2. Remote player names on HUD / minimap
+3. Re-enable appearance customization for pivot game
 4. Fight/eat ported to Godot (if pivot needs them)
 5. Worm polish, new gameplay systems for pivot direction
 

@@ -1,5 +1,7 @@
 extends Control
 
+signal profile_ready
+
 @onready var name_edit: LineEdit = $Panel/NameEdit
 @onready var preview_viewport: SubViewport = $Panel/PreviewFrame/PreviewViewport
 @onready var preview_camera: Camera3D = $Panel/PreviewFrame/PreviewViewport/PreviewCamera
@@ -7,6 +9,8 @@ extends Control
 @onready var ugly_btn: Button = $Panel/AppearanceRow/UglyBtn
 @onready var summon_btn: Button = $Panel/SummonBtn
 @onready var color_row: HBoxContainer = $Panel/ColorRow
+@onready var appearance_row: HBoxContainer = $Panel/AppearanceRow
+@onready var status_label: Label = get_node_or_null("Panel/StatusLabel") as Label
 
 var _appearance := "cute"
 var _color := GameConfig.CREATURE_COLORS[0]
@@ -16,6 +20,7 @@ const CREATURE_SCENE := preload("res://scenes/units/creature.tscn")
 
 func _ready() -> void:
 	theme = preload("res://assets/themes/sc2_theme.tres")
+	appearance_row.visible = false
 	cute_btn.pressed.connect(func(): _set_appearance("cute"))
 	ugly_btn.pressed.connect(func(): _set_appearance("ugly"))
 	summon_btn.pressed.connect(_on_summon)
@@ -96,21 +101,20 @@ func _set_color(c: Color) -> void:
 
 func _on_summon() -> void:
 	var n := name_edit.text.strip_edges()
-	if n.is_empty():
-		n = "Blob"
 	n = n.substr(0, GameConfig.NAME_MAX_LEN)
-	var row := {
-		"id": "local_player",
-		"name": n,
-		"color": _color,
-		"appearance": _appearance,
-		"x": GameConfig.MAP_W / 2,
-		"y": GameConfig.MAP_H / 2,
-		"health": 100,
-		"stamina": 10,
-		"size_level": 1,
-		"is_player": true,
-	}
-	GameState.player_data = row
-	NetworkService.create_creature(row)
-	get_tree().change_scene_to_file("res://scenes/main.tscn")
+	if n.is_empty():
+		_set_status("Name required")
+		return
+	summon_btn.disabled = true
+	_set_status("Checking profile...")
+	var profile := await NetworkService.register_or_claim_profile(n, _color)
+	if profile.is_empty():
+		_set_status("Could not create or claim profile")
+		summon_btn.disabled = false
+		return
+	_set_status("Welcome, %s" % profile.get("name", n))
+	profile_ready.emit()
+
+func _set_status(message: String) -> void:
+	if status_label:
+		status_label.text = message

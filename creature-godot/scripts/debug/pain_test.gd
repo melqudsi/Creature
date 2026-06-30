@@ -15,15 +15,15 @@ var _props_root: Node3D
 func is_active() -> bool:
 	return _active
 
-func start() -> void:
+func start(creature_count: int = CREATURE_COUNT, prop_count: int = PROP_COUNT) -> void:
 	if _active:
 		return
 	_active = true
 	_time_left = DURATION_SEC
 	_ensure_props_root()
-	_spawn_creatures()
-	_spawn_props()
-	GameState.show_toast("Pain test: %d creatures, %d props for %ds" % [CREATURE_COUNT, PROP_COUNT, int(DURATION_SEC)])
+	_spawn_creatures(maxi(0, creature_count))
+	_spawn_props(maxi(0, prop_count))
+	GameState.show_toast("Pain test: %d creatures, %d props for %ds" % [creature_count, prop_count, int(DURATION_SEC)])
 
 func _process(delta: float) -> void:
 	if not _active:
@@ -55,8 +55,8 @@ func _ensure_props_root() -> void:
 	_props_root.name = "PainTestProps"
 	_world_map.add_child(_props_root)
 
-func _spawn_creatures() -> void:
-	for i in CREATURE_COUNT:
+func _spawn_creatures(creature_count: int) -> void:
+	for i in creature_count:
 		var tile := _random_open_tile()
 		var data := {
 			"id": "pain_test_%d_%d" % [Time.get_ticks_msec(), i],
@@ -78,8 +78,8 @@ func _spawn_creatures() -> void:
 			ai.wander_interval_max = 1.8
 		_spawned_creatures.append(creature)
 
-func _spawn_props() -> void:
-	for i in PROP_COUNT:
+func _spawn_props(prop_count: int) -> void:
+	for i in prop_count:
 		var prop := _make_random_prop()
 		prop.name = "PainProp_%d" % i
 		_props_root.add_child(prop)

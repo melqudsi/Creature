@@ -23,10 +23,14 @@ All gameplay constants live in [`scripts/config.gd`](../scripts/config.gd) (`Gam
 
 1. Load `user://supabase_session.json` (refresh token + user id)
 2. Refresh session via `POST /auth/v1/token?grant_type=refresh_token`, or anonymous `POST /auth/v1/signup`
-3. `GET /rest/v1/creatures?user_id=eq.<uuid>` — restore last `x`, `y`
-4. Insert row on first visit; debounced `PATCH` on movement (~1.5s + flush on path complete)
+3. `GET /rest/v1/creatures?user_id=eq.<uuid>` — restore profile + last `x`, `y`
+4. If no profile exists, onboarding asks for name + color
+5. `register_or_claim_profile()` inserts a new row, or claims a typed existing name by PATCHing `user_id`
+6. Debounced `PATCH` on movement (~1.5s + flush on path complete)
 
 Same publishable key as [`js/config.example.js`](../../js/config.example.js). See [`docs/supabase-multiplayer-guide.md`](../../docs/supabase-multiplayer-guide.md).
+
+**Temporary DB note:** name-claim login and admin profile deletion require [`../../supabase/migration-temp-profile-admin.sql`](../../supabase/migration-temp-profile-admin.sql). It is intentionally permissive and should be replaced by real auth.
 
 **Not implemented yet:** fight/eat, events inbox, web+Godot unified gameplay rules.
 
@@ -46,7 +50,8 @@ Local player row is skipped (matched by `NetworkService.get_user_id()`).
 
 ```
 main.gd _ready()
-  → await NetworkService.boot()              # auth + load/create creature row
+  → await NetworkService.boot()              # auth + load existing session profile
+  → show onboarding if no profile exists     # name + color, create/claim row
   → world_map.spawn_player()                 # spawn at saved x,y
   → NetworkService.start_creature_poll(...)  # when online
   → camera follow
@@ -56,5 +61,5 @@ main.gd _ready()
 
 - No fight/eat/stamina in Godot client
 - Remote worms visible but names not on HUD/minimap
-- Passkey / account linking not implemented
+- Passkey / account linking not implemented; temporary name-claim login is insecure
 - Health/stamina removed from Godot client (DB columns remain for legacy web)

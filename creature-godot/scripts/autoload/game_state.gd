@@ -13,6 +13,8 @@ var blocked_tiles: Array[Vector2i] = []
 func _ready() -> void:
 	for pos in GameConfig.TREE_POSITIONS:
 		blocked_tiles.append(pos)
+	for pos in GameConfig.BUILDING_POSITIONS:
+		blocked_tiles.append(pos)
 
 func register_creature(creature: Creature, data: Dictionary, is_player: bool = false) -> void:
 	var id: String = data.get("id", str(creature.get_instance_id()))
@@ -21,6 +23,7 @@ func register_creature(creature: Creature, data: Dictionary, is_player: bool = f
 	if is_player:
 		player_creature = creature
 		player_data = data.duplicate(true)
+		player_stats_changed.emit()
 	creature_registered.emit(creature, is_player)
 
 func unregister_creature(creature_id: String) -> void:

@@ -80,13 +80,13 @@ Constants in web `js/game.js` and Godot `scripts/config.gd` (`GameConfig`):
 
 | Rule | Value |
 |------|-------|
-| Map | 20×15 tiles, 6 trees |
+| Map | 32×24 tiles, 16 trees, 6 buildings |
 | Move speed | 1 tile/sec (Godot); web also has stamina rules |
 | Name | Max 10 chars |
 
 **Web only (live):** fight, eat, stamina, AFK sleep, grow, multiplayer polling, follow camera, tap-to-move.
 
-**Godot only (current scope):** default dark-gray worm, **fluid A\*** movement, tap/click + pinch zoom, **Supabase session save** (restore last `x,y` on return), **other players visible** via REST poll. Camera **starts fully zoomed in**. Top bar shows name only — **health/stamina removed**. **Pain test** stress button. No customization, fight, eat, or persistent AI.
+**Godot only (current scope):** onboarding spawn screen (name + color), default worm, **fluid A\*** movement, tap/click + pinch zoom, **Supabase session save** (restore last profile on return), **other players visible** via REST poll. Camera **starts fully zoomed in**. Top bar shows name only — **health/stamina removed**. Admin panel contains configurable pain test + profile deletion. No fight, eat, or persistent AI.
 
 ---
 
@@ -126,7 +126,7 @@ Keys: `js/config.example.js` (committed for GitHub Pages). Publishable key only.
 
 ## Godot client (`creature-godot/`)
 
-Godot **4.7+**, Forward+. **Boot flow:** `main.gd` → `await NetworkService.boot()` (auth + load/create creature row) → `world_map.spawn_player()` at saved `x,y`.
+Godot **4.7+**, Forward+. **Boot flow:** `main.gd` → `await NetworkService.boot()` (auth + load existing session profile) → onboarding if no profile, otherwise `world_map.spawn_player()` at saved `x,y`.
 
 ### Current feature set
 
@@ -139,9 +139,10 @@ Godot **4.7+**, Forward+. **Boot flow:** `main.gd` → `await NetworkService.boo
 | Supabase anonymous session + position save | Done |
 | Live field: poll + render other players | Done |
 | Top stat bar (name only) | Done |
-| Pain test stress button (20 wanderers + 50 props, 30s) | Done |
+| Onboarding spawn screen: name + color | Done |
+| Admin panel: configurable pain test + profile deletion | Done |
 | PWA portrait + landscape (no forced landscape lock) | Done |
-| Creature create / customization | **Bypassed** |
+| Creature appearance customization | **Bypassed** |
 | Health / stamina (Godot) | **Removed** |
 | Fight / eat / persistent AI | **Removed** |
 
@@ -168,14 +169,18 @@ To tune the silhouette, edit `SEGMENT_SPECS` (z spacing, radius, length overlap)
 Implemented in [`scripts/autoload/network_service.gd`](creature-godot/scripts/autoload/network_service.gd):
 
 1. **Anonymous auth** — refresh token in `user://supabase_session.json` (editor) or `localStorage` key `creature_supabase_session` (web via `CreatureNet` in `custom_shell.html`)
-2. **Load/create** — `GET /rest/v1/creatures?user_id=eq.<uuid>`; insert on first visit
-3. **Save position** — debounced `PATCH` on `{x, y}` while moving; flush on path complete / exit
+2. **Load session profile** — `GET /rest/v1/creatures?user_id=eq.<uuid>`; existing sessions skip onboarding
+3. **Onboarding** — if no profile exists, `creature_create.gd` asks for name + color
+4. **Create or claim** — `NetworkService.register_or_claim_profile()` creates a new row, or claims an existing typed name by updating its `user_id` to the current anonymous session
+5. **Save position** — debounced `PATCH` on `{x, y}` while moving; flush on path complete / exit
 
 **DB note:** new rows use `appearance: "cute"` in Postgres (schema constraint); client always renders **worm**. Optional: run [`supabase/migration-godot-session.sql`](supabase/migration-godot-session.sql) to allow `worm` in DB.
 
 **Web export critical:** Supabase calls use browser `fetch` through `window.CreatureNet` in [`web/custom_shell.html`](creature-godot/web/custom_shell.html) — Godot `HTTPRequest` alone fails in wasm due to cross-origin isolation. Export preset must have `progressive_web_app/ensure_cross_origin_isolation_headers=false`. **Re-export after editing `custom_shell.html`.**
 
 Boot is silent on success (no “new player” / “restored save” toasts). Offline boot still toasts **"Could not reach server — starting locally"**.
+
+**Temporary profile migration:** name-claim login and admin delete require [`supabase/migration-temp-profile-admin.sql`](supabase/migration-temp-profile-admin.sql). It intentionally allows broad update/delete by authenticated anonymous users and must be replaced by passkeys/password phrases before shipping.
 
 ### Live multiplayer (Godot)
 
@@ -188,14 +193,15 @@ Same poll interval as web (`GameConfig.POLL_OTHERS_SEC` = 1.5s):
 
 Test with two sessions (editor + browser, or two phones on `https://<ip>:8443`).
 
-### Mobile stress test (“pain test”)
+### Admin panel + mobile stress test
 
-Top-right HUD button in [`scripts/ui/sc2_hud.gd`](creature-godot/scripts/ui/sc2_hud.gd), logic in [`scripts/debug/pain_test.gd`](creature-godot/scripts/debug/pain_test.gd):
+Top-right **admin** button in [`scripts/ui/sc2_hud.gd`](creature-godot/scripts/ui/sc2_hud.gd), pain-test logic in [`scripts/debug/pain_test.gd`](creature-godot/scripts/debug/pain_test.gd):
 
-- Spawns **20** temporary wandering worms + **50** random props (cubes, spheres, pyramids, cylinders)
+- Configurable worm/object counts (defaults **20** worms + **50** props)
 - Auto-despawns after **30 seconds**
+- Profile list can refresh and delete stored creature profiles (requires temporary Supabase migration above)
 - Use on phone after web export to gauge FPS / input lag; pair with Godot **Profiler → Monitors** for deeper analysis
-- `main.gd` blocks ground taps over the button rect so it works on touch web
+- `main.gd` / HUD consume touches over onboarding/admin UI so controls do not leak to the map
 
 ### Key files for agents
 
@@ -208,14 +214,14 @@ Top-right HUD button in [`scripts/ui/sc2_hud.gd`](creature-godot/scripts/ui/sc2_
 | [`scripts/camera/rts_camera.gd`](creature-godot/scripts/camera/rts_camera.gd) | Tap-to-move, pinch zoom, raycast; starts at `zoom_min`; `_camera_offset()` scales full 3D offset by `_desired_distance` |
 | [`scripts/units/creature.gd`](creature-godot/scripts/units/creature.gd) | Worm mesh, fluid path movement, remote interpolation |
 | [`scripts/world/grid_nav.gd`](creature-godot/scripts/world/grid_nav.gd) | A* pathfinding, obstacle avoidance |
-| [`scripts/world/world_map.gd`](creature-godot/scripts/world/world_map.gd) | Terrain, ground collision, player spawn, `sync_remote_creatures()` |
-| [`scripts/ui/sc2_hud.gd`](creature-godot/scripts/ui/sc2_hud.gd) | Top bar + pain test button |
+| [`scripts/world/world_map.gd`](creature-godot/scripts/world/world_map.gd) | Terrain, trees/buildings, ground collision, player spawn, `sync_remote_creatures()` |
+| [`scripts/ui/sc2_hud.gd`](creature-godot/scripts/ui/sc2_hud.gd) | Top bar + admin panel |
 | [`scripts/debug/pain_test.gd`](creature-godot/scripts/debug/pain_test.gd) | Mobile stress test spawner |
 | [`scripts/autoload/network_service.gd`](creature-godot/scripts/autoload/network_service.gd) | Supabase REST + web `CreatureNet` bridge |
 | [`web/custom_shell.html`](creature-godot/web/custom_shell.html) | PWA shell, dev mode, **CreatureNet** fetch bridge |
 | [`export_presets.cfg`](creature-godot/export_presets.cfg) | Web export preset |
 
-Legacy (unused in current boot flow): [`scripts/ui/creature_create.gd`](creature-godot/scripts/ui/creature_create.gd), [`scenes/ui/creature_create.tscn`](creature-godot/scenes/ui/creature_create.tscn).
+Onboarding: [`scripts/ui/creature_create.gd`](creature-godot/scripts/ui/creature_create.gd), [`scenes/ui/creature_create.tscn`](creature-godot/scenes/ui/creature_create.tscn).
 
 Details: [`creature-godot/README.md`](creature-godot/README.md)
 
@@ -284,7 +290,7 @@ Touch handling lives in `rts_camera.gd` + input forwarding in `main.gd`:
 - **Click marker:** brief flash via `world_map.show_click_marker()` confirms tap registered
 - **Project setting:** `input_devices/pointing/emulate_mouse_from_touch=true` (touch also arrives as emulated mouse; debounced)
 
-**Spawn screen (legacy):** `creature_create.gd` still exists if customization is re-enabled. On web it calls `DisplayServer.virtual_keyboard_show()` — do **not** use `DisplayServer.VIRTUAL_KEYBOARD_TYPE_DEFAULT` (Godot 4.7 compile error). Preview creature uses `setup.call_deferred()` and id `"preview"` to skip grid registration.
+**Onboarding screen:** `creature_create.gd` runs before spawning when no profile exists for the session. It calls `DisplayServer.virtual_keyboard_show()` on web — do **not** use `DisplayServer.VIRTUAL_KEYBOARD_TYPE_DEFAULT` (Godot 4.7 compile error). Preview creature uses `setup.call_deferred()` and id `"preview"` to skip grid registration.
 
 ### Mobile fullscreen / PWA
 
@@ -303,7 +309,7 @@ Use `class_name Creature` and typed references. Generic `Node3D` + `grid_pos` ca
 ## Phase 2 / not implemented
 
 - [ ] Re-add fight/eat to Godot (removed intentionally for pivot)
-- [ ] Re-enable creature customization / create screen
+- [ ] Re-enable creature appearance customization
 - [ ] Passkey / account linking (upgrade anonymous session)
 - [ ] Shared world: web + Godot players together (both poll same table; not yet unified gameplay)
 - [ ] Remote player names on HUD / minimap
@@ -321,6 +327,9 @@ Use `class_name Creature` and typed references. Generic `Node3D` + `grid_pos` ca
 - [x] Live field: poll + render other players (1.5s REST)
 - [x] Camera starts fully zoomed in; silent boot (no save/restore toasts)
 - [x] PWA any orientation (portrait + landscape without glitch)
+- [x] Onboarding name/color spawn screen + temporary name-claim login
+- [x] Admin panel with configurable pain test and profile deletion
+- [x] Larger 32×24 map with more trees and buildings
 
 ---
 
@@ -343,6 +352,7 @@ Use `class_name Creature` and typed references. Generic `Node3D` + `grid_pos` ca
 6. Worm → `creature.gd`; pathing → `grid_nav.gd`; boot → `main.gd` + `world_map.gd`
 7. If web says "Could not reach server": check COI export setting off, re-export, hard refresh
 8. PWA orientation glitch: ensure manifest `orientation: any`, export preset `orientation=0`, no landscape lock in shell
+9. Name-claim login/profile deletion: run [`supabase/migration-temp-profile-admin.sql`](supabase/migration-temp-profile-admin.sql) in Supabase SQL Editor
 
 ### Phone testing
 
@@ -382,7 +392,7 @@ Use `class_name Creature` and typed references. Generic `Node3D` + `grid_pos` ca
 | Input | Action |
 |-------|--------|
 | Tap / click ground | Move |
-| **pain test** (top-right) | 30s stress test |
+| **admin** (top-right) | Pain test controls + profile deletion |
 | Pinch / mouse wheel | Zoom |
 | WASD / screen edge | Pan camera |
 

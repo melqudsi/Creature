@@ -3,8 +3,8 @@ extends RefCounted
 
 ## Shared constants ported from js/game.js
 
-const MAP_W := 20
-const MAP_H := 15
+const MAP_W := 32
+const MAP_H := 24
 const TILE_SIZE := 1.0
 
 const MOVE_TILES_PER_SEC := 1.0
@@ -16,8 +16,15 @@ const DEFAULT_CREATURE_COLOR := Color(0.22, 0.22, 0.26, 1.0)
 const DEFAULT_CREATURE_NAME := "Creature"
 
 const TREE_POSITIONS: Array[Vector2i] = [
-	Vector2i(3, 3), Vector2i(16, 4), Vector2i(5, 10),
-	Vector2i(14, 11), Vector2i(9, 2), Vector2i(12, 13),
+	Vector2i(3, 3), Vector2i(7, 4), Vector2i(12, 2), Vector2i(18, 5),
+	Vector2i(25, 3), Vector2i(29, 8), Vector2i(5, 10), Vector2i(10, 13),
+	Vector2i(16, 11), Vector2i(22, 14), Vector2i(28, 17), Vector2i(4, 19),
+	Vector2i(13, 21), Vector2i(20, 20), Vector2i(27, 22), Vector2i(30, 14),
+]
+
+const BUILDING_POSITIONS: Array[Vector2i] = [
+	Vector2i(6, 6), Vector2i(14, 7), Vector2i(23, 9),
+	Vector2i(8, 17), Vector2i(18, 16), Vector2i(26, 19),
 ]
 
 const CREATURE_COLORS: Array[Color] = [
