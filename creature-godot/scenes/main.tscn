@@ -1,0 +1,27 @@
+[gd_scene load_steps=5 format=3 uid="uid://main001"]
+
+[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="PackedScene" uid="uid://worldmap001" path="res://scenes/world/world_map.tscn" id="2_world"]
+[ext_resource type="Script" path="res://scripts/camera/rts_camera.gd" id="3_cam"]
+[ext_resource type="PackedScene" uid="uid://sc2hud001" path="res://scenes/ui/sc2_hud.tscn" id="4_hud"]
+
+[node name="Main" type="Node3D"]
+script = ExtResource("1_main")
+
+[node name="WorldMap" parent="." instance=ExtResource("2_world")]
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.866, -0.433, 0.25, 0, 0.5, 0.866, -0.5, -0.75, 0.433, 8, 14, 6)
+light_energy = 1.2
+shadow_enabled = true
+
+[node name="RTSCamera" type="Camera3D" parent="."]
+transform = Transform3D(0.707, -0.408, 0.577, 0, 0.816, 0.577, -0.707, -0.408, 0.577, 12, 20, 12)
+current = true
+script = ExtResource("3_cam")
+
+[node name="CanvasLayer" type="CanvasLayer" parent="."]
+
+[node name="SC2Hud" parent="CanvasLayer" instance=ExtResource("4_hud")]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]

@@ -1,0 +1,113 @@
+[gd_scene load_steps=8 format=3 uid="uid://creature001"]
+
+[ext_resource type="Script" path="res://scripts/units/creature.gd" id="1_creature"]
+[ext_resource type="Script" path="res://scripts/units/creature_eyes.gd" id="2_eyes"]
+[ext_resource type="Script" path="res://scripts/units/creature_ai.gd" id="3_ai"]
+
+[sub_resource type="SphereMesh" id="SphereMesh_eye"]
+radius = 0.08
+height = 0.16
+
+[sub_resource type="SphereMesh" id="SphereMesh_pupil"]
+radius = 0.035
+height = 0.07
+
+[sub_resource type="TorusMesh" id="TorusMesh_ring"]
+inner_radius = 0.35
+outer_radius = 0.42
+rings = 16
+ring_segments = 32
+
+[sub_resource type="BoxMesh" id="BoxMesh_hbar"]
+size = Vector3(0.6, 0.06, 0.02)
+
+[node name="Creature" type="Node3D"]
+script = ExtResource("1_creature")
+
+[node name="Body" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.35, 0)
+
+[node name="Fangs" type="Node3D" parent="Body"]
+visible = false
+
+[node name="FangL" type="MeshInstance3D" parent="Body/Fangs"]
+transform = Transform3D(0.7, 0, 0, 0, 1, 0, 0, 0, 0.7, -0.12, -0.05, 0.18)
+mesh = SubResource("BoxMesh_hbar")
+
+[node name="FangR" type="MeshInstance3D" parent="Body/Fangs"]
+transform = Transform3D(0.7, 0, 0, 0, 1, 0, 0, 0, 0.7, 0.12, -0.05, 0.18)
+mesh = SubResource("BoxMesh_hbar")
+
+[node name="Eyes" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.45, 0.28)
+script = ExtResource("2_eyes")
+
+[node name="LeftEye" type="Node3D" parent="Eyes"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.14, 0, 0)
+
+[node name="White" type="MeshInstance3D" parent="Eyes/LeftEye"]
+mesh = SubResource("SphereMesh_eye")
+
+[node name="Pupil" type="MeshInstance3D" parent="Eyes/LeftEye"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0.04)
+mesh = SubResource("SphereMesh_pupil")
+
+[node name="Lid" type="MeshInstance3D" parent="Eyes/LeftEye"]
+transform = Transform3D(1, 0, 0, 0, 0.15, 0, 0, 0, 1, 0, 0.06, 0.05)
+mesh = SubResource("BoxMesh_hbar")
+
+[node name="RightEye" type="Node3D" parent="Eyes"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.14, 0, 0)
+
+[node name="White" type="MeshInstance3D" parent="Eyes/RightEye"]
+mesh = SubResource("SphereMesh_eye")
+
+[node name="Pupil" type="MeshInstance3D" parent="Eyes/RightEye"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0.04)
+mesh = SubResource("SphereMesh_pupil")
+
+[node name="Lid" type="MeshInstance3D" parent="Eyes/RightEye"]
+transform = Transform3D(1, 0, 0, 0, 0.15, 0, 0, 0, 1, 0, 0.06, 0.05)
+mesh = SubResource("BoxMesh_hbar")
+
+[node name="SelectionRing" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.04, 0)
+mesh = SubResource("TorusMesh_ring")
+
+[node name="HealthBar" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.85, 0)
+
+[node name="Back" type="MeshInstance3D" parent="HealthBar"]
+mesh = SubResource("BoxMesh_hbar")
+
+[node name="Fill" type="MeshInstance3D" parent="HealthBar"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0.02)
+mesh = SubResource("BoxMesh_hbar")
+
+[node name="SleepFX" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.0, 0)
+visible = false
+
+[node name="Z1" type="Label3D" parent="SleepFX"]
+text = "z"
+font_size = 24
+
+[node name="Z2" type="Label3D" parent="SleepFX"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.15, 0.12, 0)
+text = "Z"
+font_size = 32
+
+[node name="Z3" type="Label3D" parent="SleepFX"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.3, 0.24, 0)
+text = "z"
+font_size = 24
+
+[node name="SpawnFX" type="Node3D" parent="."]
+visible = false
+
+[node name="Dirt" type="MeshInstance3D" parent="SpawnFX"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.02, 0)
+mesh = SubResource("TorusMesh_ring")
+
+[node name="AIController" type="Node" parent="."]
+script = ExtResource("3_ai")

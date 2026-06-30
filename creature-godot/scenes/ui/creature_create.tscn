@@ -1,0 +1,121 @@
+[gd_scene load_steps=4 format=3 uid="uid://create001"]
+
+[ext_resource type="Script" path="res://scripts/ui/creature_create.gd" id="1_create"]
+
+[sub_resource type="Environment" id="Environment_preview"]
+background_mode = 1
+background_color = Color(0.12, 0.14, 0.18, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.55, 0.58, 0.65, 1)
+ambient_light_energy = 0.9
+
+[node name="CreatureCreate" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_create")
+
+[node name="BG" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.04, 0.08, 0.14, 1)
+
+[node name="Panel" type="Panel" parent="."]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -240.0
+offset_top = -220.0
+offset_right = 240.0
+offset_bottom = 220.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Title" type="Label" parent="Panel"]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 16.0
+offset_right = 420.0
+offset_bottom = 40.0
+text = "SPAWN YOUR CREATURE"
+horizontal_alignment = 1
+
+[node name="NameEdit" type="LineEdit" parent="Panel"]
+layout_mode = 0
+offset_left = 40.0
+offset_top = 48.0
+offset_right = 420.0
+offset_bottom = 76.0
+placeholder_text = "Name (max 10)"
+max_length = 10
+virtual_keyboard_enabled = true
+
+[node name="ColorRow" type="HBoxContainer" parent="Panel"]
+layout_mode = 0
+offset_left = 40.0
+offset_top = 88.0
+offset_right = 420.0
+offset_bottom = 120.0
+alignment = 1
+theme_override_constants/separation = 8
+
+[node name="AppearanceRow" type="HBoxContainer" parent="Panel"]
+layout_mode = 0
+offset_left = 40.0
+offset_top = 128.0
+offset_right = 420.0
+offset_bottom = 168.0
+alignment = 1
+theme_override_constants/separation = 12
+
+[node name="CuteBtn" type="Button" parent="Panel/AppearanceRow"]
+layout_mode = 2
+custom_minimum_size = Vector2(120, 36)
+text = "CUTE"
+
+[node name="UglyBtn" type="Button" parent="Panel/AppearanceRow"]
+layout_mode = 2
+custom_minimum_size = Vector2(120, 36)
+text = "UGLY"
+
+[node name="PreviewFrame" type="SubViewportContainer" parent="Panel"]
+layout_mode = 0
+offset_left = 150.0
+offset_top = 176.0
+offset_right = 310.0
+offset_bottom = 336.0
+stretch = true
+
+[node name="PreviewViewport" type="SubViewport" parent="Panel/PreviewFrame"]
+handle_input_locally = false
+size = Vector2i(160, 160)
+render_target_update_mode = 4
+transparent_bg = false
+
+[node name="PreviewWorldEnvironment" type="WorldEnvironment" parent="Panel/PreviewFrame/PreviewViewport"]
+environment = SubResource("Environment_preview")
+
+[node name="PreviewCamera" type="Camera3D" parent="Panel/PreviewFrame/PreviewViewport"]
+transform = Transform3D(0.866, -0.25, 0.433, 0, 0.866, 0.5, -0.5, -0.433, 0.75, 1.2, 1.0, 1.2)
+
+[node name="PreviewLight" type="DirectionalLight3D" parent="Panel/PreviewFrame/PreviewViewport"]
+transform = Transform3D(0.866, -0.433, 0.25, 0, 0.5, 0.866, -0.5, -0.75, 0.433, 0, 2, 0)
+light_energy = 1.2
+
+[node name="SummonBtn" type="Button" parent="Panel"]
+layout_mode = 0
+offset_left = 120.0
+offset_top = 352.0
+offset_right = 340.0
+offset_bottom = 396.0
+text = "SUMMON"

@@ -1,0 +1,10 @@
+[gd_scene load_steps=2 format=3 uid="uid://spawnfx001"]
+
+[sub_resource type="TorusMesh" id="TorusMesh_dirt"]
+inner_radius = 0.2
+outer_radius = 0.35
+
+[node name="SpawnBurst" type="Node3D"]
+
+[node name="DirtRing" type="MeshInstance3D" parent="."]
+mesh = SubResource("TorusMesh_dirt")

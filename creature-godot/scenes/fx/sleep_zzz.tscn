@@ -1,0 +1,17 @@
+[gd_scene load_steps=1 format=3 uid="uid://sleepfx001"]
+
+[node name="SleepZzz" type="Node3D"]
+
+[node name="Z1" type="Label3D" parent="."]
+text = "z"
+font_size = 24
+
+[node name="Z2" type="Label3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.15, 0.12, 0)
+text = "Z"
+font_size = 32
+
+[node name="Z3" type="Label3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.3, 0.24, 0)
+text = "z"
+font_size = 24
