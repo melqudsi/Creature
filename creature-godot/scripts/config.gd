@@ -8,6 +8,7 @@ const MAP_H := 15
 const TILE_SIZE := 1.0
 
 const MOVE_TILES_PER_SEC := 1.0
+const POLL_OTHERS_SEC := 1.5
 
 const NAME_MAX_LEN := 10
 

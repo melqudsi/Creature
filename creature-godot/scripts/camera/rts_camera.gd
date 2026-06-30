@@ -14,7 +14,7 @@ const CAMERA_PITCH := deg_to_rad(38.0)
 const CAMERA_YAW := deg_to_rad(45.0)
 
 var _focus := Vector3.ZERO
-var _desired_distance := 22.0
+var _desired_distance := 8.0
 var _active_touches: Dictionary = {}
 var _touch_start := Vector2.ZERO
 var _touch_moved := false
@@ -28,6 +28,7 @@ var _world_map: WorldMap
 func _ready() -> void:
 	projection = PROJECTION_PERSPECTIVE
 	fov = 42.0
+	_desired_distance = zoom_min
 	_update_position(true)
 
 func bind_world_map(world_map: WorldMap) -> void:

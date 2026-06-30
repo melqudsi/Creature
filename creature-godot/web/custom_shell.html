@@ -401,12 +401,6 @@ async function prepareCachesForDev() {
 				console.warn('Fullscreen request failed:', err);
 			}
 		}
-
-		if (screen.orientation && screen.orientation.lock) {
-			try {
-				await screen.orientation.lock('landscape');
-			} catch (_e) {}
-		}
 	}
 
 	function maybeShowPrompt() {
@@ -426,12 +420,6 @@ async function prepareCachesForDev() {
 
 	btn.addEventListener('click', onStartTap);
 	btn.addEventListener('touchend', onStartTap, { passive: false });
-
-	window.addEventListener('orientationchange', () => {
-		if (userActivated && !isFullscreen() && !isStandalone && !dismissed) {
-			enterFullscreen();
-		}
-	});
 
 	document.addEventListener('fullscreenchange', () => {
 		if (isFullscreen()) {

@@ -8,6 +8,8 @@ extends Node3D
 
 const CREATURE_SCENE := preload("res://scenes/units/creature.tscn")
 
+var _remote_by_user: Dictionary = {} # user_id -> Creature
+
 func _ready() -> void:
 	_build_ground()
 	_build_trees()
@@ -72,6 +74,34 @@ func _make_tree() -> Node3D:
 
 func get_player_creature() -> Creature:
 	return GameState.player_creature
+
+func sync_remote_creatures(rows: Array) -> void:
+	var player_uid := NetworkService.get_user_id()
+	var seen: Dictionary = {}
+	for row in rows:
+		if typeof(row) != TYPE_DICTIONARY:
+			continue
+		var uid := str(row.get("user_id", ""))
+		if uid.is_empty() or uid == player_uid:
+			continue
+		seen[uid] = true
+		if _remote_by_user.has(uid):
+			var existing: Creature = _remote_by_user[uid]
+			if is_instance_valid(existing):
+				existing.apply_remote_state(row)
+			continue
+		var data := NetworkService.db_row_to_player_data(row, false)
+		var remote: Creature = CREATURE_SCENE.instantiate() as Creature
+		creatures_root.add_child(remote)
+		remote.setup(data)
+		_remote_by_user[uid] = remote
+	for uid in _remote_by_user.keys():
+		if seen.has(uid):
+			continue
+		var creature: Creature = _remote_by_user[uid]
+		if is_instance_valid(creature):
+			creature.queue_free()
+		_remote_by_user.erase(uid)
 
 func show_click_marker(world_pos: Vector3) -> void:
 	click_marker.visible = true

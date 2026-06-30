@@ -16,6 +16,9 @@ var _save_dirty := false
 var _save_timer := 0.0
 var _web_request_pending := false
 var _web_request_result: Dictionary = {}
+var _world_map: WorldMap
+var _poll_accum := 0.0
+var _poll_in_flight := false
 
 func _uses_web_bridge() -> bool:
 	return OS.has_feature("web") and _web_net() != null
@@ -32,12 +35,39 @@ func _web_net() -> Object:
 	return net
 
 func _process(delta: float) -> void:
-	if not _save_dirty or not _online:
+	if _save_dirty and _online:
+		_save_timer += delta
+		if _save_timer >= POSITION_SAVE_INTERVAL:
+			_save_timer = 0.0
+			_flush_position_save()
+	if _online and _world_map and is_instance_valid(_world_map):
+		_poll_accum += delta
+		if _poll_accum >= GameConfig.POLL_OTHERS_SEC and not _poll_in_flight:
+			_poll_accum = 0.0
+			_poll_remote_creatures()
+
+func start_creature_poll(world_map: WorldMap) -> void:
+	_world_map = world_map
+	_poll_accum = GameConfig.POLL_OTHERS_SEC
+	_poll_remote_creatures()
+
+func fetch_all_creatures() -> Array:
+	var resp := await _rest_request(HTTPClient.METHOD_GET, "/rest/v1/creatures?select=*")
+	if not resp.ok:
+		push_warning("fetch_all_creatures failed: %s" % resp.error)
+		return []
+	if typeof(resp.data) == TYPE_ARRAY:
+		return resp.data
+	return []
+
+func _poll_remote_creatures() -> void:
+	if not _online or _world_map == null or not is_instance_valid(_world_map):
 		return
-	_save_timer += delta
-	if _save_timer >= POSITION_SAVE_INTERVAL:
-		_save_timer = 0.0
-		_flush_position_save()
+	_poll_in_flight = true
+	var rows: Array = await fetch_all_creatures()
+	_poll_in_flight = false
+	if _world_map and is_instance_valid(_world_map):
+		_world_map.sync_remote_creatures(rows)
 
 func is_online() -> bool:
 	return _online
@@ -81,10 +111,6 @@ func _boot_online() -> bool:
 			_online = false
 			return false
 	GameState.player_data = db_row_to_player_data(row)
-	if is_new_player:
-		GameState.show_toast("New player saved to server")
-	else:
-		GameState.show_toast("Restored save from server")
 	return true
 
 func ensure_auth() -> bool:
@@ -143,7 +169,7 @@ func save_creature_position(creature_id: String, x: float, y: float, flush_now: 
 		return
 	_save_dirty = true
 
-func db_row_to_player_data(row: Dictionary) -> Dictionary:
+func db_row_to_player_data(row: Dictionary, for_player: bool = true) -> Dictionary:
 	var color := GameConfig.color_from_hex(str(row.get("color", "")))
 	return {
 		"id": str(row.get("id", "")),
@@ -154,7 +180,8 @@ func db_row_to_player_data(row: Dictionary) -> Dictionary:
 		"x": clampf(float(row.get("x", GameConfig.MAP_W / 2)), 0.0, GameConfig.MAP_W - 1.0),
 		"y": clampf(float(row.get("y", GameConfig.MAP_H / 2)), 0.0, GameConfig.MAP_H - 1.0),
 		"size_level": int(row.get("size_level", 1)),
-		"is_player": true,
+		"is_player": for_player,
+		"is_remote": not for_player,
 	}
 
 func creature_to_dict(creature: Creature) -> Dictionary:

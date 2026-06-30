@@ -224,7 +224,7 @@ window.CreatureNet = (function () {
 
 		<script src="index.js"></script>
 		<script>
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"index","experimentalVK":true,"fileSizes":{"index.pck":117600,"index.wasm":39509339},"focusCanvas":false,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"index.service.worker.js"};
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"index","experimentalVK":true,"fileSizes":{"index.pck":120288,"index.wasm":39509339},"focusCanvas":false,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"index.service.worker.js"};
 const GODOT_THREADS_ENABLED = false;
 
 function isDevServer() {
@@ -404,12 +404,6 @@ async function prepareCachesForDev() {
 				console.warn('Fullscreen request failed:', err);
 			}
 		}
-
-		if (screen.orientation && screen.orientation.lock) {
-			try {
-				await screen.orientation.lock('landscape');
-			} catch (_e) {}
-		}
 	}
 
 	function maybeShowPrompt() {
@@ -429,12 +423,6 @@ async function prepareCachesForDev() {
 
 	btn.addEventListener('click', onStartTap);
 	btn.addEventListener('touchend', onStartTap, { passive: false });
-
-	window.addEventListener('orientationchange', () => {
-		if (userActivated && !isFullscreen() && !isStandalone && !dismissed) {
-			enterFullscreen();
-		}
-	});
 
 	document.addEventListener('fullscreenchange', () => {
 		if (isFullscreen()) {

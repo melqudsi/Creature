@@ -27,6 +27,7 @@ var grid_pos := Vector2(8, 6)
 var size_level := 1
 var is_asleep := false
 var is_player := false
+var is_remote := false
 var is_moving := false
 var is_spawning := false
 
@@ -37,6 +38,7 @@ var _walk_phase := 0.0
 var _spawn_t := 0.0
 var _breath_phase := 0.0
 var _body_scale := 1.0
+var _remote_target := Vector2.ZERO
 var _segments: Array[MeshInstance3D] = []
 var _eyes: Array[MeshInstance3D] = []
 
@@ -55,6 +57,7 @@ func setup(data: Dictionary) -> void:
 	grid_pos = Vector2(data.get("x", 8.0), data.get("y", 6.0))
 	size_level = int(data.get("size_level", 1))
 	is_player = data.get("is_player", false)
+	is_remote = data.get("is_remote", false)
 	is_asleep = data.get("is_asleep", false)
 	_apply_appearance()
 	_update_transform(true, 0.0)
@@ -65,6 +68,9 @@ func setup(data: Dictionary) -> void:
 		spawn_fx.visible = true
 		_spawn_t = 0.0
 		scale = Vector3(0.01, 0.01, 0.01)
+	elif is_remote:
+		_remote_target = grid_pos
+		scale = Vector3.ONE * _body_scale
 	if creature_id != "preview" and creature_id != "portrait":
 		GameState.register_creature(self, data, is_player)
 
@@ -187,6 +193,10 @@ func _apply_slither(_delta: float) -> void:
 	rotation.x = wave * 0.04
 
 func _process(delta: float) -> void:
+	if is_remote:
+		_process_remote(delta)
+		return
+
 	if is_spawning:
 		_spawn_t += delta
 		var p := clampf(_spawn_t / 1.2, 0.0, 1.0)
@@ -340,6 +350,38 @@ func apply_network_patch(patch: Dictionary) -> void:
 	if patch.has("size_level"):
 		size_level = int(patch.size_level)
 		_apply_appearance()
+
+func apply_remote_state(row: Dictionary) -> void:
+	var target := Vector2(float(row.get("x", grid_pos.x)), float(row.get("y", grid_pos.y)))
+	_remote_target = target
+	var new_name := str(row.get("name", creature_name)).substr(0, GameConfig.NAME_MAX_LEN)
+	if new_name != creature_name:
+		creature_name = new_name
+	var new_level := int(row.get("size_level", size_level))
+	if new_level != size_level:
+		size_level = new_level
+		_apply_appearance()
+	var new_color := GameConfig.color_from_hex(str(row.get("color", "")))
+	if new_color != creature_color:
+		creature_color = new_color
+		_apply_appearance()
+
+func _process_remote(delta: float) -> void:
+	var to_target := _remote_target - grid_pos
+	var dist := to_target.length()
+	if dist > 0.02:
+		var step := minf(dist, delta * GameConfig.MOVE_TILES_PER_SEC * 1.5)
+		grid_pos += to_target / dist * step
+		is_moving = true
+		_move_dir = to_target / dist
+		_walk_phase += delta * 10.0
+		_apply_slither(delta)
+	else:
+		grid_pos = _remote_target
+		is_moving = false
+		_move_dir = Vector2.ZERO
+		_reset_body_pose()
+	_update_transform(false, delta)
 
 func _exit_tree() -> void:
 	if is_player and not creature_id.is_empty():

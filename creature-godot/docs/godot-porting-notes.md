@@ -28,19 +28,33 @@ All gameplay constants live in [`scripts/config.gd`](../scripts/config.gd) (`Gam
 
 Same publishable key as [`js/config.example.js`](../../js/config.example.js). See [`docs/supabase-multiplayer-guide.md`](../../docs/supabase-multiplayer-guide.md).
 
-**Not implemented yet:** polling other players, fight/eat, events inbox.
+**Not implemented yet:** fight/eat, events inbox, web+Godot unified gameplay rules.
+
+## Live multiplayer (Godot — implemented)
+
+Poll interval: `GameConfig.POLL_OTHERS_SEC` (1.5s), same as web.
+
+| Component | Role |
+|-----------|------|
+| `network_service.gd` | `fetch_all_creatures()`, `start_creature_poll()`, `_poll_remote_creatures()` |
+| `world_map.gd` | `sync_remote_creatures(rows)` — spawn/update/remove by `user_id` |
+| `creature.gd` | `is_remote`, `apply_remote_state()`, `_process_remote()` — lerp to server position |
+
+Local player row is skipped (matched by `NetworkService.get_user_id()`).
 
 ## Boot flow (current)
 
 ```
 main.gd _ready()
-  → await NetworkService.boot()   # auth + load/create creature row
-  → world_map.spawn_player()      # spawn at saved x,y
+  → await NetworkService.boot()              # auth + load/create creature row
+  → world_map.spawn_player()                 # spawn at saved x,y
+  → NetworkService.start_creature_poll(...)  # when online
   → camera follow
 ```
 
 ## Known gaps vs web
 
-- No shared live world (other players not rendered)
+- No fight/eat/stamina in Godot client
+- Remote worms visible but names not on HUD/minimap
 - Passkey / account linking not implemented
 - Health/stamina removed from Godot client (DB columns remain for legacy web)

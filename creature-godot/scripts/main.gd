@@ -8,6 +8,8 @@ extends Node3D
 func _ready() -> void:
 	await NetworkService.boot()
 	world_map.spawn_player()
+	if NetworkService.is_online():
+		NetworkService.start_creature_poll(world_map)
 	var player: Creature = world_map.get_player_creature()
 	if rts_camera.has_method("bind_world_map"):
 		rts_camera.bind_world_map(world_map)
