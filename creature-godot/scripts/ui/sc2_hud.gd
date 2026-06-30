@@ -10,6 +10,7 @@ var _admin_panel: Panel
 var _worm_spin: SpinBox
 var _object_spin: SpinBox
 var _profiles_list: VBoxContainer
+var _logs_list: VBoxContainer
 
 func _ready() -> void:
 	theme = preload("res://assets/themes/sc2_theme.tres")
@@ -19,6 +20,7 @@ func _ready() -> void:
 	_build_admin_panel()
 	GameState.player_stats_changed.connect(_refresh_stats)
 	GameState.toast_requested.connect(_show_toast)
+	GameState.admin_log_added.connect(_append_log_line)
 	call_deferred("_refresh_stats")
 
 func bind_pain_test(pain_test: Node) -> void:
@@ -39,7 +41,7 @@ func _build_admin_panel() -> void:
 	_admin_panel.offset_left = -330
 	_admin_panel.offset_top = 48
 	_admin_panel.offset_right = -12
-	_admin_panel.offset_bottom = 460
+	_admin_panel.offset_bottom = 650
 	add_child(_admin_panel)
 
 	var margin := MarginContainer.new()
@@ -89,6 +91,19 @@ func _build_admin_panel() -> void:
 	_profiles_list.add_theme_constant_override("separation", 4)
 	scroll.add_child(_profiles_list)
 
+	var logs_title := Label.new()
+	logs_title.text = "Logs"
+	root.add_child(logs_title)
+
+	var logs_scroll := ScrollContainer.new()
+	logs_scroll.custom_minimum_size = Vector2(0, 130)
+	root.add_child(logs_scroll)
+
+	_logs_list = VBoxContainer.new()
+	_logs_list.add_theme_constant_override("separation", 2)
+	logs_scroll.add_child(_logs_list)
+	_refresh_logs()
+
 func _make_spin_row(label_text: String, min_value: float, max_value: float, value: float) -> HBoxContainer:
 	var row := HBoxContainer.new()
 	var label := Label.new()
@@ -109,6 +124,7 @@ func _toggle_admin_panel() -> void:
 	_admin_panel.visible = not _admin_panel.visible
 	if _admin_panel.visible:
 		_refresh_profiles()
+		_refresh_logs()
 
 func _on_pain_test_pressed() -> void:
 	if _pain_test and _pain_test.has_method("start"):
@@ -156,8 +172,26 @@ func _delete_profile(creature_id: String, profile_name: String) -> void:
 	if ok:
 		GameState.show_toast("Deleted profile %s" % profile_name)
 	else:
-		GameState.show_toast("Could not delete %s" % profile_name)
+		GameState.show_toast("Could not delete %s - check logs" % profile_name)
 	_refresh_profiles()
+
+func _refresh_logs() -> void:
+	if not _logs_list:
+		return
+	for ch in _logs_list.get_children():
+		ch.queue_free()
+	for line in GameState.admin_logs:
+		_append_log_line(line)
+
+func _append_log_line(line: String) -> void:
+	if not _logs_list:
+		return
+	var label := Label.new()
+	label.text = line
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_logs_list.add_child(label)
+	if _logs_list.get_child_count() > 80:
+		_logs_list.get_child(0).queue_free()
 
 func _refresh_stats() -> void:
 	var c = GameState.player_creature

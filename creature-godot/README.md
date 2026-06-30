@@ -2,7 +2,7 @@
 
 Local-first 3D port pivoting from the web Creature game. Isometric RTS camera with procedural worm assets.
 
-**Current scope:** onboarding spawn screen (name + color), default worm, fluid movement, A* pathfinding, **Supabase session save**, **live field** (other players via 1.5s REST poll). Camera starts fully zoomed in. Name-only HUD + admin panel. PWA supports portrait and landscape. No health/stamina, fight, eat, or appearance customization.
+**Current scope:** onboarding spawn screen (name + color), default worm, fluid movement, A* pathfinding, **Supabase session save**, **live field** (other players via 1.5s REST poll). Camera starts fully zoomed in. Name-only HUD + admin panel with logs. PWA supports portrait and landscape. No health/stamina, fight, eat, or appearance customization.
 
 ## Requirements
 
@@ -32,7 +32,7 @@ Boot is silent on success (no save/restore toasts). Offline boot toasts **"Could
 | Input | Action |
 |-------|--------|
 | Tap / click ground | Move creature |
-| **admin** (top-right) | Pain test controls + profile deletion |
+| **admin** (top-right) | Pain test controls, profile deletion, logs |
 | Pinch / mouse wheel | Zoom camera (starts fully zoomed in) |
 | WASD / screen edge | Pan camera |
 
@@ -45,7 +45,7 @@ Boot is silent on success (no save/restore toasts). Offline boot toasts **"Could
 | Supabase anonymous session + position save | Done |
 | Live field: poll + render other players | Done |
 | Onboarding spawn screen: name + color | Done |
-| Admin panel: configurable pain test + profile deletion | Done |
+| Admin panel: configurable pain test + profile deletion + logs | Done |
 | Top stat bar (name only) | Done |
 | Mobile web tap + pinch | Done |
 | PWA portrait + landscape (no forced landscape) | Done |
@@ -85,7 +85,9 @@ Godot re-export may flip these — verify after each export.
 
 **DB appearance:** inserts use `"cute"` (schema constraint); client renders worm. Optional SQL: [`../supabase/migration-godot-session.sql`](../supabase/migration-godot-session.sql).
 
-**Temporary profile migration:** name-claim login and admin profile deletion require [`../supabase/migration-temp-profile-admin.sql`](../supabase/migration-temp-profile-admin.sql). It is intentionally permissive and should be replaced by passkeys/password phrases before shipping.
+If auth succeeds but no row exists for the session, `NetworkService.boot()` leaves `GameState.player_data` empty so `main.gd` shows onboarding. Do not recreate the previous behavior that filled `default_player_data()` on successful no-row boot.
+
+**Temporary profile migration:** name-claim login and admin profile deletion require [`../supabase/migration-temp-profile-admin.sql`](../supabase/migration-temp-profile-admin.sql). It is intentionally permissive and should be replaced by passkeys/password phrases before shipping. Admin delete only reports success when Supabase returns at least one deleted row; zero rows usually means RLS blocked the delete or the migration was not applied.
 
 Keys: [`scripts/config.gd`](scripts/config.gd) (`SUPABASE_URL`, `SUPABASE_ANON_KEY`) — same publishable key as [`../js/config.example.js`](../js/config.example.js).
 
@@ -97,7 +99,7 @@ Mirrors web polling (`GameConfig.POLL_OTHERS_SEC` = 1.5):
 2. `world_map.sync_remote_creatures(rows)` — spawn/update/remove by `user_id` (skips local player)
 3. Remote worms: `is_remote=true`, interpolate to server `{x,y}`, no selection ring, no local pathfinding
 
-Test: two editor instances, or editor + phone on `https://<wifi-ip>:8443`.
+Test: two editor instances, or editor + phone on `https://<wifi-ip>:8443`. The admin logs show fetched row count and `Remote sync: <other profiles>, <visible>` when those counts change.
 
 ## Worm mesh
 
@@ -112,9 +114,20 @@ Procedural in [`scripts/units/creature.gd`](scripts/units/creature.gd). Segments
 
 [`scripts/debug/pain_test.gd`](scripts/debug/pain_test.gd) — configurable wandering worms + props for 30s. Launched from the top-right **admin** panel.
 
+## Admin Logs
+
+`GameState.add_admin_log()` stores the last 80 log lines and `sc2_hud.gd` renders them in **admin → Logs**. Current logs cover:
+
+- Boot path: restored profile vs no profile/onboarding
+- Supabase fetch failures and fetched creature row count
+- Profile create/claim/delete attempts and RLS-like zero-row deletes
+- Remote sync count changes
+
 ## Map
 
 `GameConfig` sets a **32×24** map with 16 tree tiles and 6 building tiles. `GameState.blocked_tiles` includes trees and buildings; `world_map.gd` renders both as simple procedural props.
+
+Buildings use a box body, two sloped `BoxMesh` roof panels, and a door. Avoid using the earlier single rotated `PrismMesh` roof; it looked like a giant wedge/needle on mobile.
 
 ## PWA / mobile orientation
 
@@ -127,14 +140,14 @@ Procedural in [`scripts/units/creature.gd`](scripts/units/creature.gd). Segments
 | File | Role |
 |------|------|
 | `scripts/main.gd` | Async boot, onboarding, pointer forwarding, starts creature poll |
-| `scripts/autoload/network_service.gd` | Supabase REST, web bridge, profile create/claim/delete, poll loop |
-| `scripts/autoload/game_state.gd` | Player data, creatures registry |
+| `scripts/autoload/network_service.gd` | Supabase REST, web bridge, profile create/claim/delete, poll loop, admin logs |
+| `scripts/autoload/game_state.gd` | Player data, creatures registry, admin log buffer |
 | `scripts/world/world_map.gd` | Map, `spawn_player()`, `sync_remote_creatures()` |
 | `scripts/units/creature.gd` | Worm mesh, movement, remote interpolation |
 | `scripts/world/grid_nav.gd` | Pathfinding |
 | `scripts/camera/rts_camera.gd` | Tap-to-move, zoom (starts at `zoom_min`) |
 | `scripts/ui/creature_create.gd` | Onboarding name/color screen |
-| `scripts/ui/sc2_hud.gd` | Name bar + admin panel |
+| `scripts/ui/sc2_hud.gd` | Name bar + admin panel/logs |
 | `web/custom_shell.html` | PWA shell, dev mode, **CreatureNet** |
 
 ## Web export
@@ -145,6 +158,12 @@ Procedural in [`scripts/units/creature.gd`](scripts/units/creature.gd). Segments
 4. Serve: `python serve-web-https.py` → `https://<wifi-ip>:8443`
 
 Dev mode on `:8443` / `:8080` clears service worker cache (no incognito needed).
+
+Latest validation command used:
+
+```powershell
+& "C:\workspace_C\godot_console.exe" --headless --path "f:\GdriveFS\My Drive\_DEV\Game\Creature_game\creature-godot" --quit-after 900
+```
 
 ## Agent handoff — next tasks
 

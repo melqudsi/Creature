@@ -19,6 +19,10 @@ var _web_request_result: Dictionary = {}
 var _world_map: Node
 var _poll_accum := 0.0
 var _poll_in_flight := false
+var _last_fetch_count := -1
+
+func _log(msg: String) -> void:
+	GameState.add_admin_log(msg)
 
 func _uses_web_bridge() -> bool:
 	return OS.has_feature("web") and _web_net() != null
@@ -49,14 +53,19 @@ func _process(delta: float) -> void:
 func start_creature_poll(world_map: Node) -> void:
 	_world_map = world_map
 	_poll_accum = GameConfig.POLL_OTHERS_SEC
+	_log("Started creature poll")
 	_poll_remote_creatures()
 
 func fetch_all_creatures() -> Array:
 	var resp := await _rest_request(HTTPClient.METHOD_GET, "/rest/v1/creatures?select=*")
 	if not resp.ok:
+		_log("fetch_all_creatures failed: %s" % resp.error)
 		push_warning("fetch_all_creatures failed: %s" % resp.error)
 		return []
 	if typeof(resp.data) == TYPE_ARRAY:
+		if int(resp.data.size()) != _last_fetch_count:
+			_last_fetch_count = int(resp.data.size())
+			_log("Fetched %d creature rows" % _last_fetch_count)
 		return resp.data
 	return []
 
@@ -79,14 +88,17 @@ func boot() -> void:
 	_last_error = ""
 	var ok := await _boot_online()
 	if ok:
+		if GameState.player_data.is_empty():
+			_log("No profile for this session; showing onboarding")
+		else:
+			_log("Restored profile for %s" % GameState.player_data.get("name", "Creature"))
 		return
 	_online = false
-	if GameState.player_data.is_empty():
-		GameState.player_data = GameConfig.default_player_data()
 	var msg := "Could not reach server — starting locally"
 	if not _last_error.is_empty():
 		msg = "%s (%s)" % [msg, _short_error(_last_error)]
 	GameState.show_toast(msg)
+	_log(msg)
 	push_warning("NetworkService boot failed: %s" % _last_error)
 
 func _short_error(err: String) -> String:
@@ -106,6 +118,8 @@ func _boot_online() -> bool:
 	var row := await fetch_my_creature(user_id)
 	if not row.is_empty():
 		GameState.player_data = db_row_to_player_data(row)
+	else:
+		_log("Authenticated session has no creature row")
 	return true
 
 func ensure_auth() -> bool:
@@ -118,6 +132,7 @@ func fetch_my_creature(user_id: String) -> Dictionary:
 	var resp := await _rest_request(HTTPClient.METHOD_GET, path)
 	if not resp.ok:
 		_last_error = "fetch creature: %s" % resp.error
+		_log("fetch_my_creature failed: %s" % resp.error)
 		push_warning("fetch_my_creature failed: %s" % resp.error)
 		return {}
 	var rows: Variant = resp.data
@@ -130,6 +145,7 @@ func fetch_creature_by_name(profile_name: String) -> Dictionary:
 	var resp := await _rest_request(HTTPClient.METHOD_GET, path)
 	if not resp.ok:
 		_last_error = "fetch creature by name: %s" % resp.error
+		_log("fetch_creature_by_name failed: %s" % resp.error)
 		push_warning("fetch_creature_by_name failed: %s" % resp.error)
 		return {}
 	var rows: Variant = resp.data
@@ -146,21 +162,27 @@ func register_or_claim_profile(profile_name: String, color: Color) -> Dictionary
 		local["name"] = cleaned_name
 		local["color"] = color
 		GameState.player_data = local
+		_log("Offline profile created locally for %s" % cleaned_name)
 		return local
 
 	var existing := await fetch_creature_by_name(cleaned_name)
 	if not existing.is_empty():
+		_log("Attempting to claim existing profile '%s'" % cleaned_name)
 		var claimed := await claim_creature(existing)
 		if not claimed.is_empty():
 			GameState.player_data = db_row_to_player_data(claimed)
+			_log("Claimed profile '%s' for current session" % cleaned_name)
 			return GameState.player_data
+		_log("Claim failed for '%s' (temporary profile migration may be missing)" % cleaned_name)
 		return {}
 
 	var row := _new_creature_row(get_user_id(), cleaned_name, color)
 	var created := await create_creature(row)
 	if created.is_empty():
+		_log("Create profile failed for '%s'" % cleaned_name)
 		return {}
 	GameState.player_data = db_row_to_player_data(created)
+	_log("Created profile '%s'" % cleaned_name)
 	return GameState.player_data
 
 func create_creature(row: Dictionary) -> Dictionary:
@@ -168,6 +190,7 @@ func create_creature(row: Dictionary) -> Dictionary:
 	var resp := await _rest_request(HTTPClient.METHOD_POST, "/rest/v1/creatures", row, headers_extra)
 	if not resp.ok:
 		_last_error = "create creature: %s" % resp.error
+		_log("create_creature failed: %s" % resp.error)
 		push_warning("create_creature failed: %s" % resp.error)
 		return {}
 	if typeof(resp.data) == TYPE_ARRAY and not resp.data.is_empty():
@@ -189,12 +212,24 @@ func claim_creature(row: Dictionary) -> Dictionary:
 
 func delete_creature_profile(creature_id: String) -> bool:
 	if not _online or creature_id.is_empty():
+		_log("Delete skipped: offline or missing id")
 		return false
-	var resp := await _rest_request(HTTPClient.METHOD_DELETE, "/rest/v1/creatures?id=eq.%s" % creature_id.uri_encode())
+	var headers_extra := PackedStringArray(["Prefer: return=representation"])
+	var resp := await _rest_request(
+		HTTPClient.METHOD_DELETE,
+		"/rest/v1/creatures?id=eq.%s" % creature_id.uri_encode(),
+		{},
+		headers_extra
+	)
 	if not resp.ok:
+		_log("delete_creature_profile failed: %s" % resp.error)
 		push_warning("delete_creature_profile failed: %s" % resp.error)
 		return false
-	return true
+	if typeof(resp.data) == TYPE_ARRAY and not resp.data.is_empty():
+		_log("Deleted profile id %s" % creature_id)
+		return true
+	_log("Delete returned zero rows for %s (RLS migration may be missing)" % creature_id)
+	return false
 
 func update_creature(id: String, patch: Dictionary) -> void:
 	if not _online or id.is_empty():
@@ -204,6 +239,7 @@ func update_creature(id: String, patch: Dictionary) -> void:
 	body["updated_at"] = _iso_now()
 	var resp := await _rest_request(HTTPClient.METHOD_PATCH, path, body)
 	if not resp.ok:
+		_log("update_creature failed: %s" % resp.error)
 		push_warning("update_creature failed: %s" % resp.error)
 
 func _patch_creature_returning(path: String, patch: Dictionary) -> Dictionary:
@@ -211,6 +247,7 @@ func _patch_creature_returning(path: String, patch: Dictionary) -> Dictionary:
 	var resp := await _rest_request(HTTPClient.METHOD_PATCH, path, patch, headers_extra)
 	if not resp.ok:
 		_last_error = "patch creature: %s" % resp.error
+		_log("_patch_creature_returning failed: %s" % resp.error)
 		push_warning("_patch_creature_returning failed: %s" % resp.error)
 		return {}
 	if typeof(resp.data) == TYPE_ARRAY and not resp.data.is_empty():

@@ -10,6 +10,7 @@ const CREATURE_SCENE := preload("res://scenes/units/creature.tscn")
 
 var _remote_by_user: Dictionary = {} # user_id -> Creature
 var _buildings_root: Node3D
+var _last_remote_log := Vector2i(-1, -1)
 
 func _ready() -> void:
 	_resolve_child_roots()
@@ -120,17 +121,11 @@ func _make_building() -> Node3D:
 	base.material_override = base_mat
 	root.add_child(base)
 
-	var roof := MeshInstance3D.new()
-	var roof_mesh := PrismMesh.new()
-	roof_mesh.size = Vector3(1.7, 0.65, 1.45)
-	roof.mesh = roof_mesh
-	roof.position.y = 1.12
-	roof.rotation_degrees.z = 90.0
 	var roof_mat := StandardMaterial3D.new()
 	roof_mat.albedo_color = Color(0.44, 0.12, 0.08)
 	roof_mat.roughness = 0.72
-	roof.material_override = roof_mat
-	root.add_child(roof)
+	root.add_child(_make_roof_panel(Vector3(-0.36, 0.93, 0.0), deg_to_rad(-28.0), roof_mat))
+	root.add_child(_make_roof_panel(Vector3(0.36, 0.93, 0.0), deg_to_rad(28.0), roof_mat))
 
 	var door := MeshInstance3D.new()
 	var door_mesh := BoxMesh.new()
@@ -144,18 +139,30 @@ func _make_building() -> Node3D:
 	root.rotation.y = [0.0, PI * 0.5, PI, PI * 1.5][randi() % 4]
 	return root
 
+func _make_roof_panel(pos: Vector3, z_rot: float, mat: StandardMaterial3D) -> MeshInstance3D:
+	var panel := MeshInstance3D.new()
+	var mesh := BoxMesh.new()
+	mesh.size = Vector3(0.92, 0.12, 1.48)
+	panel.mesh = mesh
+	panel.position = pos
+	panel.rotation.z = z_rot
+	panel.material_override = mat
+	return panel
+
 func get_player_creature() -> Creature:
 	return GameState.player_creature
 
 func sync_remote_creatures(rows: Array) -> void:
 	var player_uid := NetworkService.get_user_id()
 	var seen: Dictionary = {}
+	var remote_count := 0
 	for row in rows:
 		if typeof(row) != TYPE_DICTIONARY:
 			continue
 		var uid := str(row.get("user_id", ""))
 		if uid.is_empty() or uid == player_uid:
 			continue
+		remote_count += 1
 		seen[uid] = true
 		if _remote_by_user.has(uid):
 			var existing: Creature = _remote_by_user[uid]
@@ -174,6 +181,10 @@ func sync_remote_creatures(rows: Array) -> void:
 		if is_instance_valid(creature):
 			creature.queue_free()
 		_remote_by_user.erase(uid)
+	var current_log := Vector2i(remote_count, _remote_by_user.size())
+	if current_log != _last_remote_log:
+		_last_remote_log = current_log
+		GameState.add_admin_log("Remote sync: %d other profiles, %d visible" % [remote_count, _remote_by_user.size()])
 
 func show_click_marker(world_pos: Vector3) -> void:
 	click_marker.visible = true

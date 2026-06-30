@@ -4,11 +4,13 @@ signal creature_registered(creature: Creature, is_player: bool)
 signal creature_removed(creature_id: String)
 signal toast_requested(message: String)
 signal player_stats_changed
+signal admin_log_added(message: String)
 
 var creatures: Dictionary = {} # id -> Creature
 var player_creature: Creature = null
 var player_data: Dictionary = {}
 var blocked_tiles: Array[Vector2i] = []
+var admin_logs: Array[String] = []
 
 func _ready() -> void:
 	for pos in GameConfig.TREE_POSITIONS:
@@ -47,3 +49,11 @@ func note_player_input() -> void:
 
 func show_toast(msg: String) -> void:
 	toast_requested.emit(msg)
+
+func add_admin_log(msg: String) -> void:
+	var stamp := Time.get_time_string_from_system()
+	var line := "[%s] %s" % [stamp, msg]
+	admin_logs.append(line)
+	if admin_logs.size() > 80:
+		admin_logs.pop_front()
+	admin_log_added.emit(line)

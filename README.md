@@ -86,7 +86,7 @@ Constants in web `js/game.js` and Godot `scripts/config.gd` (`GameConfig`):
 
 **Web only (live):** fight, eat, stamina, AFK sleep, grow, multiplayer polling, follow camera, tap-to-move.
 
-**Godot only (current scope):** onboarding spawn screen (name + color), default worm, **fluid A\*** movement, tap/click + pinch zoom, **Supabase session save** (restore last profile on return), **other players visible** via REST poll. Camera **starts fully zoomed in**. Top bar shows name only — **health/stamina removed**. Admin panel contains configurable pain test + profile deletion. No fight, eat, or persistent AI.
+**Godot only (current scope):** onboarding spawn screen (name + color), default worm, **fluid A\*** movement, tap/click + pinch zoom, **Supabase session save** (restore last profile on return), **other players visible** via REST poll. Camera **starts fully zoomed in**. Top bar shows name only — **health/stamina removed**. Admin panel contains configurable pain test, profile deletion, and logs. No fight, eat, or persistent AI.
 
 ---
 
@@ -140,7 +140,7 @@ Godot **4.7+**, Forward+. **Boot flow:** `main.gd` → `await NetworkService.boo
 | Live field: poll + render other players | Done |
 | Top stat bar (name only) | Done |
 | Onboarding spawn screen: name + color | Done |
-| Admin panel: configurable pain test + profile deletion | Done |
+| Admin panel: configurable pain test + profile deletion + logs | Done |
 | PWA portrait + landscape (no forced landscape lock) | Done |
 | Creature appearance customization | **Bypassed** |
 | Health / stamina (Godot) | **Removed** |
@@ -178,9 +178,9 @@ Implemented in [`scripts/autoload/network_service.gd`](creature-godot/scripts/au
 
 **Web export critical:** Supabase calls use browser `fetch` through `window.CreatureNet` in [`web/custom_shell.html`](creature-godot/web/custom_shell.html) — Godot `HTTPRequest` alone fails in wasm due to cross-origin isolation. Export preset must have `progressive_web_app/ensure_cross_origin_isolation_headers=false`. **Re-export after editing `custom_shell.html`.**
 
-Boot is silent on success (no “new player” / “restored save” toasts). Offline boot still toasts **"Could not reach server — starting locally"**.
+Boot is silent on success (no “new player” / “restored save” toasts). If auth succeeds but no row exists for the session, `GameState.player_data` stays empty so the onboarding screen appears. Offline boot still toasts **"Could not reach server — starting locally"**.
 
-**Temporary profile migration:** name-claim login and admin delete require [`supabase/migration-temp-profile-admin.sql`](supabase/migration-temp-profile-admin.sql). It intentionally allows broad update/delete by authenticated anonymous users and must be replaced by passkeys/password phrases before shipping.
+**Temporary profile migration:** name-claim login and admin delete require [`supabase/migration-temp-profile-admin.sql`](supabase/migration-temp-profile-admin.sql). It intentionally allows broad update/delete by authenticated anonymous users and must be replaced by passkeys/password phrases before shipping. Admin delete now requests `Prefer: return=representation` and only reports success if Supabase returns at least one deleted row; zero rows usually means the migration/RLS is missing.
 
 ### Live multiplayer (Godot)
 
@@ -191,7 +191,7 @@ Same poll interval as web (`GameConfig.POLL_OTHERS_SEC` = 1.5s):
 3. `world_map.sync_remote_creatures(rows)` spawns/updates/removes worms keyed by `user_id` (skips local player)
 4. Remote worms: `is_remote=true`, no selection ring, no local pathfinding — interpolate toward server `{x,y}` in `creature.apply_remote_state()`
 
-Test with two sessions (editor + browser, or two phones on `https://<ip>:8443`).
+Test with two sessions (editor + browser, or two phones on `https://<ip>:8443`). The admin log records fetched creature row counts and remote-sync counts (`other profiles`, `visible`) to diagnose missing remotes.
 
 ### Admin panel + mobile stress test
 
@@ -200,8 +200,14 @@ Top-right **admin** button in [`scripts/ui/sc2_hud.gd`](creature-godot/scripts/u
 - Configurable worm/object counts (defaults **20** worms + **50** props)
 - Auto-despawns after **30 seconds**
 - Profile list can refresh and delete stored creature profiles (requires temporary Supabase migration above)
+- Logs panel shows boot, profile claim/create/delete, fetch failures, and remote-sync counts
 - Use on phone after web export to gauge FPS / input lag; pair with Godot **Profiler → Monitors** for deeper analysis
 - `main.gd` / HUD consume touches over onboarding/admin UI so controls do not leak to the map
+
+### Map props
+
+- Buildings are procedural in `world_map.gd`: a box body, two sloped `BoxMesh` roof panels, and a door
+- Avoid using one rotated `PrismMesh` roof; it produced a giant wedge/needle-looking house on mobile
 
 ### Key files for agents
 
@@ -215,7 +221,7 @@ Top-right **admin** button in [`scripts/ui/sc2_hud.gd`](creature-godot/scripts/u
 | [`scripts/units/creature.gd`](creature-godot/scripts/units/creature.gd) | Worm mesh, fluid path movement, remote interpolation |
 | [`scripts/world/grid_nav.gd`](creature-godot/scripts/world/grid_nav.gd) | A* pathfinding, obstacle avoidance |
 | [`scripts/world/world_map.gd`](creature-godot/scripts/world/world_map.gd) | Terrain, trees/buildings, ground collision, player spawn, `sync_remote_creatures()` |
-| [`scripts/ui/sc2_hud.gd`](creature-godot/scripts/ui/sc2_hud.gd) | Top bar + admin panel |
+| [`scripts/ui/sc2_hud.gd`](creature-godot/scripts/ui/sc2_hud.gd) | Top bar + admin panel/logs |
 | [`scripts/debug/pain_test.gd`](creature-godot/scripts/debug/pain_test.gd) | Mobile stress test spawner |
 | [`scripts/autoload/network_service.gd`](creature-godot/scripts/autoload/network_service.gd) | Supabase REST + web `CreatureNet` bridge |
 | [`web/custom_shell.html`](creature-godot/web/custom_shell.html) | PWA shell, dev mode, **CreatureNet** fetch bridge |
@@ -328,8 +334,11 @@ Use `class_name Creature` and typed references. Generic `Node3D` + `grid_pos` ca
 - [x] Camera starts fully zoomed in; silent boot (no save/restore toasts)
 - [x] PWA any orientation (portrait + landscape without glitch)
 - [x] Onboarding name/color spawn screen + temporary name-claim login
-- [x] Admin panel with configurable pain test and profile deletion
+- [x] Admin panel with configurable pain test, profile deletion, and logs
 - [x] Larger 32×24 map with more trees and buildings
+- [x] Fix incognito/no-profile onboarding by not creating default local player on successful auth with no row
+- [x] Fix admin delete success reporting by checking returned deleted rows
+- [x] Fix odd house roof mesh by replacing prism roof with two box roof panels
 
 ---
 
@@ -353,6 +362,7 @@ Use `class_name Creature` and typed references. Generic `Node3D` + `grid_pos` ca
 7. If web says "Could not reach server": check COI export setting off, re-export, hard refresh
 8. PWA orientation glitch: ensure manifest `orientation: any`, export preset `orientation=0`, no landscape lock in shell
 9. Name-claim login/profile deletion: run [`supabase/migration-temp-profile-admin.sql`](supabase/migration-temp-profile-admin.sql) in Supabase SQL Editor
+10. If onboarding or remote players misbehave, open **admin → Logs** and check auth/profile rows, fetch count, and remote-sync count
 
 ### Phone testing
 
