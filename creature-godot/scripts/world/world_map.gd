@@ -65,18 +65,12 @@ func _make_tree() -> Node3D:
 func _spawn_player() -> void:
 	var data := GameState.player_data
 	if data.is_empty():
-		data = {
-			"id": "local_player",
-			"name": "Blob",
-			"color": GameConfig.CREATURE_COLORS[0],
-			"appearance": "cute",
-			"x": GameConfig.MAP_W / 2,
-			"y": GameConfig.MAP_H / 2,
-			"is_player": true,
-		}
+		data = GameConfig.default_player_data()
+		GameState.player_data = data
 	var player: Creature = CREATURE_SCENE.instantiate() as Creature
 	creatures_root.add_child(player)
 	player.setup(data)
+	NetworkService.create_creature(data)
 
 func get_player_creature() -> Creature:
 	return GameState.player_creature

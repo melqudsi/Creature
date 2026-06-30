@@ -21,6 +21,9 @@ const EAT_STAMINA := 3
 
 const NAME_MAX_LEN := 10
 
+const DEFAULT_CREATURE_COLOR := Color(0.22, 0.22, 0.26, 1.0)
+const DEFAULT_CREATURE_NAME := "Creature"
+
 const TREE_POSITIONS: Array[Vector2i] = [
 	Vector2i(3, 3), Vector2i(16, 4), Vector2i(5, 10),
 	Vector2i(14, 11), Vector2i(9, 2), Vector2i(12, 13),
@@ -30,6 +33,20 @@ const CREATURE_COLORS: Array[Color] = [
 	Color("#f48fb1"), Color("#81d4fa"), Color("#a5d6a7"),
 	Color("#fff176"), Color("#ce93d8"), Color("#ffab91"),
 ]
+
+static func default_player_data() -> Dictionary:
+	return {
+		"id": "local_player",
+		"name": DEFAULT_CREATURE_NAME,
+		"color": DEFAULT_CREATURE_COLOR,
+		"appearance": "worm",
+		"x": MAP_W / 2,
+		"y": MAP_H / 2,
+		"health": 100,
+		"stamina": 10,
+		"size_level": 1,
+		"is_player": true,
+	}
 
 ## Future Supabase (Phase 5)
 const SUPABASE_URL := "https://gimlaqcnfdbzwdaitfec.supabase.co"

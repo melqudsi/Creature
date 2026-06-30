@@ -4,15 +4,17 @@ extends Camera3D
 @export var follow_smooth := 8.0
 @export var edge_pan_speed := 12.0
 @export var edge_margin := 18
-@export var zoom_min := 5.0
-@export var zoom_max := 32.0
+@export var zoom_min := 8.0
+@export var zoom_max := 40.0
 @export var zoom_step := 1.0
 @export var pinch_zoom_sensitivity := 1.0
 
 const TAP_MOVE_THRESHOLD := 24.0
+const CAMERA_PITCH := deg_to_rad(38.0)
+const CAMERA_YAW := deg_to_rad(45.0)
 
 var _focus := Vector3.ZERO
-var _desired_distance := 14.0
+var _desired_distance := 22.0
 var _active_touches: Dictionary = {}
 var _touch_start := Vector2.ZERO
 var _touch_moved := false
@@ -26,7 +28,6 @@ var _world_map: WorldMap
 func _ready() -> void:
 	projection = PROJECTION_PERSPECTIVE
 	fov = 42.0
-	rotation_degrees = Vector3(-54, 45, 0)
 	_update_position(true)
 
 func bind_world_map(world_map: WorldMap) -> void:
@@ -133,6 +134,13 @@ func _handle_tap(screen_pos: Vector2, from_touch: bool) -> void:
 func _apply_zoom(delta: float) -> void:
 	_desired_distance = clampf(_desired_distance + delta, zoom_min, zoom_max)
 
+func _camera_offset() -> Vector3:
+	var cp := cos(CAMERA_PITCH)
+	var sp := sin(CAMERA_PITCH)
+	var sy := sin(CAMERA_YAW)
+	var cy := cos(CAMERA_YAW)
+	return Vector3(sy * cp, sp, cy * cp) * _desired_distance
+
 func _process(delta: float) -> void:
 	if follow_target and is_instance_valid(follow_target):
 		var wp := GameConfig.tile_to_world(follow_target.grid_pos)
@@ -178,9 +186,9 @@ func _clamp_focus() -> void:
 	_focus.z = clampf(_focus.z, 2.0, half_h * 2.0 - 2.0)
 
 func _update_position(_snap: bool) -> void:
-	var offset := Vector3(12, _desired_distance, 12)
-	global_position = _focus + offset
-	look_at(_focus + Vector3(0, 0.3, 0), Vector3.UP)
+	var look_target := _focus + Vector3(0, 0.25, 0)
+	global_position = look_target + _camera_offset()
+	look_at(look_target, Vector3.UP)
 
 func _handle_ground_click(screen_pos: Vector2) -> void:
 	if not follow_target or not follow_target.has_method("set_move_target"):

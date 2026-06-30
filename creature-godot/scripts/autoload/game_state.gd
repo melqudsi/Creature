@@ -15,6 +15,8 @@ var _stamina_regen_acc: float = 0.0
 func _ready() -> void:
 	for pos in GameConfig.TREE_POSITIONS:
 		blocked_tiles.append(pos)
+	if player_data.is_empty():
+		player_data = GameConfig.default_player_data()
 
 func register_creature(creature: Creature, data: Dictionary, is_player: bool = false) -> void:
 	var id: String = data.get("id", str(creature.get_instance_id()))

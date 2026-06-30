@@ -10,7 +10,7 @@ Maps the web Creature client to the Godot 4 project in `creature-godot/`.
 | [`js/api.js`](../js/api.js) | [`scripts/autoload/network_service.gd`](../scripts/autoload/network_service.gd) |
 | [`js/eyes.js`](../js/eyes.js) | [`scripts/units/creature_eyes.gd`](../scripts/units/creature_eyes.gd) |
 | [`js/renderer.js`](../js/renderer.js) | [`scripts/units/creature.gd`](../scripts/units/creature.gd) (meshes/materials) |
-| [`js/main.js`](../js/main.js) | [`scripts/ui/creature_create.gd`](../scripts/ui/creature_create.gd), [`scripts/main.gd`](../scripts/main.gd) |
+| [`js/main.js`](../js/main.js) | [`scripts/main.gd`](../scripts/main.gd), [`scripts/ui/creature_create.gd`](../scripts/ui/creature_create.gd) (legacy, bypassed) |
 | [`supabase/schema.sql`](../supabase/schema.sql) | Same tables when Phase 5 HTTP sync is added |
 
 ## Constants
@@ -38,6 +38,13 @@ Use the same publishable key as [`js/config.example.js`](../../js/config.example
 - Camera: [`scripts/camera/rts_camera.gd`](../scripts/camera/rts_camera.gd) — ~54° pitch, 45° yaw, follow + edge pan
 - UI theme: [`assets/themes/sc2_theme.tres`](../assets/themes/sc2_theme.tres)
 - HUD: [`scenes/ui/sc2_hud.tscn`](../scenes/ui/sc2_hud.tscn)
+
+## Boot flow (current)
+
+- `project.godot` → `run/main_scene = res://scenes/main.tscn` (no create screen)
+- `GameState._ready()` → `GameConfig.default_player_data()` if `player_data` empty
+- `world_map.gd` → `_spawn_player()` instantiates `creature.tscn`, calls `setup()`
+- Default appearance: worm only; color/name from `GameConfig`
 
 ## Known gaps vs web
 

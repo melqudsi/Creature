@@ -86,7 +86,7 @@ Constants in web `js/game.js` and Godot `scripts/config.gd` (`GameConfig`):
 
 **Web only (live):** fight, eat, grow, multiplayer polling, follow camera, tap-to-move.
 
-**Godot only (current scope):** spawn creature, tap/click ground to move, pinch/wheel zoom, WASD/edge pan. **Fight, eat, AI creatures, minimap, and portrait panel were removed** — only top stat bar + move hint remain.
+**Godot only (current scope):** boot straight into map with a default dark-gray worm (`GameConfig.default_player_data()`). Tap/click ground to move, pinch/wheel zoom, WASD/edge pan. Top stat bar only. **No customization screen, fight, eat, AI, minimap, or portrait panel.**
 
 ---
 
@@ -126,33 +126,52 @@ Keys: `js/config.example.js` (committed for GitHub Pages). Publishable key only.
 
 ## Godot client (`creature-godot/`)
 
-Godot **4.7+**, Forward+. Flow: `scenes/ui/creature_create.tscn` → `scenes/main.tscn`.
+Godot **4.7+**, Forward+. **Boot flow:** `project.godot` → `run/main_scene = res://scenes/main.tscn` (no create screen). `GameState._ready()` loads `GameConfig.default_player_data()`; `world_map.gd` spawns the player worm at map center.
 
 ### Current feature set
 
 | Feature | Status |
 |---------|--------|
-| Creature create (name, color, cute/ugly, 3D preview) | Done |
+| Default worm creature (dark gray, procedural mesh) | Done |
 | Tap/click ground to move | Done (mobile + desktop) |
-| Pinch / wheel zoom | Done |
+| Pinch / wheel zoom (scales camera offset, not just height) | Done |
 | Top stat bar (name, HP, stamina) | Done |
+| Creature create / customization | **Bypassed** (`creature_create.tscn` still in repo, unused) |
 | Fight / eat | **Removed** |
 | AI creatures | **Removed** |
 | Minimap, portrait panel | **Removed** |
+| Per-creature health bar above unit | Hidden (was briefly visible due to `_ready`/`setup` order — fixed) |
 | Supabase multiplayer | Not started (`NetworkService` stub) |
+
+### Worm mesh (important for agents)
+
+Procedural body in [`scripts/units/creature.gd`](creature-godot/scripts/units/creature.gd):
+
+- Five overlapping `CapsuleMesh` segments on `$Body`, laid **horizontally along local +Z** (head at front)
+- Each segment: `rotation_degrees = Vector3(90, 0, 0)` so capsule length runs forward; `position.y = radius * 0.92` so belly sits on ground
+- **`body_root` must stay at zero rotation** — do not rotate the whole body 90° on X; that stacks segment Z positions into world Y and looks like a vertical “snowman”
+- Tiny emissive eye spheres on the head; slither wiggle in `_apply_slither()`
+- Appearance is always `"worm"`; color from `GameConfig.DEFAULT_CREATURE_COLOR` (~`Color(0.22, 0.22, 0.26)`)
+
+To tune the silhouette, edit `SEGMENT_SPECS` (z spacing, radius, length overlap) — not the scene file.
 
 ### Key files for agents
 
 | File | Role |
 |------|------|
+| [`project.godot`](creature-godot/project.godot) | Main scene = `scenes/main.tscn`; touch → emulated mouse |
+| [`scripts/config.gd`](creature-godot/scripts/config.gd) | Shared constants + `default_player_data()` |
+| [`scripts/autoload/game_state.gd`](creature-godot/scripts/autoload/game_state.gd) | Player data, creature registry, stamina/AFK |
 | [`scripts/main.gd`](creature-godot/scripts/main.gd) | Boots world, forwards pointer input to camera |
-| [`scripts/camera/rts_camera.gd`](creature-godot/scripts/camera/rts_camera.gd) | Tap-to-move, pinch zoom, raycast to ground |
-| [`scripts/ui/creature_create.gd`](creature-godot/scripts/ui/creature_create.gd) | Spawn screen; mobile keyboard on web |
-| [`scripts/units/creature.gd`](creature-godot/scripts/units/creature.gd) | Unit logic, movement, spawn animation |
-| [`scripts/world/world_map.gd`](creature-godot/scripts/world/world_map.gd) | Terrain, ground collision, player spawn |
+| [`scripts/camera/rts_camera.gd`](creature-godot/scripts/camera/rts_camera.gd) | Tap-to-move, pinch zoom, raycast; `_camera_offset()` scales full 3D offset by `_desired_distance` |
+| [`scripts/units/creature.gd`](creature-godot/scripts/units/creature.gd) | Worm mesh, movement, spawn animation, health bar (hidden) |
+| [`scripts/world/world_map.gd`](creature-godot/scripts/world/world_map.gd) | Terrain, ground collision, player spawn, click marker |
+| [`scripts/ui/sc2_hud.gd`](creature-godot/scripts/ui/sc2_hud.gd) | Top bar only (minimap/portrait removed from scene) |
 | [`scripts/autoload/network_service.gd`](creature-godot/scripts/autoload/network_service.gd) | Supabase seam (stub) |
 | [`web/custom_shell.html`](creature-godot/web/custom_shell.html) | PWA shell, dev mode, mobile fullscreen |
 | [`export_presets.cfg`](creature-godot/export_presets.cfg) | Web export preset |
+
+Legacy (unused in current boot flow): [`scripts/ui/creature_create.gd`](creature-godot/scripts/ui/creature_create.gd), [`scenes/ui/creature_create.tscn`](creature-godot/scenes/ui/creature_create.tscn).
 
 Details: [`creature-godot/README.md`](creature-godot/README.md)
 
@@ -219,9 +238,7 @@ Touch handling lives in `rts_camera.gd` + input forwarding in `main.gd`:
 - **Click marker:** brief flash via `world_map.show_click_marker()` confirms tap registered
 - **Project setting:** `input_devices/pointing/emulate_mouse_from_touch=true` (touch also arrives as emulated mouse; debounced)
 
-**Spawn screen mobile keyboard:** `creature_create.gd` calls `DisplayServer.virtual_keyboard_show()` on web only. Do **not** use `DisplayServer.VIRTUAL_KEYBOARD_TYPE_DEFAULT` — use the 2-arg form or Godot 4.7 fails to compile.
-
-**Spawn screen preview:** `setup.call_deferred()` on preview creature so meshes exist; preview id skips grid positioning in `creature.gd`.
+**Spawn screen (legacy):** `creature_create.gd` still exists if customization is re-enabled. On web it calls `DisplayServer.virtual_keyboard_show()` — do **not** use `DisplayServer.VIRTUAL_KEYBOARD_TYPE_DEFAULT` (Godot 4.7 compile error). Preview creature uses `setup.call_deferred()` and id `"preview"` to skip grid registration.
 
 ### Mobile fullscreen / PWA
 
@@ -239,8 +256,8 @@ Use `class_name Creature` and typed references. Generic `Node3D` + `grid_pos` ca
 
 - [ ] Godot ↔ Supabase shared multiplayer (wire `NetworkService` HTTP)
 - [ ] Re-add fight/eat to Godot (removed intentionally for now)
+- [ ] Re-enable creature customization / create screen (scene still in repo)
 - [ ] Passkey / persistent creature identity
-- [ ] Visual HP/stamina on creatures (hide bars)
 - [ ] Shared world: web + Godot players together
 - [ ] Eat/fight RLS hardening on web (Postgres RPC)
 - [ ] Map expansion, ability system
@@ -251,6 +268,10 @@ Use `class_name Creature` and typed references. Generic `Node3D` + `grid_pos` ca
 - [x] Mobile tap-to-move + pinch zoom on Godot web
 - [x] Dev mode to avoid clearing site data between exports
 - [x] Simplified Godot HUD (spawn + move only)
+- [x] Removed customization — boot straight into map with default worm
+- [x] Camera zoom scales full offset toward subject (not just lowering camera)
+- [x] Horizontal worm mesh (capsule segments along ground; fixed “snowman” stacking bug)
+- [x] Player health bar hidden above creature
 
 ---
 
@@ -266,10 +287,13 @@ Use `class_name Creature` and typed references. Generic `Node3D` + `grid_pos` ca
 ### Godot
 
 1. Read [`creature-godot/docs/godot-porting-notes.md`](creature-godot/docs/godot-porting-notes.md)
-2. **F5 in editor first**, then web export + `serve-web-https.py`
-3. Edit `web/custom_shell.html` for HTML/JS changes — re-export to apply
-4. Touch/zoom changes → `scripts/camera/rts_camera.gd`, `scripts/main.gd`
-5. `NetworkService` is the Supabase seam — mirror `js/api.js`
+2. **F5 in editor first** — main scene spawns default worm at map center (no create screen)
+3. Worm look → `scripts/units/creature.gd` (`SEGMENT_SPECS`, per-segment `SEGMENT_ROT`; do not rotate `body_root` 90° on X)
+4. Defaults → `scripts/config.gd` (`default_player_data()`), spawn → `scripts/world/world_map.gd`
+5. Then web export + `serve-web-https.py` for phone testing
+6. Edit `web/custom_shell.html` for HTML/JS changes — re-export to apply
+7. Touch/zoom → `scripts/camera/rts_camera.gd`, `scripts/main.gd`
+8. `NetworkService` is the Supabase seam — mirror `js/api.js`
 
 ### Phone testing
 
@@ -287,7 +311,9 @@ Use `class_name Creature` and typed references. Generic `Node3D` + `grid_pos` ca
 3. Godot compile error if wrong `DisplayServer` keyboard enum — breaks entire spawn screen script
 4. Service workers cache old wasm/pck — use dev server ports or `?dev=1`
 5. iOS browser fullscreen API does not work for canvas — use PWA Add to Home Screen
-6. `_first.txt` and Postgres password — never commit
+6. Worm looked like stacked spheres (“snowman”) if `body_root.rotation_degrees = Vector3(90,0,0)` — segments must be rotated individually, body root stays at zero
+7. Green rectangle above player was the health bar showing before `setup()` — keep `health_bar.visible = false` for player
+8. `_first.txt` and Postgres password — never commit
 
 ---
 
