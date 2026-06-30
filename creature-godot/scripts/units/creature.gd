@@ -32,11 +32,10 @@ var is_player := false
 var is_moving := false
 var is_spawning := false
 
-var _move_from := Vector2.ZERO
-var _move_to := Vector2.ZERO
-var _move_t := 0.0
 var _move_dir := Vector2.ZERO
 var _move_target: Vector2 = Vector2(-1, -1)
+var _path: Array[Vector2] = []
+var _stamina_travel_acc := 0.0
 var _walk_phase := 0.0
 var _spawn_t := 0.0
 var _breath_phase := 0.0
@@ -63,7 +62,7 @@ func setup(data: Dictionary) -> void:
 	is_player = data.get("is_player", false)
 	is_asleep = data.get("is_asleep", false)
 	_apply_appearance()
-	_update_transform(true)
+	_update_transform(true, 0.0)
 	_update_health_bar()
 	health_bar.visible = false
 	selection_ring.visible = is_player
@@ -207,6 +206,8 @@ func _process(delta: float) -> void:
 			spawn_fx.visible = false
 			position.y = 0.0
 			_reset_body_pose()
+			if _move_target.x >= 0:
+				_replan_path()
 		return
 
 	if is_asleep:
@@ -221,33 +222,18 @@ func _process(delta: float) -> void:
 		rotation.x = 0.0
 
 	if is_moving:
-		_move_t += delta * GameConfig.MOVE_TILES_PER_SEC
-		var t := clampf(_move_t, 0.0, 1.0)
-		var ease := t * t * (3.0 - 2.0 * t)
-		grid_pos = _move_from.lerp(_move_to, ease)
-		_walk_phase += delta * 12.0
-		_move_dir = (_move_to - _move_from).normalized()
-		_apply_slither(delta)
-		if t >= 1.0:
-			grid_pos = _move_to
-			is_moving = false
-			_reset_body_pose()
-			spend_stamina(GameConfig.STAMINA_PER_TILE)
-			if is_player:
-				NetworkService.update_creature(creature_id, {"x": grid_pos.x, "y": grid_pos.y, "stamina": stamina})
+		_advance_along_path(delta)
 	else:
 		_move_dir = Vector2.ZERO
 		if not is_asleep:
 			_reset_body_pose()
-		if not is_asleep and _move_target.x >= 0:
-			_try_step_toward_target()
 
-	_update_transform(false)
+	_update_transform(false, delta)
 
 	if is_player and not is_moving:
 		GameState.tick_player_stamina(delta, false)
 
-func _update_transform(snap: bool) -> void:
+func _update_transform(snap: bool, delta: float) -> void:
 	if creature_id == "preview":
 		return
 	var wp := GameConfig.tile_to_world(grid_pos)
@@ -255,8 +241,9 @@ func _update_transform(snap: bool) -> void:
 	position.z = wp.z
 	if snap:
 		position.y = 0.0
-	if not is_asleep and is_moving:
-		rotation.y = atan2(_move_dir.x, _move_dir.y)
+	if not is_asleep and is_moving and _move_dir.length_squared() > 0.0001:
+		var target_rot := atan2(_move_dir.x, _move_dir.y)
+		rotation.y = lerp_angle(rotation.y, target_rot, 0.18 if snap else delta * 14.0)
 
 func set_move_target(target: Vector2) -> void:
 	if is_asleep:
@@ -266,30 +253,97 @@ func set_move_target(target: Vector2) -> void:
 		GameState.note_player_input()
 	if is_spawning:
 		return
+	_replan_path()
 
-func _try_step_toward_target() -> void:
-	if stamina < GameConfig.STAMINA_PER_TILE:
-		_move_target = Vector2(-1, -1)
+func _replan_path() -> void:
+	if _move_target.x < 0:
 		return
-	var my_id: String = creature_id
-	var next := GridNav.step_toward(
-		grid_pos, _move_target,
+	if stamina < GameConfig.STAMINA_PER_TILE and _stamina_travel_acc <= 0.0:
+		_stop_movement()
+		return
+	_path = GridNav.find_path(
+		grid_pos,
+		_move_target,
 		GameState.blocked_tiles,
-		GameState.get_unit_tiles(my_id)
+		GameState.get_unit_tiles(creature_id)
 	)
-	if Vector2(next) == grid_pos.round():
-		if Vector2i(int(round(grid_pos.x)), int(round(grid_pos.y))) == Vector2i(int(round(_move_target.x)), int(round(_move_target.y))):
+	if _path.is_empty():
+		if _has_reached_target():
 			_move_target = Vector2(-1, -1)
+		is_moving = false
 		return
-	_begin_move(Vector2(next))
-
-func _begin_move(next: Vector2) -> void:
-	if is_moving or is_asleep:
-		return
-	_move_from = grid_pos
-	_move_to = next
-	_move_t = 0.0
 	is_moving = true
+
+func _advance_along_path(delta: float) -> void:
+	if _path.is_empty():
+		_finish_path()
+		return
+	if stamina < GameConfig.STAMINA_PER_TILE and _stamina_travel_acc <= 0.0:
+		_stop_movement()
+		return
+
+	var waypoint := _path[0]
+	var to_waypoint := waypoint - grid_pos
+	var dist := to_waypoint.length()
+	var step := delta * GameConfig.MOVE_TILES_PER_SEC
+
+	if dist <= 0.001:
+		_path.remove_at(0)
+		if _path.is_empty():
+			_finish_path()
+		return
+
+	if step >= dist:
+		if not _consume_travel_stamina(dist):
+			_stop_movement()
+			return
+		grid_pos = waypoint
+		_path.remove_at(0)
+		_move_dir = to_waypoint / dist
+		_walk_phase += delta * 12.0
+		_apply_slither(delta)
+		if _path.is_empty():
+			_finish_path()
+		return
+
+	if not _consume_travel_stamina(step):
+		_stop_movement()
+		return
+
+	_move_dir = to_waypoint / dist
+	grid_pos += _move_dir * step
+	_walk_phase += delta * 12.0
+	_apply_slither(delta)
+
+func _consume_travel_stamina(distance: float) -> bool:
+	_stamina_travel_acc += distance
+	while _stamina_travel_acc >= 1.0:
+		if stamina < GameConfig.STAMINA_PER_TILE:
+			_stamina_travel_acc = 0.0
+			return false
+		_stamina_travel_acc -= 1.0
+		spend_stamina(GameConfig.STAMINA_PER_TILE)
+		if is_player:
+			NetworkService.update_creature(creature_id, {"x": grid_pos.x, "y": grid_pos.y, "stamina": stamina})
+	return true
+
+func _finish_path() -> void:
+	is_moving = false
+	_reset_body_pose()
+	if _has_reached_target():
+		_move_target = Vector2(-1, -1)
+	elif _move_target.x >= 0:
+		_replan_path()
+
+func _stop_movement() -> void:
+	is_moving = false
+	_path.clear()
+	_reset_body_pose()
+
+func _has_reached_target() -> bool:
+	if _move_target.x < 0:
+		return true
+	return grid_pos.distance_to(_move_target) <= 0.35
 
 func set_stamina(value: int) -> void:
 	stamina = clampi(value, 0, GameConfig.STAMINA_MAX)
@@ -316,6 +370,8 @@ func fall_asleep() -> void:
 	if is_asleep:
 		return
 	is_asleep = true
+	_stop_movement()
+	_move_target = Vector2(-1, -1)
 	if size_level > 1:
 		size_level -= 1
 		_apply_appearance()

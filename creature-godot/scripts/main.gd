@@ -3,6 +3,7 @@ extends Node3D
 @onready var world_map: WorldMap = $WorldMap
 @onready var rts_camera: Camera3D = $RTSCamera
 @onready var hud: Control = $CanvasLayer/SC2Hud
+@onready var pain_test: Node = $PainTest
 
 func _ready() -> void:
 	GameState.check_afk_sleep()
@@ -11,6 +12,8 @@ func _ready() -> void:
 		rts_camera.bind_world_map(world_map)
 	if player:
 		rts_camera.set_follow(player)
+	if hud.has_method("bind_pain_test"):
+		hud.bind_pain_test(pain_test)
 
 func _process(_delta: float) -> void:
 	GameState.check_afk_sleep()
@@ -24,7 +27,21 @@ func _input(event: InputEvent) -> void:
 		_forward_pointer_input(event)
 
 func _forward_pointer_input(event: InputEvent) -> void:
+	if _is_ui_pointer_event(event):
+		return
 	if not rts_camera.has_method("process_pointer_input"):
 		return
 	if rts_camera.process_pointer_input(event):
 		get_viewport().set_input_as_handled()
+
+func _is_ui_pointer_event(event: InputEvent) -> bool:
+	var screen_pos := Vector2.ZERO
+	if event is InputEventScreenTouch:
+		screen_pos = event.position
+	elif event is InputEventMouseButton:
+		screen_pos = event.position
+	else:
+		return false
+	if hud.has_method("consumes_pointer_at") and hud.consumes_pointer_at(screen_pos):
+		return true
+	return false

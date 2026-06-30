@@ -86,7 +86,7 @@ Constants in web `js/game.js` and Godot `scripts/config.gd` (`GameConfig`):
 
 **Web only (live):** fight, eat, grow, multiplayer polling, follow camera, tap-to-move.
 
-**Godot only (current scope):** boot straight into map with a default dark-gray worm (`GameConfig.default_player_data()`). Tap/click ground to move, pinch/wheel zoom, WASD/edge pan. Top stat bar only. **No customization screen, fight, eat, AI, minimap, or portrait panel.**
+**Godot only (current scope):** boot straight into map with a default dark-gray worm. **Fluid movement** in any direction with **A\*** pathfinding around trees/units. Tap/click ground to move, pinch/wheel zoom, WASD/edge pan. Top stat bar + **pain test** stress button (dev). No customization screen, fight, eat, or persistent AI.
 
 ---
 
@@ -133,12 +133,15 @@ Godot **4.7+**, Forward+. **Boot flow:** `project.godot` → `run/main_scene = r
 | Feature | Status |
 |---------|--------|
 | Default worm creature (dark gray, procedural mesh) | Done |
+| Fluid movement (any angle, not grid-locked 90° turns) | Done |
+| A* pathfinding around trees and other units | Done |
 | Tap/click ground to move | Done (mobile + desktop) |
 | Pinch / wheel zoom (scales camera offset, not just height) | Done |
 | Top stat bar (name, HP, stamina) | Done |
+| Pain test stress button (20 wanderers + 50 props, 30s) | Done |
 | Creature create / customization | **Bypassed** (`creature_create.tscn` still in repo, unused) |
 | Fight / eat | **Removed** |
-| AI creatures | **Removed** |
+| Persistent AI creatures | **Removed** (pain test spawns temporary wanderers) |
 | Minimap, portrait panel | **Removed** |
 | Per-creature health bar above unit | Hidden (was briefly visible due to `_ready`/`setup` order — fixed) |
 | Supabase multiplayer | Not started (`NetworkService` stub) |
@@ -155,6 +158,22 @@ Procedural body in [`scripts/units/creature.gd`](creature-godot/scripts/units/cr
 
 To tune the silhouette, edit `SEGMENT_SPECS` (z spacing, radius, length overlap) — not the scene file.
 
+### Movement and pathfinding
+
+- **Continuous movement** in [`scripts/units/creature.gd`](creature-godot/scripts/units/creature.gd): creature glides toward waypoints at any angle; rotation lerps toward travel direction
+- **A\*** in [`scripts/world/grid_nav.gd`](creature-godot/scripts/world/grid_nav.gd): 8-directional path around `GameState.blocked_tiles` (trees) and other units; line-of-sight path simplification removes extra corners
+- Click while moving replans from current position
+- Stamina still costs 1 per tile of distance traveled (fractional tracking on diagonals)
+
+### Mobile stress test (“pain test”)
+
+Top-right HUD button in [`scripts/ui/sc2_hud.gd`](creature-godot/scripts/ui/sc2_hud.gd), logic in [`scripts/debug/pain_test.gd`](creature-godot/scripts/debug/pain_test.gd):
+
+- Spawns **20** temporary wandering worms + **50** random props (cubes, spheres, pyramids, cylinders)
+- Auto-despawns after **30 seconds**
+- Use on phone after web export to gauge FPS / input lag; pair with Godot **Profiler → Monitors** for deeper analysis
+- `main.gd` blocks ground taps over the button rect so it works on touch web
+
 ### Key files for agents
 
 | File | Role |
@@ -164,9 +183,11 @@ To tune the silhouette, edit `SEGMENT_SPECS` (z spacing, radius, length overlap)
 | [`scripts/autoload/game_state.gd`](creature-godot/scripts/autoload/game_state.gd) | Player data, creature registry, stamina/AFK |
 | [`scripts/main.gd`](creature-godot/scripts/main.gd) | Boots world, forwards pointer input to camera |
 | [`scripts/camera/rts_camera.gd`](creature-godot/scripts/camera/rts_camera.gd) | Tap-to-move, pinch zoom, raycast; `_camera_offset()` scales full 3D offset by `_desired_distance` |
-| [`scripts/units/creature.gd`](creature-godot/scripts/units/creature.gd) | Worm mesh, movement, spawn animation, health bar (hidden) |
+| [`scripts/units/creature.gd`](creature-godot/scripts/units/creature.gd) | Worm mesh, fluid path movement, health bar (hidden) |
+| [`scripts/world/grid_nav.gd`](creature-godot/scripts/world/grid_nav.gd) | A* pathfinding, obstacle avoidance |
 | [`scripts/world/world_map.gd`](creature-godot/scripts/world/world_map.gd) | Terrain, ground collision, player spawn, click marker |
-| [`scripts/ui/sc2_hud.gd`](creature-godot/scripts/ui/sc2_hud.gd) | Top bar only (minimap/portrait removed from scene) |
+| [`scripts/ui/sc2_hud.gd`](creature-godot/scripts/ui/sc2_hud.gd) | Top bar + pain test button |
+| [`scripts/debug/pain_test.gd`](creature-godot/scripts/debug/pain_test.gd) | Mobile stress test spawner |
 | [`scripts/autoload/network_service.gd`](creature-godot/scripts/autoload/network_service.gd) | Supabase seam (stub) |
 | [`web/custom_shell.html`](creature-godot/web/custom_shell.html) | PWA shell, dev mode, mobile fullscreen |
 | [`export_presets.cfg`](creature-godot/export_presets.cfg) | Web export preset |
@@ -272,6 +293,8 @@ Use `class_name Creature` and typed references. Generic `Node3D` + `grid_pos` ca
 - [x] Camera zoom scales full offset toward subject (not just lowering camera)
 - [x] Horizontal worm mesh (capsule segments along ground; fixed “snowman” stacking bug)
 - [x] Player health bar hidden above creature
+- [x] Fluid any-direction movement with A* pathfinding around obstacles
+- [x] Pain test HUD button for 30s mobile stress test
 
 ---
 
@@ -289,11 +312,13 @@ Use `class_name Creature` and typed references. Generic `Node3D` + `grid_pos` ca
 1. Read [`creature-godot/docs/godot-porting-notes.md`](creature-godot/docs/godot-porting-notes.md)
 2. **F5 in editor first** — main scene spawns default worm at map center (no create screen)
 3. Worm look → `scripts/units/creature.gd` (`SEGMENT_SPECS`, per-segment `SEGMENT_ROT`; do not rotate `body_root` 90° on X)
-4. Defaults → `scripts/config.gd` (`default_player_data()`), spawn → `scripts/world/world_map.gd`
-5. Then web export + `serve-web-https.py` for phone testing
-6. Edit `web/custom_shell.html` for HTML/JS changes — re-export to apply
-7. Touch/zoom → `scripts/camera/rts_camera.gd`, `scripts/main.gd`
-8. `NetworkService` is the Supabase seam — mirror `js/api.js`
+4. Movement/pathing → `scripts/units/creature.gd`, `scripts/world/grid_nav.gd`
+5. Defaults → `scripts/config.gd` (`default_player_data()`), spawn → `scripts/world/world_map.gd`
+6. Mobile perf → export web, tap **pain test**, watch FPS; use Godot Profiler for details
+7. Then web export + `serve-web-https.py` for phone testing
+8. Edit `web/custom_shell.html` for HTML/JS changes — re-export to apply
+9. Touch/zoom → `scripts/camera/rts_camera.gd`, `scripts/main.gd`
+10. `NetworkService` is the Supabase seam — mirror `js/api.js`
 
 ### Phone testing
 
@@ -332,6 +357,7 @@ Use `class_name Creature` and typed references. Generic `Node3D` + `grid_pos` ca
 | Input | Action |
 |-------|--------|
 | Tap / click ground | Move |
+| **pain test** (top-right) | 30s stress test |
 | Pinch / mouse wheel | Zoom |
 | WASD / screen edge | Pan camera |
 

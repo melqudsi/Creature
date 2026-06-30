@@ -2,7 +2,7 @@
 
 Local-first 3D port of the web Creature game. Isometric RTS camera with original procedural assets — not affiliated with Blizzard.
 
-**Current scope:** boot straight into the map with a default dark-gray alien worm. Tap/click to move, pinch/wheel to zoom. Top stat bar only. No customization, fight, eat, AI, minimap, or portrait.
+**Current scope:** boot straight into the map with a default dark-gray alien worm. Fluid any-direction movement with A* pathfinding. Tap/click to move, pinch/wheel to zoom. Top stat bar + **pain test** stress button. No customization, fight, eat, or persistent AI.
 
 ## Requirements
 
@@ -27,6 +27,7 @@ project.godot (main_scene = main.tscn)
 | Input | Action |
 |-------|--------|
 | Tap / click ground | Move creature |
+| **pain test** (top-right) | 30s stress test (20 wanderers + 50 props) |
 | Pinch / mouse wheel | Zoom camera |
 | WASD | Pan camera |
 | Mouse at screen edge | Pan camera |
@@ -36,11 +37,13 @@ project.godot (main_scene = main.tscn)
 | Feature | Status |
 |---------|--------|
 | Default worm (procedural capsules + slither) | Done |
+| Fluid movement + A* pathfinding | Done |
 | 20×15 grid, trees, movement, stamina regen, AFK sleep | Done |
 | Top stat bar (name, HP, stamina) | Done |
 | Mobile web tap + pinch | Done |
+| Pain test stress button | Done |
 | Creature create / color picker | Bypassed (scene still in repo) |
-| Fight / eat / AI / minimap / portrait | Removed |
+| Fight / eat / persistent AI / minimap / portrait | Removed |
 
 ## Default player
 
@@ -70,6 +73,35 @@ All mesh logic is procedural in `scripts/units/creature.gd`. Scene file `scenes/
 
 **Health bar:** `HealthBar` node exists for future AI/enemies but stays `visible = false` for the player. Set in both `_ready()` and `setup()` — `_ready()` runs before `is_player` is known.
 
+## Movement and pathfinding
+
+`scripts/units/creature.gd`:
+
+- Continuous movement toward path waypoints at any angle (not Manhattan 90° steps)
+- Smooth rotation via `lerp_angle` while moving
+- Stamina: 1 per tile of distance (fractional accumulator on diagonals)
+
+`scripts/world/grid_nav.gd`:
+
+- A* with 8 neighbors; avoids trees (`GameState.blocked_tiles`) and other unit tiles
+- Line-of-sight simplification to skip redundant corners
+- If destination is blocked, routes to nearest walkable tile
+
+New click while moving replans from current position.
+
+## Pain test (mobile stress)
+
+Top-right **pain test** button → [`scripts/debug/pain_test.gd`](scripts/debug/pain_test.gd):
+
+| Spawn | Behavior |
+|-------|----------|
+| 20 worms | Random colors, fast wander AI, high stamina |
+| 50 props | Random cubes, spheres, pyramids, cylinders |
+
+Auto-despawns after **30 seconds**. Button disabled during run. `main.gd` ignores ground taps over the button on touch web.
+
+For deeper profiling: Godot **Debugger → Monitors** (FPS, draw calls) while pain test runs.
+
 ## Camera and input
 
 `scripts/camera/rts_camera.gd`:
@@ -78,7 +110,7 @@ All mesh logic is procedural in `scripts/units/creature.gd`. Scene file `scenes/
 - Zoom: `_desired_distance` scales the full `_camera_offset()` vector (moves camera toward subject, not just lowering Y)
 - Ground pick: physics raycast on terrain collider; brief click marker via `world_map.show_click_marker()`
 
-`scripts/main.gd` forwards touch/mouse to `rts_camera.process_pointer_input()` from both `_input` and `_unhandled_input` (web emulated mouse).
+`scripts/main.gd` forwards touch/mouse to `rts_camera.process_pointer_input()` from both `_input` and `_unhandled_input` (web emulated mouse). Skips forwarding when pointer is over the pain test button.
 
 Project setting: `input_devices/pointing/emulate_mouse_from_touch=true`
 
@@ -89,11 +121,13 @@ Project setting: `input_devices/pointing/emulate_mouse_from_touch=true`
 | `project.godot` | Main scene, autoloads, touch emulation |
 | `scripts/config.gd` | Shared constants + `default_player_data()` |
 | `scripts/autoload/game_state.gd` | Player data, creatures dict, stamina/AFK |
-| `scripts/main.gd` | Boot wiring, pointer forwarding |
+| `scripts/main.gd` | Boot wiring, pointer forwarding, UI tap guard |
 | `scripts/camera/rts_camera.gd` | Tap, pinch, zoom, raycast, follow |
-| `scripts/units/creature.gd` | Worm mesh, movement, spawn anim (`class_name Creature`) |
+| `scripts/units/creature.gd` | Worm mesh, fluid path movement (`class_name Creature`) |
+| `scripts/world/grid_nav.gd` | A* pathfinding |
 | `scripts/world/world_map.gd` | Map, ground collision, player spawn |
-| `scripts/ui/sc2_hud.gd` | Top bar only |
+| `scripts/ui/sc2_hud.gd` | Top bar + pain test button |
+| `scripts/debug/pain_test.gd` | Stress test spawner |
 | `web/custom_shell.html` | HTML shell — edit this, not `index.html` |
 
 **Legacy (unused):** `scenes/ui/creature_create.tscn`, `scripts/ui/creature_create.gd` — customization flow bypassed; safe to re-wire if needed.
@@ -171,7 +205,7 @@ Desktop-only HTTP: `python serve-web.py` → `http://localhost:8080`
 
 ```
 scenes/     main, world, creature, UI (hud + legacy create)
-scripts/    autoload, units, camera, world, ui
+scripts/    autoload, units, camera, world, ui, debug
 web/        custom_shell.html, export output, manifest
 assets/     themes (SC2-inspired UI)
 docs/       godot-porting-notes.md
