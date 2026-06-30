@@ -16,7 +16,7 @@ var _save_dirty := false
 var _save_timer := 0.0
 var _web_request_pending := false
 var _web_request_result: Dictionary = {}
-var _world_map: WorldMap
+var _world_map: Node
 var _poll_accum := 0.0
 var _poll_in_flight := false
 
@@ -46,7 +46,7 @@ func _process(delta: float) -> void:
 			_poll_accum = 0.0
 			_poll_remote_creatures()
 
-func start_creature_poll(world_map: WorldMap) -> void:
+func start_creature_poll(world_map: Node) -> void:
 	_world_map = world_map
 	_poll_accum = GameConfig.POLL_OTHERS_SEC
 	_poll_remote_creatures()
@@ -66,7 +66,7 @@ func _poll_remote_creatures() -> void:
 	_poll_in_flight = true
 	var rows: Array = await fetch_all_creatures()
 	_poll_in_flight = false
-	if _world_map and is_instance_valid(_world_map):
+	if _world_map and is_instance_valid(_world_map) and _world_map.has_method("sync_remote_creatures"):
 		_world_map.sync_remote_creatures(rows)
 
 func is_online() -> bool:

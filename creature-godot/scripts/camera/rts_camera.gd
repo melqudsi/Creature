@@ -23,7 +23,7 @@ var _last_pinch_dist := 0.0
 var _last_tap_ms := 0
 var _last_tap_pos := Vector2.ZERO
 
-var _world_map: WorldMap
+var _world_map: Node
 
 func _ready() -> void:
 	projection = PROJECTION_PERSPECTIVE
@@ -31,7 +31,7 @@ func _ready() -> void:
 	_desired_distance = zoom_min
 	_update_position(true)
 
-func bind_world_map(world_map: WorldMap) -> void:
+func bind_world_map(world_map: Node) -> void:
 	_world_map = world_map
 
 func process_pointer_input(event: InputEvent) -> bool:
@@ -187,6 +187,8 @@ func _clamp_focus() -> void:
 	_focus.z = clampf(_focus.z, 2.0, half_h * 2.0 - 2.0)
 
 func _update_position(_snap: bool) -> void:
+	if not is_inside_tree():
+		return
 	var look_target := _focus + Vector3(0, 0.25, 0)
 	global_position = look_target + _camera_offset()
 	look_at(look_target, Vector3.UP)
@@ -220,7 +222,7 @@ func _handle_ground_click(screen_pos: Vector2) -> void:
 	var tile := Vector2(hit.x / GameConfig.TILE_SIZE, hit.z / GameConfig.TILE_SIZE)
 	follow_target.set_move_target(tile)
 	GameState.note_player_input()
-	if _world_map:
+	if _world_map and _world_map.has_method("show_click_marker"):
 		_world_map.show_click_marker(Vector3(hit.x, 0, hit.z))
 
 func set_follow(target: Creature) -> void:

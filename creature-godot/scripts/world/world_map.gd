@@ -12,13 +12,30 @@ var _remote_by_user: Dictionary = {} # user_id -> Creature
 var _buildings_root: Node3D
 
 func _ready() -> void:
+	_resolve_child_roots()
 	_ensure_buildings_root()
 	_build_ground()
 	_build_trees()
 	_build_buildings()
-	click_marker.visible = false
+	if click_marker:
+		click_marker.visible = false
+
+func _resolve_child_roots() -> void:
+	ground = get_node_or_null("Ground") as MeshInstance3D
+	trees_root = get_node_or_null("Trees") as Node3D
+	creatures_root = get_node_or_null("Creatures") as Node3D
+	click_marker = get_node_or_null("ClickMarker") as MeshInstance3D
+	if trees_root == null:
+		trees_root = Node3D.new()
+		trees_root.name = "Trees"
+		add_child(trees_root)
+	if creatures_root == null:
+		creatures_root = Node3D.new()
+		creatures_root.name = "Creatures"
+		add_child(creatures_root)
 
 func spawn_player() -> void:
+	_resolve_child_roots()
 	var data := GameState.player_data
 	if data.is_empty():
 		data = GameConfig.default_player_data()

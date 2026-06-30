@@ -43,12 +43,25 @@ var _segments: Array[MeshInstance3D] = []
 var _eyes: Array[MeshInstance3D] = []
 
 func _ready() -> void:
+	_resolve_child_refs()
 	_style_selection_ring()
-	sleep_fx.visible = false
-	spawn_fx.visible = false
-	health_bar.visible = false
+	if sleep_fx:
+		sleep_fx.visible = false
+	if spawn_fx:
+		spawn_fx.visible = false
+	if health_bar:
+		health_bar.visible = false
+
+func _resolve_child_refs() -> void:
+	body_root = get_node_or_null("Body") as Node3D
+	selection_ring = get_node_or_null("SelectionRing") as MeshInstance3D
+	health_bar = get_node_or_null("HealthBar") as Node3D
+	health_fill = get_node_or_null("HealthBar/Fill") as MeshInstance3D
+	sleep_fx = get_node_or_null("SleepFX") as Node3D
+	spawn_fx = get_node_or_null("SpawnFX") as Node3D
 
 func setup(data: Dictionary) -> void:
+	_resolve_child_refs()
 	creature_id = data.get("id", str(get_instance_id()))
 	set_meta("creature_id", creature_id)
 	creature_name = str(data.get("name", GameConfig.DEFAULT_CREATURE_NAME)).substr(0, GameConfig.NAME_MAX_LEN)
@@ -61,11 +74,14 @@ func setup(data: Dictionary) -> void:
 	is_asleep = data.get("is_asleep", false)
 	_apply_appearance()
 	_update_transform(true, 0.0)
-	health_bar.visible = false
-	selection_ring.visible = is_player
+	if health_bar:
+		health_bar.visible = false
+	if selection_ring:
+		selection_ring.visible = is_player
 	if is_player:
 		is_spawning = true
-		spawn_fx.visible = true
+		if spawn_fx:
+			spawn_fx.visible = true
 		_spawn_t = 0.0
 		scale = Vector3(0.01, 0.01, 0.01)
 	elif is_remote:
