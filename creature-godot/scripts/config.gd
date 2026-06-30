@@ -8,16 +8,6 @@ const MAP_H := 15
 const TILE_SIZE := 1.0
 
 const MOVE_TILES_PER_SEC := 1.0
-const STAMINA_PER_TILE := 1
-const STAMINA_MAX := 10
-const STAMINA_REGEN_PER_SEC := 1.0
-const AFK_SLEEP_SEC := 45.0
-
-const FIGHT_RANGE := 1.2
-const EAT_RANGE := 1.1
-const FIGHT_DAMAGE := 15
-const FIGHT_STAMINA := 2
-const EAT_STAMINA := 3
 
 const NAME_MAX_LEN := 10
 
@@ -36,17 +26,23 @@ const CREATURE_COLORS: Array[Color] = [
 
 static func default_player_data() -> Dictionary:
 	return {
-		"id": "local_player",
+		"id": "",
 		"name": DEFAULT_CREATURE_NAME,
 		"color": DEFAULT_CREATURE_COLOR,
 		"appearance": "worm",
 		"x": MAP_W / 2,
 		"y": MAP_H / 2,
-		"health": 100,
-		"stamina": 10,
 		"size_level": 1,
 		"is_player": true,
 	}
+
+static func color_to_hex(color: Color) -> String:
+	return "#%02x%02x%02x" % [int(color.r * 255), int(color.g * 255), int(color.b * 255)]
+
+static func color_from_hex(hex: String) -> Color:
+	if hex.is_empty():
+		return DEFAULT_CREATURE_COLOR
+	return Color.from_string(hex, DEFAULT_CREATURE_COLOR)
 
 ## Future Supabase (Phase 5)
 const SUPABASE_URL := "https://gimlaqcnfdbzwdaitfec.supabase.co"

@@ -11,43 +11,36 @@ Maps the web Creature client to the Godot 4 project in `creature-godot/`.
 | [`js/eyes.js`](../js/eyes.js) | [`scripts/units/creature_eyes.gd`](../scripts/units/creature_eyes.gd) |
 | [`js/renderer.js`](../js/renderer.js) | [`scripts/units/creature.gd`](../scripts/units/creature.gd) (meshes/materials) |
 | [`js/main.js`](../js/main.js) | [`scripts/main.gd`](../scripts/main.gd), [`scripts/ui/creature_create.gd`](../scripts/ui/creature_create.gd) (legacy, bypassed) |
-| [`supabase/schema.sql`](../supabase/schema.sql) | Same tables when Phase 5 HTTP sync is added |
+| [`supabase/schema.sql`](../supabase/schema.sql) | Same tables; run [`migration-godot-session.sql`](../supabase/migration-godot-session.sql) for worm appearance |
 
 ## Constants
 
-All gameplay constants live in [`scripts/config.gd`](../scripts/config.gd) (`GameConfig` class), copied from `js/game.js`.
+All gameplay constants live in [`scripts/config.gd`](../scripts/config.gd) (`GameConfig` class).
 
-## Local vs Supabase (Phase 5)
+## Supabase (Godot client — session persistence)
 
-Today `NetworkService`:
+[`network_service.gd`](../scripts/autoload/network_service.gd) implements REST + anonymous auth:
 
-- `ensure_auth()` → fake local session
-- `create_creature()` / `update_creature()` → `GameState` + `user://creature_save.json`
-- `fetch_all_creatures()` → in-memory `GameState.creatures`
+1. Load `user://supabase_session.json` (refresh token + user id)
+2. Refresh session via `POST /auth/v1/token?grant_type=refresh_token`, or anonymous `POST /auth/v1/signup`
+3. `GET /rest/v1/creatures?user_id=eq.<uuid>` — restore last `x`, `y`
+4. Insert row on first visit; debounced `PATCH` on movement (~1.5s + flush on path complete)
 
-To go online, implement HTTP in `network_service.gd`:
+Same publishable key as [`js/config.example.js`](../../js/config.example.js). See [`docs/supabase-multiplayer-guide.md`](../../docs/supabase-multiplayer-guide.md).
 
-1. `POST /auth/v1/signup` with `{ "data": {} }` for anonymous (or reuse stored refresh token in `user://session.json`)
-2. `GET/POST/PATCH/DELETE` on `/rest/v1/creatures` with headers `apikey` + `Authorization: Bearer <access_token>`
-3. Poll every 1.5s like web `pullCreatures()`, or enable Realtime channel
-
-Use the same publishable key as [`js/config.example.js`](../../js/config.example.js).
-
-## SC2 presentation (original)
-
-- Camera: [`scripts/camera/rts_camera.gd`](../scripts/camera/rts_camera.gd) — ~54° pitch, 45° yaw, follow + edge pan
-- UI theme: [`assets/themes/sc2_theme.tres`](../assets/themes/sc2_theme.tres)
-- HUD: [`scenes/ui/sc2_hud.tscn`](../scenes/ui/sc2_hud.tscn)
+**Not implemented yet:** polling other players, fight/eat, events inbox.
 
 ## Boot flow (current)
 
-- `project.godot` → `run/main_scene = res://scenes/main.tscn` (no create screen)
-- `GameState._ready()` → `GameConfig.default_player_data()` if `player_data` empty
-- `world_map.gd` → `_spawn_player()` instantiates `creature.tscn`, calls `setup()`
-- Default appearance: worm only; color/name from `GameConfig`
+```
+main.gd _ready()
+  → await NetworkService.boot()   # auth + load/create creature row
+  → world_map.spawn_player()      # spawn at saved x,y
+  → camera follow
+```
 
 ## Known gaps vs web
 
-- No shared world with browser clients yet
-- Passkey persistence (Phase 2) not implemented
-- Fight RLS on Supabase may need RPC before online combat (see multiplayer guide)
+- No shared live world (other players not rendered)
+- Passkey / account linking not implemented
+- Health/stamina removed from Godot client (DB columns remain for legacy web)

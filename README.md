@@ -23,7 +23,7 @@ flowchart TB
     Shell[web/custom_shell.html]
   end
 
-  subgraph backend [Supabase - web only today]
+  subgraph backend [Supabase - shared project]
     Auth[Anonymous Auth]
     PG[(Postgres + RLS)]
   end
@@ -31,17 +31,18 @@ flowchart TB
   HTML --> Pages
   HTML --> Auth
   HTML --> PG
-  Editor -.->|NetworkService stub| PG
   Editor --> Shell
+  Editor -->|NetworkService| Auth
+  Editor -->|NetworkService| PG
   Shell --> HTTPS[serve-web-https.py :8443]
 ```
 
 | Client | Path | Multiplayer | Visual style | Status |
 |--------|------|-------------|--------------|--------|
 | **Web** | repo root (`index.html`, `js/`, `css/`) | Supabase REST + 1.5s polling | Stardew-like top-down 2D canvas | **Deployed**, full gameplay (fight/eat/sleep) |
-| **Godot** | `creature-godot/` | Local only (`NetworkService` stub) | SC2-inspired 3D RTS | **Spawn + move** in editor and web export |
+| **Godot** | `creature-godot/` | Supabase session + position save (no live multiplayer yet) | SC2-inspired 3D RTS | **Spawn + move + cloud save** in editor and web export |
 
-Godot is **not** connected to the live Supabase world. Web and Godot share map/movement constants but are separate codebases with different feature sets.
+Godot shares the Supabase **project** with the web client but does **not** yet poll or render other players. Web and Godot are separate codebases pivoting toward a new game direction.
 
 ---
 
@@ -51,6 +52,7 @@ Godot is **not** connected to the live Supabase world. Web and Godot share map/m
 Creature/
 ├── index.html, css/, js/              # Web game (Phase 1 — complete)
 ├── supabase/schema.sql
+├── supabase/migration-godot-session.sql  # Optional: allow appearance=worm in DB
 ├── docs/supabase-multiplayer-guide.md
 ├── start-server.ps1                   # Web LAN dev (port 3456)
 ├── creature-godot/                    # Godot 4.7 project
@@ -79,14 +81,12 @@ Constants in web `js/game.js` and Godot `scripts/config.gd` (`GameConfig`):
 | Rule | Value |
 |------|-------|
 | Map | 20×15 tiles, 6 trees |
-| Move speed | 1 tile/sec, 1 stamina per tile |
-| Stamina | Max 10, regen 1/sec when idle |
-| AFK sleep | 45s → asleep |
-| Name | Max 10 chars, cute/ugly, 6 colors |
+| Move speed | 1 tile/sec (Godot); web also has stamina rules |
+| Name | Max 10 chars |
 
-**Web only (live):** fight, eat, grow, multiplayer polling, follow camera, tap-to-move.
+**Web only (live):** fight, eat, stamina, AFK sleep, grow, multiplayer polling, follow camera, tap-to-move.
 
-**Godot only (current scope):** boot straight into map with a default dark-gray worm. **Fluid movement** in any direction with **A\*** pathfinding around trees/units. Tap/click ground to move, pinch/wheel zoom, WASD/edge pan. Top stat bar + **pain test** stress button (dev). No customization screen, fight, eat, or persistent AI.
+**Godot only (current scope):** default dark-gray worm, **fluid A\*** movement, tap/click + pinch zoom, **Supabase session save** (restore last `x,y` on return). Top bar shows name only — **health/stamina removed**. **Pain test** stress button. No customization, fight, eat, or persistent AI.
 
 ---
 
@@ -126,25 +126,23 @@ Keys: `js/config.example.js` (committed for GitHub Pages). Publishable key only.
 
 ## Godot client (`creature-godot/`)
 
-Godot **4.7+**, Forward+. **Boot flow:** `project.godot` → `run/main_scene = res://scenes/main.tscn` (no create screen). `GameState._ready()` loads `GameConfig.default_player_data()`; `world_map.gd` spawns the player worm at map center.
+Godot **4.7+**, Forward+. **Boot flow:** `main.gd` → `await NetworkService.boot()` (auth + load/create creature row) → `world_map.spawn_player()` at saved `x,y`.
 
 ### Current feature set
 
 | Feature | Status |
 |---------|--------|
 | Default worm creature (dark gray, procedural mesh) | Done |
-| Fluid movement (any angle, not grid-locked 90° turns) | Done |
-| A* pathfinding around trees and other units | Done |
-| Tap/click ground to move | Done (mobile + desktop) |
-| Pinch / wheel zoom (scales camera offset, not just height) | Done |
-| Top stat bar (name, HP, stamina) | Done |
+| Fluid movement + A* pathfinding | Done |
+| Tap/click ground to move (mobile + desktop) | Done |
+| Pinch / wheel zoom | Done |
+| Supabase anonymous session + position save | Done |
+| Top stat bar (name only) | Done |
 | Pain test stress button (20 wanderers + 50 props, 30s) | Done |
-| Creature create / customization | **Bypassed** (`creature_create.tscn` still in repo, unused) |
-| Fight / eat | **Removed** |
-| Persistent AI creatures | **Removed** (pain test spawns temporary wanderers) |
-| Minimap, portrait panel | **Removed** |
-| Per-creature health bar above unit | Hidden (was briefly visible due to `_ready`/`setup` order — fixed) |
-| Supabase multiplayer | Not started (`NetworkService` stub) |
+| Creature create / customization | **Bypassed** |
+| Health / stamina (Godot) | **Removed** |
+| Fight / eat / persistent AI | **Removed** |
+| Other players visible / live multiplayer | Not started |
 
 ### Worm mesh (important for agents)
 
@@ -163,7 +161,20 @@ To tune the silhouette, edit `SEGMENT_SPECS` (z spacing, radius, length overlap)
 - **Continuous movement** in [`scripts/units/creature.gd`](creature-godot/scripts/units/creature.gd): creature glides toward waypoints at any angle; rotation lerps toward travel direction
 - **A\*** in [`scripts/world/grid_nav.gd`](creature-godot/scripts/world/grid_nav.gd): 8-directional path around `GameState.blocked_tiles` (trees) and other units; line-of-sight path simplification removes extra corners
 - Click while moving replans from current position
-- Stamina still costs 1 per tile of distance traveled (fractional tracking on diagonals)
+
+### Supabase session save (Godot)
+
+Implemented in [`scripts/autoload/network_service.gd`](creature-godot/scripts/autoload/network_service.gd):
+
+1. **Anonymous auth** — refresh token in `user://supabase_session.json` (editor) or `localStorage` key `creature_supabase_session` (web via `CreatureNet` in `custom_shell.html`)
+2. **Load/create** — `GET /rest/v1/creatures?user_id=eq.<uuid>`; insert on first visit
+3. **Save position** — debounced `PATCH` on `{x, y}` while moving; flush on path complete / exit
+
+**DB note:** new rows use `appearance: "cute"` in Postgres (schema constraint); client always renders **worm**. Optional: run [`supabase/migration-godot-session.sql`](supabase/migration-godot-session.sql) to allow `worm` in DB.
+
+**Web export critical:** Supabase calls use browser `fetch` through `window.CreatureNet` in [`web/custom_shell.html`](creature-godot/web/custom_shell.html) — Godot `HTTPRequest` alone fails in wasm due to cross-origin isolation. Export preset must have `progressive_web_app/ensure_cross_origin_isolation_headers=false`. **Re-export after editing `custom_shell.html`.**
+
+Boot toasts: **"New player saved to server"** / **"Restored save from server"** — or offline fallback with error detail.
 
 ### Mobile stress test (“pain test”)
 
@@ -180,16 +191,16 @@ Top-right HUD button in [`scripts/ui/sc2_hud.gd`](creature-godot/scripts/ui/sc2_
 |------|------|
 | [`project.godot`](creature-godot/project.godot) | Main scene = `scenes/main.tscn`; touch → emulated mouse |
 | [`scripts/config.gd`](creature-godot/scripts/config.gd) | Shared constants + `default_player_data()` |
-| [`scripts/autoload/game_state.gd`](creature-godot/scripts/autoload/game_state.gd) | Player data, creature registry, stamina/AFK |
-| [`scripts/main.gd`](creature-godot/scripts/main.gd) | Boots world, forwards pointer input to camera |
+| [`scripts/autoload/game_state.gd`](creature-godot/scripts/autoload/game_state.gd) | Player data, creature registry |
+| [`scripts/main.gd`](creature-godot/scripts/main.gd) | Async boot, pointer forwarding |
 | [`scripts/camera/rts_camera.gd`](creature-godot/scripts/camera/rts_camera.gd) | Tap-to-move, pinch zoom, raycast; `_camera_offset()` scales full 3D offset by `_desired_distance` |
 | [`scripts/units/creature.gd`](creature-godot/scripts/units/creature.gd) | Worm mesh, fluid path movement, health bar (hidden) |
 | [`scripts/world/grid_nav.gd`](creature-godot/scripts/world/grid_nav.gd) | A* pathfinding, obstacle avoidance |
 | [`scripts/world/world_map.gd`](creature-godot/scripts/world/world_map.gd) | Terrain, ground collision, player spawn, click marker |
 | [`scripts/ui/sc2_hud.gd`](creature-godot/scripts/ui/sc2_hud.gd) | Top bar + pain test button |
 | [`scripts/debug/pain_test.gd`](creature-godot/scripts/debug/pain_test.gd) | Mobile stress test spawner |
-| [`scripts/autoload/network_service.gd`](creature-godot/scripts/autoload/network_service.gd) | Supabase seam (stub) |
-| [`web/custom_shell.html`](creature-godot/web/custom_shell.html) | PWA shell, dev mode, mobile fullscreen |
+| [`scripts/autoload/network_service.gd`](creature-godot/scripts/autoload/network_service.gd) | Supabase REST + web `CreatureNet` bridge |
+| [`web/custom_shell.html`](creature-godot/web/custom_shell.html) | PWA shell, dev mode, **CreatureNet** fetch bridge |
 | [`export_presets.cfg`](creature-godot/export_presets.cfg) | Web export preset |
 
 Legacy (unused in current boot flow): [`scripts/ui/creature_create.gd`](creature-godot/scripts/ui/creature_create.gd), [`scenes/ui/creature_create.tscn`](creature-godot/scenes/ui/creature_create.tscn).
@@ -213,6 +224,7 @@ Open `creature-godot/project.godot` → **F5**.
 | Experimental virtual keyboard | On | Name field on mobile web |
 | Focus canvas on start | Off | UI text fields work |
 | PWA | On | Add to Home Screen |
+| Cross-origin isolation headers | **Off** | Required for Supabase fetch from wasm |
 
 ### Serve and test on phone
 
@@ -275,10 +287,10 @@ Use `class_name Creature` and typed references. Generic `Node3D` + `grid_pos` ca
 
 ## Phase 2 / not implemented
 
-- [ ] Godot ↔ Supabase shared multiplayer (wire `NetworkService` HTTP)
-- [ ] Re-add fight/eat to Godot (removed intentionally for now)
-- [ ] Re-enable creature customization / create screen (scene still in repo)
-- [ ] Passkey / persistent creature identity
+- [ ] Godot: poll/render other players (shared live world)
+- [ ] Re-add fight/eat to Godot (removed intentionally for pivot)
+- [ ] Re-enable creature customization / create screen
+- [ ] Passkey / account linking (upgrade anonymous session)
 - [ ] Shared world: web + Godot players together
 - [ ] Eat/fight RLS hardening on web (Postgres RPC)
 - [ ] Map expansion, ability system
@@ -288,13 +300,9 @@ Use `class_name Creature` and typed references. Generic `Node3D` + `grid_pos` ca
 - [x] Godot custom HTML shell (`web/custom_shell.html`)
 - [x] Mobile tap-to-move + pinch zoom on Godot web
 - [x] Dev mode to avoid clearing site data between exports
-- [x] Simplified Godot HUD (spawn + move only)
-- [x] Removed customization — boot straight into map with default worm
-- [x] Camera zoom scales full offset toward subject (not just lowering camera)
-- [x] Horizontal worm mesh (capsule segments along ground; fixed “snowman” stacking bug)
-- [x] Player health bar hidden above creature
-- [x] Fluid any-direction movement with A* pathfinding around obstacles
-- [x] Pain test HUD button for 30s mobile stress test
+- [x] Simplified Godot HUD (name only; health/stamina removed)
+- [x] Default worm, fluid movement, A* pathfinding, pain test
+- [x] Supabase session + position persistence (editor + web via CreatureNet)
 
 ---
 
@@ -309,16 +317,13 @@ Use `class_name Creature` and typed references. Generic `Node3D` + `grid_pos` ca
 
 ### Godot
 
-1. Read [`creature-godot/docs/godot-porting-notes.md`](creature-godot/docs/godot-porting-notes.md)
-2. **F5 in editor first** — main scene spawns default worm at map center (no create screen)
-3. Worm look → `scripts/units/creature.gd` (`SEGMENT_SPECS`, per-segment `SEGMENT_ROT`; do not rotate `body_root` 90° on X)
-4. Movement/pathing → `scripts/units/creature.gd`, `scripts/world/grid_nav.gd`
-5. Defaults → `scripts/config.gd` (`default_player_data()`), spawn → `scripts/world/world_map.gd`
-6. Mobile perf → export web, tap **pain test**, watch FPS; use Godot Profiler for details
-7. Then web export + `serve-web-https.py` for phone testing
-8. Edit `web/custom_shell.html` for HTML/JS changes — re-export to apply
-9. Touch/zoom → `scripts/camera/rts_camera.gd`, `scripts/main.gd`
-10. `NetworkService` is the Supabase seam — mirror `js/api.js`
+1. Read [`creature-godot/docs/godot-porting-notes.md`](creature-godot/docs/godot-porting-notes.md) and [`docs/supabase-multiplayer-guide.md`](docs/supabase-multiplayer-guide.md) (Godot section)
+2. Confirm Supabase **anonymous auth ON** (saved) + [`schema.sql`](supabase/schema.sql) applied
+3. **F5 in editor** — should toast server save/restore; move and relaunch to verify position
+4. **Web:** re-export after any `custom_shell.html` change; test on `https://<ip>:8443`
+5. Supabase → `network_service.gd`; web bridge → `CreatureNet` in `custom_shell.html`
+6. Worm → `creature.gd`; pathing → `grid_nav.gd`; boot → `main.gd` + `world_map.gd`
+7. If web says "Could not reach server": check COI export setting off, re-export, hard refresh
 
 ### Phone testing
 
@@ -333,11 +338,11 @@ Use `class_name Creature` and typed references. Generic `Node3D` + `grid_pos` ca
 
 1. Supabase anonymous toggle must be **saved** or auth fails
 2. Godot web on LAN **must be HTTPS** (not `http://192.168.x.x`)
-3. Godot compile error if wrong `DisplayServer` keyboard enum — breaks entire spawn screen script
+3. Godot web Supabase needs **CreatureNet** in `custom_shell.html` + **COI headers off** — re-export after shell edits
 4. Service workers cache old wasm/pck — use dev server ports or `?dev=1`
 5. iOS browser fullscreen API does not work for canvas — use PWA Add to Home Screen
-6. Worm looked like stacked spheres (“snowman”) if `body_root.rotation_degrees = Vector3(90,0,0)` — segments must be rotated individually, body root stays at zero
-7. Green rectangle above player was the health bar showing before `setup()` — keep `health_bar.visible = false` for player
+6. DB `creatures.appearance` must be `cute` or `ugly` unless migration applied — Godot inserts `cute`
+7. Worm “snowman” bug if `body_root` rotated 90° on X — rotate segments individually
 8. `_first.txt` and Postgres password — never commit
 
 ---

@@ -17,17 +17,18 @@ layout_mode = 0
 offset_left = 12.0
 offset_top = 12.0
 offset_right = 320.0
-offset_bottom = 88.0
+offset_bottom = 44.0
 
 [node name="NameLabel" type="Label" parent="TopBar"]
 layout_mode = 0
 offset_left = 10.0
-offset_top = 8.0
+offset_top = 10.0
 offset_right = 280.0
-offset_bottom = 28.0
+offset_bottom = 32.0
 text = "CREATURE"
 
 [node name="HPBar" type="ProgressBar" parent="TopBar"]
+visible = false
 layout_mode = 0
 offset_left = 10.0
 offset_top = 32.0
@@ -38,6 +39,7 @@ value = 100.0
 show_percentage = false
 
 [node name="STBar" type="ProgressBar" parent="TopBar"]
+visible = false
 layout_mode = 0
 offset_left = 10.0
 offset_top = 54.0

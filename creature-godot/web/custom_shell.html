@@ -151,6 +151,51 @@ html {
 	max-width: 22rem;
 }
 		</style>
+		<script>
+window.CreatureNet = (function () {
+	const SESSION_KEY = 'creature_supabase_session';
+
+	function getSessionJson() {
+		try {
+			return localStorage.getItem(SESSION_KEY) || '';
+		} catch (e) {
+			return '';
+		}
+	}
+
+	function saveSessionJson(json) {
+		try {
+			localStorage.setItem(SESSION_KEY, json);
+		} catch (e) {
+			console.warn('CreatureNet session save failed', e);
+		}
+	}
+
+	function runRequest(method, url, headersJson, body, callback) {
+		let headers = {};
+		try {
+			headers = JSON.parse(headersJson || '{}');
+		} catch (e) {
+			callback(JSON.stringify({ ok: false, status: 0, body: 'Bad headers JSON' }));
+			return;
+		}
+		const opts = { method, headers };
+		if (body && body.length > 0) {
+			opts.body = body;
+		}
+		fetch(url, opts)
+			.then(async (res) => {
+				const text = await res.text();
+				callback(JSON.stringify({ ok: res.ok, status: res.status, body: text }));
+			})
+			.catch((err) => {
+				callback(JSON.stringify({ ok: false, status: 0, body: String(err) }));
+			});
+	}
+
+	return { getSessionJson, saveSessionJson, runRequest };
+})();
+		</script>
 		$GODOT_HEAD_INCLUDE
 	</head>
 	<body>

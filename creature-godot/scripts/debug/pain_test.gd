@@ -65,8 +65,6 @@ func _spawn_creatures() -> void:
 			"appearance": "worm",
 			"x": tile.x,
 			"y": tile.y,
-			"health": 100,
-			"stamina": 999,
 			"size_level": 1,
 			"is_player": false,
 		}

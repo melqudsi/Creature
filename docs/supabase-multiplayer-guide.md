@@ -331,3 +331,22 @@ Optimizations for larger games:
 ## Summary
 
 Supabase gives Creature a **multiplayer backend without a custom server**: Postgres stores shared state, anonymous JWTs identify players, RLS enforces boundaries, and the browser **polls (or optionally subscribes)** to stay in sync. Async **event rows** handle offline players. The same skeleton—auth → CRUD → periodic world fetch → local interpolation—scales to many small multiplayer web games before you need dedicated game infrastructure.
+
+---
+
+## Godot client (pivot — session + position only)
+
+The Godot build (`creature-godot/`) reuses the same Supabase project but with a **slim scope** for now:
+
+| Feature | Status |
+|---------|--------|
+| Anonymous auth + refresh token in `user://supabase_session.json` | Implemented |
+| Restore spawn position from `creatures.x`, `creatures.y` | Implemented |
+| Save position on move (debounced PATCH) | Implemented |
+| Health / stamina in Godot UI | **Removed** (DB columns kept for legacy web) |
+| Other players / fight / eat / events | Not yet |
+
+**One-time SQL:** run [`supabase/migration-godot-session.sql`](../supabase/migration-godot-session.sql) to allow `appearance = 'worm'`.
+
+Implementation: [`creature-godot/scripts/autoload/network_service.gd`](../creature-godot/scripts/autoload/network_service.gd). Boot flow in [`creature-godot/docs/godot-porting-notes.md`](../creature-godot/docs/godot-porting-notes.md).
+

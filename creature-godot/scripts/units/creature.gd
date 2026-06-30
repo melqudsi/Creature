@@ -24,8 +24,6 @@ var creature_name: String = "Creature"
 var creature_color: Color = GameConfig.DEFAULT_CREATURE_COLOR
 var appearance: String = "worm"
 var grid_pos := Vector2(8, 6)
-var health := 100
-var stamina := 10
 var size_level := 1
 var is_asleep := false
 var is_player := false
@@ -35,7 +33,6 @@ var is_spawning := false
 var _move_dir := Vector2.ZERO
 var _move_target: Vector2 = Vector2(-1, -1)
 var _path: Array[Vector2] = []
-var _stamina_travel_acc := 0.0
 var _walk_phase := 0.0
 var _spawn_t := 0.0
 var _breath_phase := 0.0
@@ -56,14 +53,11 @@ func setup(data: Dictionary) -> void:
 	creature_color = data.get("color", GameConfig.DEFAULT_CREATURE_COLOR)
 	appearance = "worm"
 	grid_pos = Vector2(data.get("x", 8.0), data.get("y", 6.0))
-	health = int(data.get("health", 100))
-	stamina = int(data.get("stamina", 10))
 	size_level = int(data.get("size_level", 1))
 	is_player = data.get("is_player", false)
 	is_asleep = data.get("is_asleep", false)
 	_apply_appearance()
 	_update_transform(true, 0.0)
-	_update_health_bar()
 	health_bar.visible = false
 	selection_ring.visible = is_player
 	if is_player:
@@ -230,9 +224,6 @@ func _process(delta: float) -> void:
 
 	_update_transform(false, delta)
 
-	if is_player and not is_moving:
-		GameState.tick_player_stamina(delta, false)
-
 func _update_transform(snap: bool, delta: float) -> void:
 	if creature_id == "preview":
 		return
@@ -258,9 +249,6 @@ func set_move_target(target: Vector2) -> void:
 func _replan_path() -> void:
 	if _move_target.x < 0:
 		return
-	if stamina < GameConfig.STAMINA_PER_TILE and _stamina_travel_acc <= 0.0:
-		_stop_movement()
-		return
 	_path = GridNav.find_path(
 		grid_pos,
 		_move_target,
@@ -278,9 +266,6 @@ func _advance_along_path(delta: float) -> void:
 	if _path.is_empty():
 		_finish_path()
 		return
-	if stamina < GameConfig.STAMINA_PER_TILE and _stamina_travel_acc <= 0.0:
-		_stop_movement()
-		return
 
 	var waypoint := _path[0]
 	var to_waypoint := waypoint - grid_pos
@@ -294,42 +279,33 @@ func _advance_along_path(delta: float) -> void:
 		return
 
 	if step >= dist:
-		if not _consume_travel_stamina(dist):
-			_stop_movement()
-			return
 		grid_pos = waypoint
 		_path.remove_at(0)
 		_move_dir = to_waypoint / dist
 		_walk_phase += delta * 12.0
 		_apply_slither(delta)
+		_sync_player_position(false)
 		if _path.is_empty():
 			_finish_path()
-		return
-
-	if not _consume_travel_stamina(step):
-		_stop_movement()
 		return
 
 	_move_dir = to_waypoint / dist
 	grid_pos += _move_dir * step
 	_walk_phase += delta * 12.0
 	_apply_slither(delta)
+	_sync_player_position(false)
 
-func _consume_travel_stamina(distance: float) -> bool:
-	_stamina_travel_acc += distance
-	while _stamina_travel_acc >= 1.0:
-		if stamina < GameConfig.STAMINA_PER_TILE:
-			_stamina_travel_acc = 0.0
-			return false
-		_stamina_travel_acc -= 1.0
-		spend_stamina(GameConfig.STAMINA_PER_TILE)
-		if is_player:
-			NetworkService.update_creature(creature_id, {"x": grid_pos.x, "y": grid_pos.y, "stamina": stamina})
-	return true
+func _sync_player_position(flush_now: bool) -> void:
+	if not is_player or creature_id.is_empty():
+		return
+	NetworkService.save_creature_position(creature_id, grid_pos.x, grid_pos.y, flush_now)
+	GameState.player_data["x"] = grid_pos.x
+	GameState.player_data["y"] = grid_pos.y
 
 func _finish_path() -> void:
 	is_moving = false
 	_reset_body_pose()
+	_sync_player_position(true)
 	if _has_reached_target():
 		_move_target = Vector2(-1, -1)
 	elif _move_target.x >= 0:
@@ -345,70 +321,28 @@ func _has_reached_target() -> bool:
 		return true
 	return grid_pos.distance_to(_move_target) <= 0.35
 
-func set_stamina(value: int) -> void:
-	stamina = clampi(value, 0, GameConfig.STAMINA_MAX)
-	if is_player:
-		GameState.player_stats_changed.emit()
-
-func spend_stamina(amount: int) -> void:
-	set_stamina(stamina - amount)
-
-func take_damage(amount: int) -> void:
-	health = maxi(0, health - amount)
-	_update_health_bar()
-	if health <= 0 and not is_player:
-		var id: String = creature_id
-		queue_free()
-		GameState.unregister_creature(id)
-
-func grow_from_eat() -> void:
-	size_level += 1
-	health = mini(100, health + 10)
-	_apply_appearance()
-
 func fall_asleep() -> void:
 	if is_asleep:
 		return
 	is_asleep = true
 	_stop_movement()
 	_move_target = Vector2(-1, -1)
-	if size_level > 1:
-		size_level -= 1
-		_apply_appearance()
-	if is_player:
-		NetworkService.update_creature(creature_id, {"is_asleep": true, "size_level": size_level})
 
 func wake_up() -> void:
 	if not is_asleep:
 		return
 	is_asleep = false
-	if is_player:
-		NetworkService.update_creature(creature_id, {"is_asleep": false})
 
 func apply_network_patch(patch: Dictionary) -> void:
-	if patch.has("health"):
-		health = int(patch.health)
-	if patch.has("stamina"):
-		stamina = int(patch.stamina)
+	if patch.has("x") and patch.has("y"):
+		grid_pos = Vector2(float(patch.x), float(patch.y))
+		_update_transform(true, 0.0)
 	if patch.has("size_level"):
 		size_level = int(patch.size_level)
 		_apply_appearance()
-	_update_health_bar()
-
-func _update_health_bar() -> void:
-	if not health_fill:
-		return
-	var ratio := float(health) / 100.0
-	health_fill.scale.x = maxf(0.02, ratio)
-	var mat := StandardMaterial3D.new()
-	if ratio > 0.6:
-		mat.albedo_color = Color(0.2, 0.9, 0.3)
-	elif ratio > 0.3:
-		mat.albedo_color = Color(0.95, 0.85, 0.2)
-	else:
-		mat.albedo_color = Color(0.95, 0.25, 0.2)
-	health_fill.material_override = mat
 
 func _exit_tree() -> void:
+	if is_player and not creature_id.is_empty():
+		NetworkService.save_creature_position(creature_id, grid_pos.x, grid_pos.y, true)
 	if GameState.creatures.has(creature_id):
 		GameState.unregister_creature(creature_id)

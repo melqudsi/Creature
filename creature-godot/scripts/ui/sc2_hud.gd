@@ -1,8 +1,6 @@
 extends Control
 
 @onready var name_label: Label = $TopBar/NameLabel
-@onready var hp_bar: ProgressBar = $TopBar/HPBar
-@onready var st_bar: ProgressBar = $TopBar/STBar
 @onready var toast_panel: Panel = $ToastPanel
 @onready var toast_label: Label = $ToastPanel/ToastLabel
 @onready var pain_test_button: Button = $PainTestButton
@@ -41,8 +39,6 @@ func _refresh_stats() -> void:
 	if not c:
 		return
 	name_label.text = c.creature_name
-	hp_bar.value = c.health
-	st_bar.value = c.stamina
 
 func _show_toast(msg: String) -> void:
 	toast_label.text = msg

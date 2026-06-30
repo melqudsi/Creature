@@ -151,6 +151,51 @@ html {
 	max-width: 22rem;
 }
 		</style>
+		<script>
+window.CreatureNet = (function () {
+	const SESSION_KEY = 'creature_supabase_session';
+
+	function getSessionJson() {
+		try {
+			return localStorage.getItem(SESSION_KEY) || '';
+		} catch (e) {
+			return '';
+		}
+	}
+
+	function saveSessionJson(json) {
+		try {
+			localStorage.setItem(SESSION_KEY, json);
+		} catch (e) {
+			console.warn('CreatureNet session save failed', e);
+		}
+	}
+
+	function runRequest(method, url, headersJson, body, callback) {
+		let headers = {};
+		try {
+			headers = JSON.parse(headersJson || '{}');
+		} catch (e) {
+			callback(JSON.stringify({ ok: false, status: 0, body: 'Bad headers JSON' }));
+			return;
+		}
+		const opts = { method, headers };
+		if (body && body.length > 0) {
+			opts.body = body;
+		}
+		fetch(url, opts)
+			.then(async (res) => {
+				const text = await res.text();
+				callback(JSON.stringify({ ok: res.ok, status: res.status, body: text }));
+			})
+			.catch((err) => {
+				callback(JSON.stringify({ ok: false, status: 0, body: String(err) }));
+			});
+	}
+
+	return { getSessionJson, saveSessionJson, runRequest };
+})();
+		</script>
 		<link id="-gd-engine-icon" rel="icon" type="image/png" href="index.icon.png" />
 <link rel="apple-touch-icon" href="index.apple-touch-icon.png"/>
 <link rel="manifest" href="index.manifest.json">
@@ -179,7 +224,7 @@ html {
 
 		<script src="index.js"></script>
 		<script>
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"index","experimentalVK":true,"fileSizes":{"index.pck":111888,"index.wasm":39509339},"focusCanvas":false,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"index.service.worker.js"};
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"index","experimentalVK":true,"fileSizes":{"index.pck":117600,"index.wasm":39509339},"focusCanvas":false,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"index.service.worker.js"};
 const GODOT_THREADS_ENABLED = false;
 
 function isDevServer() {

@@ -12,7 +12,15 @@ func _ready() -> void:
 	_build_ground()
 	_build_trees()
 	click_marker.visible = false
-	_spawn_player()
+
+func spawn_player() -> void:
+	var data := GameState.player_data
+	if data.is_empty():
+		data = GameConfig.default_player_data()
+		GameState.player_data = data
+	var player: Creature = CREATURE_SCENE.instantiate() as Creature
+	creatures_root.add_child(player)
+	player.setup(data)
 
 func _build_ground() -> void:
 	var plane := PlaneMesh.new()
@@ -61,16 +69,6 @@ func _make_tree() -> Node3D:
 	foliage.material_override = fmat
 	root.add_child(foliage)
 	return root
-
-func _spawn_player() -> void:
-	var data := GameState.player_data
-	if data.is_empty():
-		data = GameConfig.default_player_data()
-		GameState.player_data = data
-	var player: Creature = CREATURE_SCENE.instantiate() as Creature
-	creatures_root.add_child(player)
-	player.setup(data)
-	NetworkService.create_creature(data)
 
 func get_player_creature() -> Creature:
 	return GameState.player_creature

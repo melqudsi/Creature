@@ -6,7 +6,8 @@ extends Node3D
 @onready var pain_test: Node = $PainTest
 
 func _ready() -> void:
-	GameState.check_afk_sleep()
+	await NetworkService.boot()
+	world_map.spawn_player()
 	var player: Creature = world_map.get_player_creature()
 	if rts_camera.has_method("bind_world_map"):
 		rts_camera.bind_world_map(world_map)
@@ -14,9 +15,6 @@ func _ready() -> void:
 		rts_camera.set_follow(player)
 	if hud.has_method("bind_pain_test"):
 		hud.bind_pain_test(pain_test)
-
-func _process(_delta: float) -> void:
-	GameState.check_afk_sleep()
 
 func _unhandled_input(event: InputEvent) -> void:
 	_forward_pointer_input(event)
