@@ -30,7 +30,7 @@ All gameplay constants live in [`scripts/config.gd`](../scripts/config.gd) (`Gam
 
 Same publishable key as [`js/config.example.js`](../../js/config.example.js). See [`docs/supabase-multiplayer-guide.md`](../../docs/supabase-multiplayer-guide.md).
 
-**Temporary DB note:** name-claim login and admin profile deletion require [`../../supabase/migration-temp-profile-admin.sql`](../../supabase/migration-temp-profile-admin.sql). It is intentionally permissive and should be replaced by real auth. Deletes request returned rows and only report success if Supabase returns a deleted row; zero rows usually means RLS blocked it.
+**Temporary DB note:** name-claim login and admin profile deletion require [`../../supabase/migration-temp-profile-admin.sql`](../../supabase/migration-temp-profile-admin.sql). It is intentionally permissive and should be replaced by real auth. Deletes request returned rows and re-fetch the target if Supabase returns an empty body; success means either a deleted row was returned or the row is confirmed gone.
 
 **Not implemented yet:** fight/eat, events inbox, web+Godot unified gameplay rules.
 
@@ -48,16 +48,17 @@ Local player row is skipped (matched by `NetworkService.get_user_id()`). Admin l
 
 ## Admin panel diagnostics
 
-`GameState.add_admin_log()` stores the last 80 log lines. `sc2_hud.gd` shows them under **admin → Logs**. Current log sources:
+`GameState.add_admin_log()` stores the last 80 log lines. `sc2_hud.gd` shows them under **admin → Logs** in a read-only `TextEdit`; do not use one `Label` per line because it wrapped after each character on mobile. Current log sources:
 
 - `NetworkService.boot()` logs restored profile vs no profile/onboarding
 - `fetch_all_creatures()` logs failures and row count changes
 - Profile create/claim/delete logs failures and temporary migration/RLS hints
 - `world_map.sync_remote_creatures()` logs remote count changes
+- **clear session / reload** removes the saved anonymous session and reloads the scene to test onboarding
 
 ## Map/building notes
 
-`world_map.gd` renders buildings procedurally. The current roof is two sloped `BoxMesh` panels; avoid reverting to one rotated `PrismMesh`, which looked like a giant wedge/needle in mobile testing.
+`world_map.gd` renders buildings procedurally. The current roof is a flat red `BoxMesh` slab with a chimney; avoid reverting to the rotated `PrismMesh` or sloped roof panels, which looked wrong in mobile testing.
 
 ## Boot flow (current)
 

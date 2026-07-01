@@ -171,6 +171,14 @@ window.CreatureNet = (function () {
 		}
 	}
 
+	function clearSessionJson() {
+		try {
+			localStorage.removeItem(SESSION_KEY);
+		} catch (e) {
+			console.warn('CreatureNet session clear failed', e);
+		}
+	}
+
 	function runRequest(method, url, headersJson, body, callback) {
 		let headers = {};
 		try {
@@ -193,7 +201,7 @@ window.CreatureNet = (function () {
 			});
 	}
 
-	return { getSessionJson, saveSessionJson, runRequest };
+	return { getSessionJson, saveSessionJson, clearSessionJson, runRequest };
 })();
 		</script>
 		$GODOT_HEAD_INCLUDE

@@ -2,7 +2,7 @@
 
 Local-first 3D port pivoting from the web Creature game. Isometric RTS camera with procedural worm assets.
 
-**Current scope:** onboarding spawn screen (name + color), default worm, fluid movement, A* pathfinding, **Supabase session save**, **live field** (other players via 1.5s REST poll). Camera starts fully zoomed in. Name-only HUD + admin panel with logs. PWA supports portrait and landscape. No health/stamina, fight, eat, or appearance customization.
+**Current scope:** onboarding spawn screen (name + color), default worm, fluid movement, A* pathfinding, **Supabase session save**, **live field** (other players via 1.5s REST poll). Camera starts fully zoomed in. Name-only HUD + admin panel with readable logs and clear-session/reload. PWA supports portrait and landscape. No health/stamina, fight, eat, or appearance customization.
 
 ## Requirements
 
@@ -32,7 +32,7 @@ Boot is silent on success (no save/restore toasts). Offline boot toasts **"Could
 | Input | Action |
 |-------|--------|
 | Tap / click ground | Move creature |
-| **admin** (top-right) | Pain test controls, profile deletion, logs |
+| **admin** (top-right) | Pain test controls, profile deletion, logs, clear-session/reload |
 | Pinch / mouse wheel | Zoom camera (starts fully zoomed in) |
 | WASD / screen edge | Pan camera |
 
@@ -87,7 +87,7 @@ Godot re-export may flip these — verify after each export.
 
 If auth succeeds but no row exists for the session, `NetworkService.boot()` leaves `GameState.player_data` empty so `main.gd` shows onboarding. Do not recreate the previous behavior that filled `default_player_data()` on successful no-row boot.
 
-**Temporary profile migration:** name-claim login and admin profile deletion require [`../supabase/migration-temp-profile-admin.sql`](../supabase/migration-temp-profile-admin.sql). It is intentionally permissive and should be replaced by passkeys/password phrases before shipping. Admin delete only reports success when Supabase returns at least one deleted row; zero rows usually means RLS blocked the delete or the migration was not applied.
+**Temporary profile migration:** name-claim login and admin profile deletion require [`../supabase/migration-temp-profile-admin.sql`](../supabase/migration-temp-profile-admin.sql). It is intentionally permissive and should be replaced by passkeys/password phrases before shipping. Admin delete requests returned rows, then re-fetches if Supabase returns an empty body; it only reports success when the deleted row is returned or the re-fetch confirms the row is gone.
 
 Keys: [`scripts/config.gd`](scripts/config.gd) (`SUPABASE_URL`, `SUPABASE_ANON_KEY`) — same publishable key as [`../js/config.example.js`](../js/config.example.js).
 
@@ -116,18 +116,19 @@ Procedural in [`scripts/units/creature.gd`](scripts/units/creature.gd). Segments
 
 ## Admin Logs
 
-`GameState.add_admin_log()` stores the last 80 log lines and `sc2_hud.gd` renders them in **admin → Logs**. Current logs cover:
+`GameState.add_admin_log()` stores the last 80 log lines and `sc2_hud.gd` renders them in **admin → Logs** using a read-only `TextEdit`. Avoid returning to per-line `Label` nodes; they wrapped after each character in mobile layout. Current logs cover:
 
 - Boot path: restored profile vs no profile/onboarding
 - Supabase fetch failures and fetched creature row count
 - Profile create/claim/delete attempts and RLS-like zero-row deletes
 - Remote sync count changes
+- Clear-session/reload action
 
 ## Map
 
 `GameConfig` sets a **32×24** map with 16 tree tiles and 6 building tiles. `GameState.blocked_tiles` includes trees and buildings; `world_map.gd` renders both as simple procedural props.
 
-Buildings use a box body, two sloped `BoxMesh` roof panels, and a door. Avoid using the earlier single rotated `PrismMesh` roof; it looked like a giant wedge/needle on mobile.
+Buildings use a box body, flat red roof slab, chimney, and door. Avoid using the earlier rotated `PrismMesh` roof or sloped roof panels; both looked wrong on mobile.
 
 ## PWA / mobile orientation
 
@@ -147,7 +148,7 @@ Buildings use a box body, two sloped `BoxMesh` roof panels, and a door. Avoid us
 | `scripts/world/grid_nav.gd` | Pathfinding |
 | `scripts/camera/rts_camera.gd` | Tap-to-move, zoom (starts at `zoom_min`) |
 | `scripts/ui/creature_create.gd` | Onboarding name/color screen |
-| `scripts/ui/sc2_hud.gd` | Name bar + admin panel/logs |
+| `scripts/ui/sc2_hud.gd` | Name bar + admin panel/logs + clear-session button |
 | `web/custom_shell.html` | PWA shell, dev mode, **CreatureNet** |
 
 ## Web export

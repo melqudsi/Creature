@@ -84,8 +84,21 @@ func is_online() -> bool:
 func get_user_id() -> String:
 	return str(_session.get("user_id", ""))
 
+func clear_saved_session() -> void:
+	_session.clear()
+	_online = false
+	GameState.player_data.clear()
+	GameState.player_creature = null
+	if _uses_web_bridge():
+		_web_net().clearSessionJson()
+	if FileAccess.file_exists(SESSION_PATH):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(SESSION_PATH))
+	_log("Cleared saved session; reload to show onboarding")
+
 func boot() -> void:
 	_last_error = ""
+	GameState.player_data.clear()
+	GameState.player_creature = null
 	var ok := await _boot_online()
 	if ok:
 		if GameState.player_data.is_empty():
@@ -147,6 +160,18 @@ func fetch_creature_by_name(profile_name: String) -> Dictionary:
 		_last_error = "fetch creature by name: %s" % resp.error
 		_log("fetch_creature_by_name failed: %s" % resp.error)
 		push_warning("fetch_creature_by_name failed: %s" % resp.error)
+		return {}
+	var rows: Variant = resp.data
+	if typeof(rows) != TYPE_ARRAY or rows.is_empty():
+		return {}
+	return rows[0]
+
+func fetch_creature_by_id(creature_id: String) -> Dictionary:
+	var path := "/rest/v1/creatures?id=eq.%s&select=*&limit=1" % creature_id.uri_encode()
+	var resp := await _rest_request(HTTPClient.METHOD_GET, path)
+	if not resp.ok:
+		_log("fetch_creature_by_id failed: %s" % resp.error)
+		push_warning("fetch_creature_by_id failed: %s" % resp.error)
 		return {}
 	var rows: Variant = resp.data
 	if typeof(rows) != TYPE_ARRAY or rows.is_empty():
@@ -228,7 +253,11 @@ func delete_creature_profile(creature_id: String) -> bool:
 	if typeof(resp.data) == TYPE_ARRAY and not resp.data.is_empty():
 		_log("Deleted profile id %s" % creature_id)
 		return true
-	_log("Delete returned zero rows for %s (RLS migration may be missing)" % creature_id)
+	var still_exists := await fetch_creature_by_id(creature_id)
+	if still_exists.is_empty():
+		_log("Deleted profile id %s (verified by re-fetch)" % creature_id)
+		return true
+	_log("Delete returned zero rows and profile still exists for %s (RLS migration may be missing)" % creature_id)
 	return false
 
 func update_creature(id: String, patch: Dictionary) -> void:

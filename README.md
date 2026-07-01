@@ -86,7 +86,7 @@ Constants in web `js/game.js` and Godot `scripts/config.gd` (`GameConfig`):
 
 **Web only (live):** fight, eat, stamina, AFK sleep, grow, multiplayer polling, follow camera, tap-to-move.
 
-**Godot only (current scope):** onboarding spawn screen (name + color), default worm, **fluid A\*** movement, tap/click + pinch zoom, **Supabase session save** (restore last profile on return), **other players visible** via REST poll. Camera **starts fully zoomed in**. Top bar shows name only — **health/stamina removed**. Admin panel contains configurable pain test, profile deletion, and logs. No fight, eat, or persistent AI.
+**Godot only (current scope):** onboarding spawn screen (name + color), default worm, **fluid A\*** movement, tap/click + pinch zoom, **Supabase session save** (restore last profile on return), **other players visible** via REST poll. Camera **starts fully zoomed in**. Top bar shows name only — **health/stamina removed**. Admin panel contains configurable pain test, profile deletion, readable logs, and a clear-session/reload button. No fight, eat, or persistent AI.
 
 ---
 
@@ -180,7 +180,7 @@ Implemented in [`scripts/autoload/network_service.gd`](creature-godot/scripts/au
 
 Boot is silent on success (no “new player” / “restored save” toasts). If auth succeeds but no row exists for the session, `GameState.player_data` stays empty so the onboarding screen appears. Offline boot still toasts **"Could not reach server — starting locally"**.
 
-**Temporary profile migration:** name-claim login and admin delete require [`supabase/migration-temp-profile-admin.sql`](supabase/migration-temp-profile-admin.sql). It intentionally allows broad update/delete by authenticated anonymous users and must be replaced by passkeys/password phrases before shipping. Admin delete now requests `Prefer: return=representation` and only reports success if Supabase returns at least one deleted row; zero rows usually means the migration/RLS is missing.
+**Temporary profile migration:** name-claim login and admin delete require [`supabase/migration-temp-profile-admin.sql`](supabase/migration-temp-profile-admin.sql). It intentionally allows broad update/delete by authenticated anonymous users and must be replaced by passkeys/password phrases before shipping. Admin delete requests `Prefer: return=representation`, then re-fetches the row if Supabase returns an empty body; it only reports success if a deleted row is returned or the re-fetch confirms the row is gone.
 
 ### Live multiplayer (Godot)
 
@@ -200,14 +200,15 @@ Top-right **admin** button in [`scripts/ui/sc2_hud.gd`](creature-godot/scripts/u
 - Configurable worm/object counts (defaults **20** worms + **50** props)
 - Auto-despawns after **30 seconds**
 - Profile list can refresh and delete stored creature profiles (requires temporary Supabase migration above)
-- Logs panel shows boot, profile claim/create/delete, fetch failures, and remote-sync counts
+- Logs panel is a read-only `TextEdit` (not wrapped Labels) and shows boot, profile claim/create/delete, fetch failures, and remote-sync counts
+- **clear session / reload** clears `creature_supabase_session` (web localStorage) or `user://supabase_session.json` (editor) and reloads to force onboarding testing
 - Use on phone after web export to gauge FPS / input lag; pair with Godot **Profiler → Monitors** for deeper analysis
 - `main.gd` / HUD consume touches over onboarding/admin UI so controls do not leak to the map
 
 ### Map props
 
-- Buildings are procedural in `world_map.gd`: a box body, two sloped `BoxMesh` roof panels, and a door
-- Avoid using one rotated `PrismMesh` roof; it produced a giant wedge/needle-looking house on mobile
+- Buildings are procedural in `world_map.gd`: a box body, flat red roof slab, chimney, and door
+- Avoid using one rotated `PrismMesh` roof or sloped roof panels; both produced wedge/overhang artifacts on mobile
 
 ### Key files for agents
 
@@ -363,6 +364,7 @@ Use `class_name Creature` and typed references. Generic `Node3D` + `grid_pos` ca
 8. PWA orientation glitch: ensure manifest `orientation: any`, export preset `orientation=0`, no landscape lock in shell
 9. Name-claim login/profile deletion: run [`supabase/migration-temp-profile-admin.sql`](supabase/migration-temp-profile-admin.sql) in Supabase SQL Editor
 10. If onboarding or remote players misbehave, open **admin → Logs** and check auth/profile rows, fetch count, and remote-sync count
+11. Use **admin → clear session / reload** to test the new-player onboarding path without manually clearing browser storage
 
 ### Phone testing
 

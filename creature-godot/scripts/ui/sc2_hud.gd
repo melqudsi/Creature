@@ -10,7 +10,7 @@ var _admin_panel: Panel
 var _worm_spin: SpinBox
 var _object_spin: SpinBox
 var _profiles_list: VBoxContainer
-var _logs_list: VBoxContainer
+var _logs_text: TextEdit
 
 func _ready() -> void:
 	theme = preload("res://assets/themes/sc2_theme.tres")
@@ -37,11 +37,14 @@ func _build_admin_panel() -> void:
 	_admin_panel = Panel.new()
 	_admin_panel.name = "AdminPanel"
 	_admin_panel.visible = false
-	_admin_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	_admin_panel.offset_left = -330
-	_admin_panel.offset_top = 48
-	_admin_panel.offset_right = -12
-	_admin_panel.offset_bottom = 650
+	_admin_panel.anchor_left = 0.03
+	_admin_panel.anchor_top = 0.08
+	_admin_panel.anchor_right = 0.97
+	_admin_panel.anchor_bottom = 0.95
+	_admin_panel.offset_left = 0
+	_admin_panel.offset_top = 0
+	_admin_panel.offset_right = 0
+	_admin_panel.offset_bottom = 0
 	add_child(_admin_panel)
 
 	var margin := MarginContainer.new()
@@ -83,6 +86,11 @@ func _build_admin_panel() -> void:
 	refresh_btn.pressed.connect(_refresh_profiles)
 	root.add_child(refresh_btn)
 
+	var clear_session_btn := Button.new()
+	clear_session_btn.text = "clear session / reload"
+	clear_session_btn.pressed.connect(_clear_session_and_reload)
+	root.add_child(clear_session_btn)
+
 	var scroll := ScrollContainer.new()
 	scroll.custom_minimum_size = Vector2(0, 210)
 	root.add_child(scroll)
@@ -95,13 +103,14 @@ func _build_admin_panel() -> void:
 	logs_title.text = "Logs"
 	root.add_child(logs_title)
 
-	var logs_scroll := ScrollContainer.new()
-	logs_scroll.custom_minimum_size = Vector2(0, 130)
-	root.add_child(logs_scroll)
-
-	_logs_list = VBoxContainer.new()
-	_logs_list.add_theme_constant_override("separation", 2)
-	logs_scroll.add_child(_logs_list)
+	_logs_text = TextEdit.new()
+	_logs_text.editable = false
+	_logs_text.wrap_mode = TextEdit.LINE_WRAPPING_NONE
+	_logs_text.custom_minimum_size = Vector2(0, 160)
+	_logs_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_logs_text.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_logs_text.scroll_fit_content_height = false
+	root.add_child(_logs_text)
 	_refresh_logs()
 
 func _make_spin_row(label_text: String, min_value: float, max_value: float, value: float) -> HBoxContainer:
@@ -125,6 +134,12 @@ func _toggle_admin_panel() -> void:
 	if _admin_panel.visible:
 		_refresh_profiles()
 		_refresh_logs()
+
+func _clear_session_and_reload() -> void:
+	NetworkService.clear_saved_session()
+	GameState.player_data.clear()
+	GameState.player_creature = null
+	get_tree().reload_current_scene()
 
 func _on_pain_test_pressed() -> void:
 	if _pain_test and _pain_test.has_method("start"):
@@ -176,22 +191,18 @@ func _delete_profile(creature_id: String, profile_name: String) -> void:
 	_refresh_profiles()
 
 func _refresh_logs() -> void:
-	if not _logs_list:
+	if not _logs_text:
 		return
-	for ch in _logs_list.get_children():
-		ch.queue_free()
+	var text := ""
 	for line in GameState.admin_logs:
-		_append_log_line(line)
+		text += line + "\n"
+	_logs_text.text = text
 
 func _append_log_line(line: String) -> void:
-	if not _logs_list:
+	if not _logs_text:
 		return
-	var label := Label.new()
-	label.text = line
-	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_logs_list.add_child(label)
-	if _logs_list.get_child_count() > 80:
-		_logs_list.get_child(0).queue_free()
+	_logs_text.text += line + "\n"
+	_logs_text.set_caret_line(_logs_text.get_line_count())
 
 func _refresh_stats() -> void:
 	var c = GameState.player_creature
