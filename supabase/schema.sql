@@ -12,6 +12,9 @@ create table if not exists public.creatures (
   health integer not null default 100 check (health >= 0 and health <= 100),
   stamina integer not null default 10 check (stamina >= 0 and stamina <= 10),
   size_level integer not null default 1 check (size_level >= 1),
+  -- Current shapeshift form (Slice 1). Free-form text so new forms can be added
+  -- client-side without a schema change; unknown values default to alien client-side.
+  form text not null default 'alien',
   is_asleep boolean not null default false,
   last_active timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -33,12 +36,28 @@ create table if not exists public.creature_events (
   created_at timestamptz not null default now()
 );
 
+-- Shared / persistent interactive world objects (Slice 1 refinement).
+-- See supabase/migration-world-objects.sql for the full rationale. x/y are TILE
+-- (grid) coords; state is 'idle' | 'possessed'; possessed_by is the controlling
+-- player's user_id while possessed. Client degrades gracefully if this is absent.
+create table if not exists public.world_objects (
+  id uuid primary key default gen_random_uuid(),
+  type text not null,
+  x real not null default 0,
+  y real not null default 0,
+  state text not null default 'idle',
+  possessed_by uuid,
+  updated_at timestamptz not null default now()
+);
+
 create index if not exists creatures_updated_idx on public.creatures (updated_at);
 create index if not exists creature_events_victim_idx on public.creature_events (victim_user_id, read);
+create index if not exists world_objects_updated_idx on public.world_objects (updated_at);
 
 alter table public.creatures enable row level security;
 alter table public.map_objects enable row level security;
 alter table public.creature_events enable row level security;
+alter table public.world_objects enable row level security;
 
 -- Creatures: anyone authenticated can read; only owner can write own row
 create policy "creatures_select" on public.creatures
@@ -67,6 +86,20 @@ create policy "creatures_delete_smaller" on public.creatures
 -- Map objects: read all; service role seeds — allow anon read
 create policy "map_objects_select" on public.map_objects
   for select to authenticated using (true);
+
+-- World objects: read all; permissive (temporary, prototype) writes so any
+-- player can seed/possess/release shared objects. See migration-world-objects.sql.
+create policy "world_objects_select" on public.world_objects
+  for select to authenticated using (true);
+
+create policy "world_objects_temp_insert" on public.world_objects
+  for insert to authenticated with check (true);
+
+create policy "world_objects_temp_update" on public.world_objects
+  for update to authenticated using (true) with check (true);
+
+create policy "world_objects_temp_delete" on public.world_objects
+  for delete to authenticated using (true);
 
 -- Events: victim reads/updates own
 create policy "events_select_own" on public.creature_events

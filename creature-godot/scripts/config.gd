@@ -17,7 +17,13 @@ const DEFAULT_CREATURE_NAME := "Creature"
 
 ## Visible build stamp so a loaded build can be identified at a glance.
 ## Keep this in sync with the build-stamp string in web/custom_shell.html.
-const BUILD_ID := "build 2026-07-01c"
+const BUILD_ID := "build 2026-07-01e"
+
+## Landfill Dump: the spawn/respawn zone (bottom-left corner). All new players
+## and all respawns appear here. LANDFILL_RECT (tile x, y, w, h) is used for the
+## ground tint marker.
+const LANDFILL_CENTER := Vector2(3, 21)
+const LANDFILL_RECT := Rect2i(0, 16, 9, 8)
 
 const TREE_POSITIONS: Array[Vector2i] = [
 	Vector2i(3, 3), Vector2i(7, 4), Vector2i(12, 2), Vector2i(18, 5),
@@ -46,11 +52,46 @@ static func default_player_data() -> Dictionary:
 		"name": DEFAULT_CREATURE_NAME,
 		"color": DEFAULT_CREATURE_COLOR,
 		"appearance": "worm",
-		"x": MAP_W / 2,
-		"y": MAP_H / 2,
+		"form": "alien",
+		"x": LANDFILL_CENTER.x,
+		"y": LANDFILL_CENTER.y,
 		"size_level": 1,
 		"is_player": true,
 	}
+
+## A slightly scattered open tile near the landfill center so multiple spawns /
+## respawns don't stack on the exact same spot.
+static func landfill_spawn_tile() -> Vector2:
+	var ox := randi_range(-1, 1)
+	var oy := randi_range(-1, 1)
+	var t := LANDFILL_CENTER + Vector2(ox, oy)
+	t.x = clampf(t.x, 1.0, MAP_W - 2.0)
+	t.y = clampf(t.y, 1.0, MAP_H - 2.0)
+	return t
+
+## Interactive/shapeshiftable world objects: starter junk at the landfill plus a
+## few road traps out in the open so the kill matrix is testable solo.
+## Each entry is {"key": <object key>, "tile": Vector2}. See WorldObject configs
+## in world_map.gd for what each key does.
+static func interactive_objects() -> Array:
+	return [
+		# --- Landfill Dump starter objects ---
+		{"key": "altima", "tile": Vector2(6, 20)},
+		{"key": "magnolia", "tile": Vector2(2, 18)},
+		{"key": "propane", "tile": Vector2(6, 22)},
+		{"key": "pothole", "tile": Vector2(7, 19)},
+		{"key": "cart", "tile": Vector2(2, 22)},
+		{"key": "cone", "tile": Vector2(4, 23)},
+		# --- Road / open-world traps (solo-testable) ---
+		{"key": "pothole", "tile": Vector2(16, 12)},
+		{"key": "propane", "tile": Vector2(21, 11)},
+		{"key": "magnolia", "tile": Vector2(12, 9)},
+		{"key": "altima", "tile": Vector2(24, 13)},
+	]
+
+## Purely decorative trash piles that dress up the landfill.
+static func trash_pile_tiles() -> Array:
+	return [Vector2(1, 19), Vector2(2, 20), Vector2(5, 23), Vector2(1, 22), Vector2(0, 18)]
 
 static func color_to_hex(color: Color) -> String:
 	return "#%02x%02x%02x" % [int(color.r * 255), int(color.g * 255), int(color.b * 255)]
@@ -74,3 +115,15 @@ static func tile_to_world(tile: Vector2) -> Vector3:
 
 static func world_to_tile(world: Vector3) -> Vector2i:
 	return Vector2i(int(floor(world.x / TILE_SIZE)), int(floor(world.z / TILE_SIZE)))
+
+## True while a tile is inside the Landfill Dump spawn zone.
+static func is_in_landfill(tile: Vector2) -> bool:
+	return LANDFILL_RECT.has_point(Vector2i(int(floor(tile.x)), int(floor(tile.y))))
+
+## Map a world/tile position to a human-readable region name for the HUD.
+## Extend this as more regions are added (Neighborhood Road, BBQ Corner, Bus
+## Stop...); for now it's just the landfill vs everything else ("Memphis").
+static func region_for_tile(tile: Vector2) -> String:
+	if is_in_landfill(tile):
+		return "The Dump"
+	return "Memphis"

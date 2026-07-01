@@ -2,6 +2,30 @@
 
 Local-first 3D port pivoting from the web Creature game. Isometric RTS camera with procedural worm assets.
 
+> **📄 GAME DESIGN — READ FIRST:** gameplay is defined by **`Multiplayer Alien Shapeshifting Prototype.pdf`** in the repo root (one level up from this folder). Read it before changing gameplay — it is the source of truth for forms, the kill matrix, money, shapeshifting, and the phased build order.
+
+## Slice 1 — shapeshifting prototype (current)
+
+Forms/shapeshifting, landfill spawn, kill matrix, death/respawn, and shared world-object state are implemented. See the root [`README.md`](../README.md#slice-1--shapeshifting-prototype-current) for the feature overview and the **required Supabase migrations** (`migration-forms.sql` applied; **`migration-world-objects.sql` must be run** to enable shared/persistent interactive objects — the client degrades gracefully without it).
+
+Key Slice 1 files:
+
+| File | Role |
+|------|------|
+| [`scripts/forms/form_defs.gd`](scripts/forms/form_defs.gd) | `FormDefs`: per-form speed/radius/kind/visual, kill matrix (`resolve_player_death`), death lines |
+| [`scripts/forms/object_mesh.gd`](scripts/forms/object_mesh.gd) | `ObjectMesh`: procedural meshes shared by forms and world props |
+| [`scripts/world/world_object.gd`](scripts/world/world_object.gd) | `WorldObject`: interactive/solid props, `consume()`/`respawn_at()`, shared `object_id`/`type_key`/`spawn_tile` |
+| [`scripts/world/world_map.gd`](scripts/world/world_map.gd) | Object placement, `sync_world_objects()` (shared state), explosion FX |
+| [`scripts/units/creature.gd`](scripts/units/creature.gd) | Forms/collision/shapeshift/death, possession sync, remote form render + teleport-on-large-jump |
+| [`scripts/autoload/network_service.gd`](scripts/autoload/network_service.gd) | `world_objects` fetch/seed/possess/release + missing-table detection |
+| [`scripts/ui/sc2_hud.gd`](scripts/ui/sc2_hud.gd) | Become / Pop Out / Speed Burst buttons, top-banner toasts, bottom-left region label |
+
+**Notes for agents:**
+- **Kills are CLIENT-LOCAL** — a client only decides whether *its own* player dies (remote blast damage is not synced). Keep this in mind before "fixing" cross-player death.
+- **Shared world objects:** possession (`possessed`) hides an object as a standalone prop for everyone so the possessing player's synced form isn't duplicated; pop-out releases it `idle` at the drop position (persists across disconnect). Positions in `world_objects` are **tile/grid coords** (like `creatures.x/y`).
+- **Remote death = teleport:** `creature.gd` snaps a remote when its position jumps > `REMOTE_SNAP_TILES` tiles in one update (dead players don't "walk" to the dump); normal walking still interpolates.
+- **Form scale:** object forms cancel the creature root's `_body_scale` on `body_root` (`_form_body_scale()`) so a shapeshifted object matches its world prop 1:1.
+
 **Current scope:** redesigned onboarding spawn screen (uppercase name + color palette, no 3D preview), default worm with **idle rest animations** (local "breathing" vs remote "sway"), fluid movement, A* pathfinding, **Supabase session save**, **live field** (other players via 1.5s REST poll, each with a stable randomized facing). Camera starts fully zoomed in. Name-only HUD + admin panel (visible only to player `MOE`) with readable logs and clear-session/reload. Player names are forced UPPERCASE (dedupes case-variant profiles). PWA supports portrait and landscape. No health/stamina, fight, eat, or appearance customization.
 
 ## Requirements
@@ -197,7 +221,7 @@ Dev mode on `:8443` / `:8080` clears service worker cache (no incognito needed).
 
 **Build freshness / cache-busting:**
 
-- Bump `GameConfig.BUILD_ID` (currently `build 2026-07-01c`) and the matching `#build-stamp` string in `custom_shell.html` on each shipped build (every time you re-export the web build). It renders bottom-right in the shell and on the onboarding screen so users can confirm a fresh load.
+- Bump `GameConfig.BUILD_ID` (currently `build 2026-07-01e`) and the matching `#build-stamp` string in `custom_shell.html` on each shipped build (every time you re-export the web build). It renders bottom-right in the shell and on the onboarding screen so users can confirm a fresh load.
 - `custom_shell.html` runs `setupServiceWorkerAutoUpdate()` to force-activate a newer service worker on reload (Godot's default SW is cache-first and never `skipWaiting()`s). Skipped on the dev-server path.
 - **Do not grep `web/index.pck`** to judge freshness — GDScript compiles to `.gdc` bytecode, so string literals aren't plain-text there. Check `CACHE_VERSION` in `web/index.service.worker.js` and file timestamps instead.
 

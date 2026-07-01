@@ -6,11 +6,23 @@ signal toast_requested(message: String)
 signal player_stats_changed
 signal admin_log_added(message: String)
 
+## Slice 1 gameplay signals.
+## form_changed        - the local player changed shapeshift form (FormDefs key)
+## interaction_changed  - a "Become <X>" prompt should show/hide in the HUD
+## explosion_requested  - something asked the world to spawn an explosion FX +
+##                        apply its lethal radius (propane tank, etc.)
+signal form_changed(form_key: String)
+signal interaction_changed(can_become: bool, form_display: String)
+signal explosion_requested(world_pos: Vector3, radius: float)
+
 var creatures: Dictionary = {} # id -> Creature
 var player_creature: Creature = null
 var player_data: Dictionary = {}
 var blocked_tiles: Array[Vector2i] = []
 var admin_logs: Array[String] = []
+## Interactive/solid props (trees, buildings, shapeshift sources). Scanned by the
+## local player each frame for collisions/kills/shapeshift prompts.
+var world_objects: Array[WorldObject] = []
 
 func _ready() -> void:
 	for pos in GameConfig.TREE_POSITIONS:
@@ -31,6 +43,13 @@ func register_creature(creature: Creature, data: Dictionary, is_player: bool = f
 func unregister_creature(creature_id: String) -> void:
 	creatures.erase(creature_id)
 	creature_removed.emit(creature_id)
+
+func register_world_object(obj: WorldObject) -> void:
+	if not world_objects.has(obj):
+		world_objects.append(obj)
+
+func unregister_world_object(obj: WorldObject) -> void:
+	world_objects.erase(obj)
 
 func get_unit_tiles(exclude_id: String = "") -> Dictionary:
 	var tiles := {}

@@ -4,6 +4,12 @@ extends Control
 @onready var toast_panel: Panel = $ToastPanel
 @onready var toast_label: Label = $ToastPanel/ToastLabel
 @onready var admin_button: Button = $PainTestButton
+@onready var become_button: Button = $ActionBar/BecomeButton
+@onready var special_button: Button = $ActionBar/SpecialButton
+@onready var pop_button: Button = $ActionBar/PopOutButton
+@onready var region_label: Label = $RegionLabel
+
+var _last_region := ""
 
 var _pain_test: Node
 var _admin_panel: Panel
@@ -19,10 +25,78 @@ func _ready() -> void:
 	admin_button.visible = false
 	admin_button.pressed.connect(_toggle_admin_panel)
 	_build_admin_panel()
+	_setup_action_buttons()
 	GameState.player_stats_changed.connect(_refresh_stats)
 	GameState.toast_requested.connect(_show_toast)
 	GameState.admin_log_added.connect(_append_log_line)
+	GameState.interaction_changed.connect(_on_interaction_changed)
+	GameState.form_changed.connect(_on_form_changed)
+	if region_label:
+		region_label.text = ""
 	call_deferred("_refresh_stats")
+
+## Keep the bottom-left region label in sync with where the player is standing.
+## Cheap: only touches the label when the region name actually changes.
+func _process(_delta: float) -> void:
+	if not region_label:
+		return
+	var c = GameState.player_creature
+	if not c or not is_instance_valid(c):
+		if _last_region != "":
+			_last_region = ""
+			region_label.text = ""
+		return
+	var region := GameConfig.region_for_tile(c.grid_pos)
+	if region != _last_region:
+		_last_region = region
+		region_label.text = region
+
+func _setup_action_buttons() -> void:
+	become_button.visible = false
+	special_button.visible = false
+	pop_button.visible = false
+	become_button.focus_mode = Control.FOCUS_NONE
+	special_button.focus_mode = Control.FOCUS_NONE
+	pop_button.focus_mode = Control.FOCUS_NONE
+	become_button.pressed.connect(_on_become_pressed)
+	special_button.pressed.connect(_on_special_pressed)
+	pop_button.pressed.connect(_on_pop_pressed)
+
+func _player_form() -> String:
+	var c = GameState.player_creature
+	if c and is_instance_valid(c):
+		return c.form_key
+	return FormDefs.ALIEN
+
+## "Become <X>" appears only while an alien is standing near a shapeshift target.
+func _on_interaction_changed(can_become: bool, form_display: String) -> void:
+	var show := can_become and FormDefs.is_alien(_player_form())
+	become_button.visible = show
+	if show:
+		become_button.text = "Become %s" % form_display
+
+## Toggle Pop Out / Special when the player's form changes.
+func _on_form_changed(form_key: String) -> void:
+	var alien := FormDefs.is_alien(form_key)
+	pop_button.visible = not alien
+	special_button.visible = form_key == FormDefs.ALTIMA
+	if not alien:
+		become_button.visible = false
+
+func _on_become_pressed() -> void:
+	var c = GameState.player_creature
+	if c and is_instance_valid(c) and c.has_method("begin_shapeshift"):
+		c.begin_shapeshift()
+
+func _on_pop_pressed() -> void:
+	var c = GameState.player_creature
+	if c and is_instance_valid(c) and c.has_method("pop_out"):
+		c.pop_out()
+
+func _on_special_pressed() -> void:
+	var c = GameState.player_creature
+	if c and is_instance_valid(c) and c.has_method("use_special"):
+		c.use_special()
 
 func bind_pain_test(pain_test: Node) -> void:
 	_pain_test = pain_test
@@ -32,6 +106,9 @@ func consumes_pointer_at(screen_pos: Vector2) -> bool:
 		return true
 	if _admin_panel and _admin_panel.visible and _admin_panel.get_global_rect().has_point(screen_pos):
 		return true
+	for btn in [become_button, special_button, pop_button]:
+		if btn and btn.visible and btn.get_global_rect().has_point(screen_pos):
+			return true
 	return false
 
 func _build_admin_panel() -> void:

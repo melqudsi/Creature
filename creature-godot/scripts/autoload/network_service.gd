@@ -20,6 +20,17 @@ var _world_map: Node
 var _poll_accum := 0.0
 var _poll_in_flight := false
 var _last_fetch_count := -1
+## Whether the Supabase `creatures` table has the `form` column yet (added by
+## supabase/migration-forms.sql). We learn this by inspecting fetched rows and
+## only WRITE `form` once we know the column exists, so the client degrades
+## gracefully (no crashes / broken writes) on a DB that hasn't run the migration.
+var _form_column_available := false
+## Shared/persistent interactive world objects (Fix 3). We only enable syncing
+## after a successful fetch proves the `public.world_objects` table exists; if the
+## migration hasn't been run the client degrades to client-local objects.
+var _world_objects_available := false
+var _world_objects_checked := false
+var _world_objects_missing_logged := false
 
 func _log(msg: String) -> void:
 	GameState.add_admin_log(msg)
@@ -74,9 +85,116 @@ func _poll_remote_creatures() -> void:
 		return
 	_poll_in_flight = true
 	var rows: Array = await fetch_all_creatures()
-	_poll_in_flight = false
 	if _world_map and is_instance_valid(_world_map) and _world_map.has_method("sync_remote_creatures"):
 		_world_map.sync_remote_creatures(rows)
+	# Poll shared world objects on the same cadence (creatures first so the
+	# possession-liveness check sees the freshest creature set).
+	await _poll_world_objects()
+	_poll_in_flight = false
+
+# ---------------------------------------------------------------------------
+# Shared / persistent interactive world objects (Fix 3).
+# ---------------------------------------------------------------------------
+
+## Poll the shared world_objects table (if it exists), seeding it the first time
+## if it's empty, then hand the rows to the world map to reconcile.
+func _poll_world_objects() -> void:
+	if not _online or _world_map == null or not is_instance_valid(_world_map):
+		return
+	var res := await fetch_world_objects()
+	if res.get("missing", false):
+		_world_objects_available = false
+		if not _world_objects_missing_logged:
+			_world_objects_missing_logged = true
+			_log("world_objects table not found — interactive objects stay client-local. Run supabase/migration-world-objects.sql to enable shared/persistent objects.")
+		return
+	if not res.get("ok", false):
+		return
+	_world_objects_available = true
+	var rows: Array = res.get("rows", [])
+	if not _world_objects_checked:
+		_world_objects_checked = true
+		if rows.is_empty():
+			var created := await seed_world_objects(_build_world_object_seed())
+			if not created.is_empty():
+				rows = created
+			else:
+				return
+			if not _world_objects_available:
+				return
+	if _world_map and is_instance_valid(_world_map) and _world_map.has_method("sync_world_objects"):
+		_world_map.sync_world_objects(rows)
+
+## GET all shared world objects. Returns {ok, missing, rows}; `missing` is true
+## when the table doesn't exist yet (so the caller can degrade gracefully).
+func fetch_world_objects() -> Dictionary:
+	if not _online:
+		return {"ok": false, "missing": false, "rows": []}
+	var resp := await _rest_request(HTTPClient.METHOD_GET, "/rest/v1/world_objects?select=*")
+	if not resp.ok:
+		if _looks_like_missing_table(str(resp.error)):
+			return {"ok": false, "missing": true, "rows": []}
+		return {"ok": false, "missing": false, "rows": []}
+	var data: Variant = resp.data
+	return {"ok": true, "missing": false, "rows": data if typeof(data) == TYPE_ARRAY else []}
+
+func _looks_like_missing_table(err: String) -> bool:
+	var e := err.to_lower()
+	return e.find("42p01") >= 0 \
+		or e.find("pgrst205") >= 0 \
+		or e.find("does not exist") >= 0 \
+		or e.find("could not find the table") >= 0 \
+		or e.find("not find the table") >= 0
+
+## Build the initial shared object set from the client config (tile coords).
+func _build_world_object_seed() -> Array:
+	var out: Array = []
+	for entry in GameConfig.interactive_objects():
+		var tile: Vector2 = entry["tile"]
+		out.append({"type": str(entry["key"]), "x": tile.x, "y": tile.y, "state": "idle"})
+	return out
+
+## POST the seed rows (array body) and return the created rows (with ids).
+func seed_world_objects(rows: Array) -> Array:
+	if not _online or rows.is_empty():
+		return []
+	var headers := _api_headers(true)
+	headers.append("Prefer: return=representation")
+	var resp := await _request(
+		HTTPClient.METHOD_POST,
+		GameConfig.SUPABASE_URL + "/rest/v1/world_objects",
+		headers,
+		JSON.stringify(rows)
+	)
+	if not resp.ok:
+		if _looks_like_missing_table(str(resp.error)):
+			_world_objects_available = false
+		_log("seed_world_objects failed: %s" % resp.error)
+		push_warning("seed_world_objects failed: %s" % resp.error)
+		return []
+	_log("Seeded %d shared world objects" % rows.size())
+	if typeof(resp.data) == TYPE_ARRAY:
+		return resp.data
+	return []
+
+func update_world_object(object_id: String, patch: Dictionary) -> void:
+	if not _online or object_id.is_empty() or not _world_objects_available:
+		return
+	var body := patch.duplicate(true)
+	body["updated_at"] = _iso_now()
+	var path := "/rest/v1/world_objects?id=eq.%s" % object_id.uri_encode()
+	var resp := await _rest_request(HTTPClient.METHOD_PATCH, path, body)
+	if not resp.ok:
+		_log("update_world_object failed: %s" % resp.error)
+		push_warning("update_world_object failed: %s" % resp.error)
+
+## Mark an object possessed by a player (hidden as a standalone prop everywhere).
+func possess_world_object(object_id: String, user_id: String) -> void:
+	update_world_object(object_id, {"state": "possessed", "possessed_by": user_id})
+
+## Drop an object back into the world at tile (x, y) as idle (visible to all).
+func release_world_object(object_id: String, x: float, y: float) -> void:
+	update_world_object(object_id, {"state": "idle", "possessed_by": null, "x": x, "y": y})
 
 func is_online() -> bool:
 	return _online
@@ -315,14 +433,33 @@ func save_creature_position(creature_id: String, x: float, y: float, flush_now: 
 		return
 	_save_dirty = true
 
+func has_form_column() -> bool:
+	return _form_column_available
+
+## Learn whether the `form` column exists by looking at any fetched/returned row.
+func _note_row_columns(row: Dictionary) -> void:
+	if not _form_column_available and typeof(row) == TYPE_DICTIONARY and row.has("form"):
+		_form_column_available = true
+		_log("Detected `form` column — form sync enabled")
+
+## Persist the player's current shapeshift form. No-op (graceful) until we know
+## the `form` column exists, so writes never fail on an un-migrated DB.
+func save_creature_form(creature_id: String, form_key: String) -> void:
+	if not _online or creature_id.is_empty() or not _form_column_available:
+		return
+	update_creature(creature_id, {"form": form_key})
+
 func db_row_to_player_data(row: Dictionary, for_player: bool = true) -> Dictionary:
+	_note_row_columns(row)
 	var color := GameConfig.color_from_hex(str(row.get("color", "")))
+	var form := str(row.get("form", "alien"))
 	return {
 		"id": str(row.get("id", "")),
 		"user_id": str(row.get("user_id", "")),
 		"name": str(row.get("name", GameConfig.DEFAULT_CREATURE_NAME)),
 		"color": color,
 		"appearance": "worm",
+		"form": form,
 		"x": clampf(float(row.get("x", GameConfig.MAP_W / 2)), 0.0, GameConfig.MAP_W - 1.0),
 		"y": clampf(float(row.get("y", GameConfig.MAP_H / 2)), 0.0, GameConfig.MAP_H - 1.0),
 		"size_level": int(row.get("size_level", 1)),

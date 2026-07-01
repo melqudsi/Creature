@@ -19,10 +19,28 @@ const SEGMENT_SPECS: Array[Dictionary] = [
 	{"z": -0.5, "radius": 0.07, "length": 0.22, "shade": 0.86},
 ]
 
+## Shapeshift interaction tuning.
+const INTERACT_RADIUS := 1.15   # how close to a world object to offer "Become"
+const SHAPESHIFT_TIME := 1.0    # seconds to hold near an object to transform
+const OBJECT_RESPAWN_DELAY := 3.0 # object reappears this long after you die as it
+const EXPLOSION_RADIUS := 2.2
+const ALTIMA_BURST_MULT := 1.7
+const ALTIMA_BURST_TIME := 2.0
+const ALTIMA_BURST_COOLDOWN := 6.0
+## Remote position jumps larger than this (tiles) are treated as a teleport
+## (death/respawn) and SNAP instead of interpolating, so other players don't see
+## a dead player smoothly "walk" back to the dump.
+const REMOTE_SNAP_TILES := 3.0
+## How long an explosive death lingers at the blast before the camera-following
+## player teleports to the landfill, so the explosion is actually visible.
+const EXPLODE_RESPAWN_DELAY := 0.8
+
 var creature_id: String = ""
 var creature_name: String = "Creature"
 var creature_color: Color = GameConfig.DEFAULT_CREATURE_COLOR
 var appearance: String = "worm"
+## Current shapeshift form (FormDefs key). "alien" is the default worm.
+var form_key: String = FormDefs.ALIEN
 var grid_pos := Vector2(8, 6)
 var size_level := 1
 var is_asleep := false
@@ -30,6 +48,19 @@ var is_player := false
 var is_remote := false
 var is_moving := false
 var is_spawning := false
+var is_dead := false
+
+# Shapeshift state (player only).
+var _active_object: WorldObject = null       # object currently "worn" as a form
+var _nearby_object: WorldObject = null       # closest shapeshiftable object in range
+var _shapeshift_candidate: WorldObject = null # object we're mid-transform into
+var _shapeshifting := false
+var _shapeshift_t := 0.0
+var _last_prompt_can := false
+var _last_prompt_name := ""
+# Altima speed-burst special.
+var _burst_t := 0.0
+var _burst_cd := 0.0
 
 var _move_dir := Vector2.ZERO
 var _move_target: Vector2 = Vector2(-1, -1)
@@ -70,6 +101,8 @@ func setup(data: Dictionary) -> void:
 	creature_name = str(data.get("name", GameConfig.DEFAULT_CREATURE_NAME)).substr(0, GameConfig.NAME_MAX_LEN)
 	creature_color = data.get("color", GameConfig.DEFAULT_CREATURE_COLOR)
 	appearance = "worm"
+	var incoming_form := str(data.get("form", FormDefs.ALIEN))
+	form_key = incoming_form if FormDefs.is_valid(incoming_form) else FormDefs.ALIEN
 	grid_pos = Vector2(data.get("x", 8.0), data.get("y", 6.0))
 	size_level = int(data.get("size_level", 1))
 	is_player = data.get("is_player", false)
@@ -77,7 +110,7 @@ func setup(data: Dictionary) -> void:
 	is_asleep = data.get("is_asleep", false)
 	# Desync idle animations so multiple creatures don't breathe/sway in lockstep.
 	_phase_offset = randf() * TAU
-	_apply_appearance()
+	apply_form(form_key)
 	_update_transform(true, 0.0)
 	if health_bar:
 		health_bar.visible = false
@@ -111,7 +144,15 @@ func _style_selection_ring() -> void:
 	rmat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	selection_ring.material_override = rmat
 
-func _apply_appearance() -> void:
+## Rebuild the visible body for the current form. Alien draws the procedural
+## worm; every other form uses a shared ObjectMesh so it matches its world-object
+## source. Safe to call at setup and whenever the form/color/size changes.
+func apply_form(key: String) -> void:
+	if not FormDefs.is_valid(key):
+		key = FormDefs.ALIEN
+	form_key = key
+	if not body_root:
+		_resolve_child_refs()
 	if not body_root:
 		return
 	_clear_body_children()
@@ -120,11 +161,43 @@ func _apply_appearance() -> void:
 	_body_scale = 0.92 + (size_level - 1) * 0.08
 	body_root.rotation_degrees = Vector3.ZERO
 	body_root.position = Vector3.ZERO
-	body_root.scale = Vector3.ONE * _body_scale
-	for spec in SEGMENT_SPECS:
-		_segments.append(_add_segment(spec))
-	_add_alien_eyes()
+	body_root.scale = Vector3.ONE * _form_body_scale()
+	if FormDefs.is_alien(form_key):
+		for spec in SEGMENT_SPECS:
+			_segments.append(_add_segment(spec))
+		_add_alien_eyes()
+	else:
+		body_root.add_child(ObjectMesh.build(FormDefs.visual(form_key), creature_color))
 	_reset_body_pose()
+	if is_player and creature_id != "preview" and creature_id != "portrait":
+		GameState.form_changed.emit(form_key)
+		if not creature_id.is_empty():
+			NetworkService.save_creature_form(creature_id, form_key)
+		GameState.player_data["form"] = form_key
+
+func is_alien_form() -> bool:
+	return FormDefs.is_alien(form_key)
+
+## Server id of the shared object this player is currently wearing ("" if none).
+## Used by the world-object sync as the LOCAL authority so a just-possessed /
+## just-popped object doesn't flicker during the ~1.5s server round-trip.
+func possessed_object_id() -> String:
+	if _active_object and is_instance_valid(_active_object):
+		return _active_object.object_id
+	return ""
+
+## Scale applied to body_root for the current form.
+##
+## The creature ROOT node is itself scaled by `_body_scale` (spawn anim / remote
+## setup), so a mesh under body_root ends up at root*body scale. The alien worm
+## was tuned for that doubled factor, but object forms share the SAME ObjectMesh
+## as their world-object source (which renders at scale 1.0). To make a
+## shapeshifted object match its Rusty Altima / tree / propane prop 1:1, we
+## cancel the root scale on body_root for non-alien forms.
+func _form_body_scale() -> float:
+	if FormDefs.is_alien(form_key):
+		return _body_scale
+	return 1.0 / maxf(_body_scale, 0.01)
 
 func _clear_body_children() -> void:
 	for ch in body_root.get_children():
@@ -187,7 +260,7 @@ func _reset_body_pose() -> void:
 		return
 	body_root.rotation_degrees = Vector3.ZERO
 	body_root.position = Vector3.ZERO
-	body_root.scale = Vector3.ONE * _body_scale
+	body_root.scale = Vector3.ONE * _form_body_scale()
 	for i in _segments.size():
 		var seg := _segments[i]
 		var spec: Dictionary = SEGMENT_SPECS[i]
@@ -198,7 +271,7 @@ func _reset_body_pose() -> void:
 	rotation.x = 0.0
 
 func _apply_slither(_delta: float) -> void:
-	if _segments.is_empty():
+	if not is_alien_form() or _segments.is_empty():
 		return
 	var wave := sin(_walk_phase * 5.5)
 	for i in _segments.size():
@@ -220,7 +293,7 @@ func _apply_slither(_delta: float) -> void:
 ## Local/player idle: a gentle vertical "breathing" undulation. Slower and much
 ## lower amplitude than _apply_slither; never translates the creature itself.
 func _apply_idle_local(delta: float) -> void:
-	if _segments.is_empty():
+	if not is_alien_form() or _segments.is_empty():
 		return
 	_idle_phase += delta
 	var t := _idle_phase * 1.8 + _phase_offset
@@ -240,7 +313,7 @@ func _apply_idle_local(delta: float) -> void:
 ## idle, so resting remote players read differently. Never touches rotation.y so
 ## the randomized facing from setup() is preserved.
 func _apply_idle_remote(delta: float) -> void:
-	if _segments.is_empty():
+	if not is_alien_form() or _segments.is_empty():
 		return
 	_idle_phase += delta
 	var t := _idle_phase * 1.1 + _phase_offset
@@ -295,6 +368,11 @@ func _process(delta: float) -> void:
 		sleep_fx.visible = false
 		rotation.x = 0.0
 
+	if _burst_t > 0.0:
+		_burst_t = maxf(0.0, _burst_t - delta)
+	if _burst_cd > 0.0:
+		_burst_cd = maxf(0.0, _burst_cd - delta)
+
 	if is_moving:
 		_advance_along_path(delta)
 	else:
@@ -303,6 +381,9 @@ func _process(delta: float) -> void:
 			_apply_idle_local(delta)
 
 	_update_transform(false, delta)
+
+	if is_player and not is_asleep:
+		_update_player_interactions(delta)
 
 func _update_transform(snap: bool, delta: float) -> void:
 	if creature_id == "preview":
@@ -329,11 +410,15 @@ func set_move_target(target: Vector2) -> void:
 func _replan_path() -> void:
 	if _move_target.x < 0:
 		return
+	# Vehicles are reckless: they ignore other units in pathfinding so they can
+	# ram aliens / drive into tree & pothole traps (kills resolve via proximity).
+	# They still route around solid trees/buildings in blocked_tiles.
+	var units: Dictionary = {} if FormDefs.is_vehicle(form_key) else GameState.get_unit_tiles(creature_id)
 	_path = GridNav.find_path(
 		grid_pos,
 		_move_target,
 		GameState.blocked_tiles,
-		GameState.get_unit_tiles(creature_id)
+		units
 	)
 	if _path.is_empty():
 		if _has_reached_target():
@@ -350,7 +435,7 @@ func _advance_along_path(delta: float) -> void:
 	var waypoint := _path[0]
 	var to_waypoint := waypoint - grid_pos
 	var dist := to_waypoint.length()
-	var step := delta * GameConfig.MOVE_TILES_PER_SEC
+	var step := delta * _current_speed()
 
 	if dist <= 0.001:
 		_path.remove_at(0)
@@ -419,22 +504,41 @@ func apply_network_patch(patch: Dictionary) -> void:
 		_update_transform(true, 0.0)
 	if patch.has("size_level"):
 		size_level = int(patch.size_level)
-		_apply_appearance()
+		apply_form(form_key)
 
 func apply_remote_state(row: Dictionary) -> void:
 	var target := Vector2(float(row.get("x", grid_pos.x)), float(row.get("y", grid_pos.y)))
+	# A big jump means this player teleported (respawned at the dump), not walked.
+	# Snap immediately instead of lerping so remotes don't glide across the map.
+	if grid_pos.distance_to(target) > REMOTE_SNAP_TILES:
+		grid_pos = target
+		_remote_target = target
+		is_moving = false
+		_move_dir = Vector2.ZERO
+		_update_transform(true, 0.0)
 	_remote_target = target
 	var new_name := str(row.get("name", creature_name)).substr(0, GameConfig.NAME_MAX_LEN)
 	if new_name != creature_name:
 		creature_name = new_name
+	var needs_rebuild := false
 	var new_level := int(row.get("size_level", size_level))
 	if new_level != size_level:
 		size_level = new_level
-		_apply_appearance()
+		needs_rebuild = true
 	var new_color := GameConfig.color_from_hex(str(row.get("color", "")))
 	if new_color != creature_color:
 		creature_color = new_color
-		_apply_appearance()
+		needs_rebuild = true
+	# Render the remote player in their current synced form (defaults to alien if
+	# the "form" column doesn't exist yet — see NetworkService form handling).
+	var new_form := str(row.get("form", FormDefs.ALIEN))
+	if not FormDefs.is_valid(new_form):
+		new_form = FormDefs.ALIEN
+	if new_form != form_key:
+		form_key = new_form
+		needs_rebuild = true
+	if needs_rebuild:
+		apply_form(form_key)
 
 func _process_remote(delta: float) -> void:
 	var to_target := _remote_target - grid_pos
@@ -452,6 +556,229 @@ func _process_remote(delta: float) -> void:
 		_move_dir = Vector2.ZERO
 		_apply_idle_remote(delta)
 	_update_transform(false, delta)
+
+# ---------------------------------------------------------------------------
+# Forms: movement speed, collisions, shapeshifting, death (player-local).
+# ---------------------------------------------------------------------------
+
+func _current_speed() -> float:
+	var mult := FormDefs.speed_mult(form_key)
+	if _burst_t > 0.0:
+		mult *= ALTIMA_BURST_MULT
+	return GameConfig.MOVE_TILES_PER_SEC * mult
+
+func _world_xz() -> Vector2:
+	return Vector2(position.x, position.z)
+
+## Per-frame player scan: find the nearest shapeshift target (for the "Become"
+## prompt), advance an in-progress shapeshift, and resolve client-local kills.
+func _update_player_interactions(delta: float) -> void:
+	if is_spawning or is_dead:
+		return
+	_scan_shapeshift_target()
+	_update_shapeshift_progress(delta)
+	_resolve_contacts()
+
+func _scan_shapeshift_target() -> void:
+	_nearby_object = null
+	# Can only Become while an alien (pop out first to change form).
+	if is_alien_form():
+		var my := _world_xz()
+		var best_d := INTERACT_RADIUS
+		for obj in GameState.world_objects:
+			if not is_instance_valid(obj) or obj.consumed or not obj.is_shapeshiftable():
+				continue
+			var d := my.distance_to(Vector2(obj.position.x, obj.position.z))
+			if d <= best_d:
+				best_d = d
+				_nearby_object = obj
+	var can := _nearby_object != null
+	var display := FormDefs.display(_nearby_object.form_key) if can else ""
+	if can != _last_prompt_can or display != _last_prompt_name:
+		_last_prompt_can = can
+		_last_prompt_name = display
+		GameState.interaction_changed.emit(can, display)
+
+func _update_shapeshift_progress(delta: float) -> void:
+	if not _shapeshifting:
+		return
+	# Cancel if the target vanished or we wandered out of range.
+	if not is_instance_valid(_shapeshift_candidate) or _shapeshift_candidate.consumed or _nearby_object != _shapeshift_candidate:
+		_shapeshifting = false
+		_shapeshift_t = 0.0
+		return
+	_shapeshift_t += delta
+	if _shapeshift_t >= SHAPESHIFT_TIME:
+		_complete_shapeshift()
+
+## Called by the HUD "Become" button. Begins the ~1s hold-to-transform timer.
+func begin_shapeshift() -> void:
+	if not is_player or is_dead or not is_alien_form():
+		return
+	if _nearby_object == null or not is_instance_valid(_nearby_object):
+		return
+	_shapeshift_candidate = _nearby_object
+	_shapeshifting = true
+	_shapeshift_t = 0.0
+
+func _complete_shapeshift() -> void:
+	var obj := _shapeshift_candidate
+	_shapeshifting = false
+	_shapeshift_t = 0.0
+	_shapeshift_candidate = null
+	if obj == null or not is_instance_valid(obj) or obj.consumed:
+		return
+	_stop_movement()
+	_move_target = Vector2(-1, -1)
+	_active_object = obj
+	obj.consume() # world object disappears while we wear its form
+	# Mark the shared object as possessed by us so every client hides its
+	# standalone prop (our synced form + position now represents it — no
+	# duplicate). No-op for client-local fallback objects (empty object_id).
+	if not obj.object_id.is_empty():
+		NetworkService.possess_world_object(obj.object_id, NetworkService.get_user_id())
+	apply_form(obj.form_key)
+	GameState.show_toast("You became a %s" % FormDefs.display(form_key))
+
+## Called by the HUD "Pop Out" button. Returns to alien; the worn object
+## reappears next to us.
+func pop_out() -> void:
+	if not is_player or is_dead or is_alien_form():
+		return
+	_stop_movement()
+	if _active_object and is_instance_valid(_active_object):
+		# Drop the object just beside us at our CURRENT location and leave it
+		# there. In shared mode this writes the new position + idle state to the
+		# server, so it persists for everyone (and survives our disconnect).
+		var drop_tile := grid_pos + Vector2(0.9, 0.0)
+		drop_tile.x = clampf(drop_tile.x, 1.0, GameConfig.MAP_W - 2.0)
+		drop_tile.y = clampf(drop_tile.y, 1.0, GameConfig.MAP_H - 2.0)
+		_active_object.respawn_at(GameConfig.tile_to_world(drop_tile))
+		if not _active_object.object_id.is_empty():
+			NetworkService.release_world_object(_active_object.object_id, drop_tile.x, drop_tile.y)
+	_active_object = null
+	apply_form(FormDefs.ALIEN)
+	GameState.show_toast("Popped out to alien")
+
+## Optional Altima special: a short speed burst on a cooldown.
+func use_special() -> void:
+	if not is_player or is_dead:
+		return
+	if form_key == FormDefs.ALTIMA and _burst_cd <= 0.0:
+		_burst_t = ALTIMA_BURST_TIME
+		_burst_cd = ALTIMA_BURST_COOLDOWN
+		GameState.show_toast("Speed burst!")
+
+## Resolve client-local kills against world objects and remote creatures. We
+## only ever decide whether OUR OWN player dies (see NETWORKING notes): remote
+## players resolve their own deaths on their own client.
+func _resolve_contacts() -> void:
+	var my := _world_xz()
+	var my_r := FormDefs.radius(form_key)
+	# World objects (trees, potholes, propane, buildings...).
+	for obj in GameState.world_objects:
+		if not is_instance_valid(obj) or obj.consumed:
+			continue
+		var d := my.distance_to(Vector2(obj.position.x, obj.position.z))
+		if d > my_r + obj.radius:
+			continue
+		var res := FormDefs.resolve_player_death(form_key, obj.kind)
+		if res.die:
+			if res.explode:
+				GameState.explosion_requested.emit(obj.position, EXPLOSION_RADIUS)
+				# The propane tank is consumed by the blast and respawns later
+				# (shared objects reappear from the next poll; local ones on timer).
+				obj.consume()
+				if obj.object_id.is_empty():
+					_schedule_object_respawn(obj, obj.spawn_world_pos)
+			apply_death(res.reason, res.explode)
+			return
+	# Remote creatures (their form is synced; a remote Altima can squish us).
+	for id in GameState.creatures:
+		var c: Creature = GameState.creatures[id]
+		if c == self or not is_instance_valid(c):
+			continue
+		var d := my.distance_to(Vector2(c.position.x, c.position.z))
+		if d > my_r + FormDefs.radius(c.form_key):
+			continue
+		var res := FormDefs.resolve_player_death(form_key, FormDefs.kind(c.form_key))
+		if res.die:
+			if res.explode:
+				GameState.explosion_requested.emit(position, EXPLOSION_RADIUS)
+			apply_death(res.reason, res.explode)
+			return
+
+## Called by the world when an explosion goes off. Applies its lethal radius to
+## THIS player only (client-local); aliens and vehicles nearby die.
+func apply_explosion(world_pos: Vector3, radius: float) -> void:
+	if not is_player or is_dead or is_spawning:
+		return
+	if not FormDefs.explosion_kills(form_key):
+		return
+	var d := _world_xz().distance_to(Vector2(world_pos.x, world_pos.z))
+	if d <= radius:
+		apply_death(FormDefs.DEATH_PROPANE, true)
+
+## Death + respawn as alien at the landfill. Kills are non-punishing.
+## `exploded` lingers the corpse at the blast for a beat so the camera-following
+## player actually sees the explosion before teleporting to the dump.
+func apply_death(reason: String, exploded: bool = false) -> void:
+	if is_dead:
+		return
+	is_dead = true
+	# TODO(Slice 2): drop any carried money here before respawning (money system
+	# doesn't exist yet). The dropped stack/bag/vault should spawn at grid_pos.
+	if not reason.is_empty():
+		GameState.show_toast(reason)
+	GameState.add_admin_log("Player died: %s (form %s)" % [reason, form_key])
+
+	# If we died while shapeshifted, the worn object returns to its home spot.
+	# Shared objects release on the server (visible to everyone); client-local
+	# fallback objects use the old delayed local respawn.
+	if _active_object and is_instance_valid(_active_object):
+		if not _active_object.object_id.is_empty():
+			NetworkService.release_world_object(
+				_active_object.object_id, _active_object.spawn_tile.x, _active_object.spawn_tile.y)
+			_active_object.respawn_at(_active_object.spawn_world_pos)
+		else:
+			_schedule_object_respawn(_active_object, _active_object.spawn_world_pos)
+	_active_object = null
+	_shapeshifting = false
+	_shapeshift_candidate = null
+	_burst_t = 0.0
+
+	# Pop back to alien immediately (wreck/corpse reads as the alien form).
+	apply_form(FormDefs.ALIEN)
+	_stop_movement()
+	_move_target = Vector2(-1, -1)
+	if exploded:
+		var timer := get_tree().create_timer(EXPLODE_RESPAWN_DELAY)
+		timer.timeout.connect(_respawn_at_landfill)
+	else:
+		_respawn_at_landfill()
+
+## Relocate to the landfill and play the emerge animation (which also grants a
+## brief invulnerability window since interactions skip while spawning).
+func _respawn_at_landfill() -> void:
+	grid_pos = GameConfig.landfill_spawn_tile()
+	_stop_movement()
+	_move_target = Vector2(-1, -1)
+	_update_transform(true, 0.0)
+	is_spawning = true
+	_spawn_t = 0.0
+	if spawn_fx:
+		spawn_fx.visible = true
+	scale = Vector3(0.01, 0.01, 0.01)
+	_sync_player_position(true)
+	is_dead = false
+
+func _schedule_object_respawn(obj: WorldObject, pos: Vector3) -> void:
+	if obj == null or not is_instance_valid(obj):
+		return
+	var timer := get_tree().create_timer(OBJECT_RESPAWN_DELAY)
+	timer.timeout.connect(func() -> void:
+		if is_instance_valid(obj):
+			obj.respawn_at(pos))
 
 func _exit_tree() -> void:
 	if is_player and not creature_id.is_empty():

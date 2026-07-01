@@ -2,6 +2,30 @@
 
 Maps the web Creature client to the Godot 4 project in `creature-godot/`.
 
+> **📄 GAME DESIGN — READ FIRST:** the authoritative gameplay spec is **`Multiplayer Alien Shapeshifting Prototype.pdf`** in the repo root. Read it before touching gameplay.
+
+## Slice 1 — shapeshifting prototype
+
+Forms, shapeshifting, landfill spawn/respawn, the kill matrix, and shared/persistent interactive objects are implemented (Phase 1 of the PDF).
+
+| Component | Role |
+|-----------|------|
+| `scripts/forms/form_defs.gd` | `FormDefs` — per-form speed/radius/kind/visual, `resolve_player_death()` kill matrix, death lines |
+| `scripts/forms/object_mesh.gd` | `ObjectMesh` — procedural meshes shared by forms and world props |
+| `scripts/world/world_object.gd` | `WorldObject` — props + shared-state fields (`object_id`, `type_key`, `spawn_tile`) |
+| `scripts/world/world_map.gd` | `sync_world_objects()` reconciles shared objects; `spawn_explosion()` FX |
+| `scripts/units/creature.gd` | forms/collision/shapeshift/death; possession sync; `apply_remote_state()` snaps on big jumps |
+| `scripts/autoload/network_service.gd` | `world_objects` fetch/seed/possess/release + graceful missing-table detection |
+
+**Shared world objects (Fix pass):** backed by Supabase `public.world_objects` (see `supabase/migration-world-objects.sql`, **must be run**; schema.sql also carries it). Rows: `{id, type (object key), x, y (tile coords), state ('idle'|'possessed'), possessed_by}`. Polled on the same ~1.5s cadence as creatures (right after the creature poll, so the possession-liveness check sees the freshest creature set).
+
+- **No duplicate:** a `possessed` object whose controller is a currently-seen creature is hidden as a standalone prop (the possessing player's synced form represents it).
+- **Persistence:** popping out releases the object `idle` at the drop tile → renders for everyone from shared state; survives disconnect because state is server-side. An object possessed by a controller with no creature row is shown idle again.
+- **Graceful degradation:** the client probes the table on its first world-object poll; if missing it logs a notice and keeps client-local config objects (`_fallback_interactive`). Seeding: if the table exists but is empty, the first client seeds it from `GameConfig.interactive_objects()`.
+- **Kills stay CLIENT-LOCAL** (each client only kills its own player); shared state only governs where objects are and who possesses them.
+
+Other Slice-1 refinements: top-banner toasts, bottom-left region label (`GameConfig.region_for_tile()`), object forms rendered 1:1 with their world prop (`Creature._form_body_scale()`), remote death teleport (`REMOTE_SNAP_TILES`), and a bigger/brighter propane explosion that lingers before respawn (`EXPLODE_RESPAWN_DELAY`).
+
 ## File mapping
 
 | Web | Godot |
@@ -105,7 +129,7 @@ main.gd _ready()
 
 - **Export gotchas:** Godot may revert `export_presets.cfg` (`ensure_cross_origin_isolation_headers` back to true, `orientation` off 0) and re-serialize `project.godot` (dropping a default line). Verify/restore both to keep the git diff clean.
 - **Build freshness:** GDScript compiles to `.gdc` bytecode, so string literals are **not** plain-text searchable in `web/index.pck` — don't grep the `.pck` to check whether a build is fresh; use `CACHE_VERSION` in `web/index.service.worker.js` + file timestamps.
-- **PWA cache-busting:** `custom_shell.html`'s `setupServiceWorkerAutoUpdate()` force-activates a newer service worker on reload (Godot's default SW is cache-first / never `skipWaiting()`s). Bump `GameConfig.BUILD_ID` (currently `build 2026-07-01c`; + the `#build-stamp` string in `custom_shell.html`) each shipped build / re-export; it renders bottom-right in the shell and on the onboarding screen so users can confirm freshness.
+- **PWA cache-busting:** `custom_shell.html`'s `setupServiceWorkerAutoUpdate()` force-activates a newer service worker on reload (Godot's default SW is cache-first / never `skipWaiting()`s). Bump `GameConfig.BUILD_ID` (currently `build 2026-07-01e`; + the `#build-stamp` string in `custom_shell.html`) each shipped build / re-export; it renders bottom-right in the shell and on the onboarding screen so users can confirm freshness.
 
 ## Known gaps vs web
 
