@@ -37,6 +37,9 @@ var _path: Array[Vector2] = []
 var _walk_phase := 0.0
 var _spawn_t := 0.0
 var _breath_phase := 0.0
+var _idle_phase := 0.0
+var _phase_offset := 0.0
+var _remote_facing := 0.0
 var _body_scale := 1.0
 var _remote_target := Vector2.ZERO
 var _segments: Array[MeshInstance3D] = []
@@ -72,6 +75,8 @@ func setup(data: Dictionary) -> void:
 	is_player = data.get("is_player", false)
 	is_remote = data.get("is_remote", false)
 	is_asleep = data.get("is_asleep", false)
+	# Desync idle animations so multiple creatures don't breathe/sway in lockstep.
+	_phase_offset = randf() * TAU
 	_apply_appearance()
 	_update_transform(true, 0.0)
 	if health_bar:
@@ -87,6 +92,10 @@ func setup(data: Dictionary) -> void:
 	elif is_remote:
 		_remote_target = grid_pos
 		scale = Vector3.ONE * _body_scale
+		# Stable, per-creature randomized facing so idle remotes don't all
+		# point the same way (kept fixed unless they actually walk).
+		_remote_facing = _random_facing_for(str(data.get("user_id", creature_id)))
+		rotation.y = _remote_facing
 	if creature_id != "preview" and creature_id != "portrait":
 		GameState.register_creature(self, data, is_player)
 
@@ -208,6 +217,51 @@ func _apply_slither(_delta: float) -> void:
 	body_root.position.y = abs(sin(_walk_phase * 6.0)) * 0.01
 	rotation.x = wave * 0.04
 
+## Local/player idle: a gentle vertical "breathing" undulation. Slower and much
+## lower amplitude than _apply_slither; never translates the creature itself.
+func _apply_idle_local(delta: float) -> void:
+	if _segments.is_empty():
+		return
+	_idle_phase += delta
+	var t := _idle_phase * 1.8 + _phase_offset
+	for i in _segments.size():
+		var seg := _segments[i]
+		var spec: Dictionary = SEGMENT_SPECS[i]
+		var phase := t + float(i) * 0.45
+		var breath := sin(phase)
+		var rest := _segment_rest_position(spec)
+		seg.position = Vector3(rest.x, rest.y + breath * 0.006, rest.z)
+		seg.rotation_degrees = SEGMENT_ROT + Vector3(breath * 2.0, 0.0, 0.0)
+	body_root.position.y = (sin(t) * 0.5 + 0.5) * 0.008
+	rotation.x = 0.0
+
+## Remote/offline idle: a distinctly different lateral "sway" (side-to-side
+## traveling wave + yaw) at a slower rhythm and larger amplitude than the local
+## idle, so resting remote players read differently. Never touches rotation.y so
+## the randomized facing from setup() is preserved.
+func _apply_idle_remote(delta: float) -> void:
+	if _segments.is_empty():
+		return
+	_idle_phase += delta
+	var t := _idle_phase * 1.1 + _phase_offset
+	for i in _segments.size():
+		var seg := _segments[i]
+		var spec: Dictionary = SEGMENT_SPECS[i]
+		var phase := t + float(i) * 0.9
+		var sway := sin(phase)
+		var rest := _segment_rest_position(spec)
+		seg.position = Vector3(sway * 0.02, rest.y, rest.z)
+		seg.rotation_degrees = SEGMENT_ROT + Vector3(0.0, sway * 6.0, 0.0)
+	body_root.position.y = 0.0
+	rotation.x = 0.0
+
+## Deterministic facing derived from a per-creature key (user id) so it stays
+## stable across frames/syncs while still varying between creatures.
+func _random_facing_for(key: String) -> float:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(key)
+	return rng.randf() * TAU
+
 func _process(delta: float) -> void:
 	if is_remote:
 		_process_remote(delta)
@@ -246,7 +300,7 @@ func _process(delta: float) -> void:
 	else:
 		_move_dir = Vector2.ZERO
 		if not is_asleep:
-			_reset_body_pose()
+			_apply_idle_local(delta)
 
 	_update_transform(false, delta)
 
@@ -396,7 +450,7 @@ func _process_remote(delta: float) -> void:
 		grid_pos = _remote_target
 		is_moving = false
 		_move_dir = Vector2.ZERO
-		_reset_body_pose()
+		_apply_idle_remote(delta)
 	_update_transform(false, delta)
 
 func _exit_tree() -> void:

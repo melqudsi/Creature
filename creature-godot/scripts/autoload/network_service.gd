@@ -154,7 +154,9 @@ func fetch_my_creature(user_id: String) -> Dictionary:
 	return rows[0]
 
 func fetch_creature_by_name(profile_name: String) -> Dictionary:
-	var path := "/rest/v1/creatures?name=eq.%s&select=*&limit=1" % profile_name.uri_encode()
+	# Names are stored/matched in ALL CAPS (Postgres eq is case-sensitive).
+	var query_name := profile_name.strip_edges().to_upper()
+	var path := "/rest/v1/creatures?name=eq.%s&select=*&limit=1" % query_name.uri_encode()
 	var resp := await _rest_request(HTTPClient.METHOD_GET, path)
 	if not resp.ok:
 		_last_error = "fetch creature by name: %s" % resp.error
@@ -179,7 +181,9 @@ func fetch_creature_by_id(creature_id: String) -> Dictionary:
 	return rows[0]
 
 func register_or_claim_profile(profile_name: String, color: Color) -> Dictionary:
-	var cleaned_name := profile_name.strip_edges().substr(0, GameConfig.NAME_MAX_LEN)
+	# Force ALL CAPS so lookups/stores are consistent and case-variant duplicates
+	# ("Bob" vs "boB") can't be created; both stored value and query are uppercased.
+	var cleaned_name := profile_name.strip_edges().to_upper().substr(0, GameConfig.NAME_MAX_LEN)
 	if cleaned_name.is_empty():
 		cleaned_name = GameConfig.DEFAULT_CREATURE_NAME
 	if not _online and not await _boot_online():

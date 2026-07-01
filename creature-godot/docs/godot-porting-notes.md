@@ -10,7 +10,7 @@ Maps the web Creature client to the Godot 4 project in `creature-godot/`.
 | [`js/api.js`](../js/api.js) | [`scripts/autoload/network_service.gd`](../scripts/autoload/network_service.gd) |
 | [`js/eyes.js`](../js/eyes.js) | [`scripts/units/creature_eyes.gd`](../scripts/units/creature_eyes.gd) |
 | [`js/renderer.js`](../js/renderer.js) | [`scripts/units/creature.gd`](../scripts/units/creature.gd) (meshes/materials) |
-| [`js/main.js`](../js/main.js) | [`scripts/main.gd`](../scripts/main.gd), [`scripts/ui/creature_create.gd`](../scripts/ui/creature_create.gd) (legacy, bypassed) |
+| [`js/main.js`](../js/main.js) | [`scripts/main.gd`](../scripts/main.gd), [`scripts/ui/creature_create.gd`](../scripts/ui/creature_create.gd) (active onboarding/spawn screen) |
 | [`supabase/schema.sql`](../supabase/schema.sql) | Same tables; run [`migration-godot-session.sql`](../supabase/migration-godot-session.sql) for worm appearance |
 
 ## Constants
@@ -25,7 +25,7 @@ All gameplay constants live in [`scripts/config.gd`](../scripts/config.gd) (`Gam
 2. Refresh session via `POST /auth/v1/token?grant_type=refresh_token`, or anonymous `POST /auth/v1/signup`
 3. `GET /rest/v1/creatures?user_id=eq.<uuid>` — restore profile + last `x`, `y`
 4. If no profile exists, onboarding asks for name + color; successful auth with no row must leave `GameState.player_data` empty
-5. `register_or_claim_profile()` inserts a new row, or claims a typed existing name by PATCHing `user_id`. It forces `GameState.player_data["color"]` to the chosen color on both paths (so the in-game creature isn't stuck at the DB round-trip color); `claim_creature()` also PATCHes the chosen color. `GameConfig.color_from_hex()` is hardened against malformed values
+5. `register_or_claim_profile()` inserts a new row, or claims a typed existing name by PATCHing `user_id`. Names are stored/matched in **UPPERCASE** — both `register_or_claim_profile()` and `fetch_creature_by_name()` uppercase the stored value and the `eq` lookup (Postgres `eq` is case-sensitive), deduping case-variant profiles and letting returning users match regardless of typed case. It also forces `GameState.player_data["color"]` to the chosen color on both paths (so the in-game creature isn't stuck at the DB round-trip color); `claim_creature()` also PATCHes the chosen color. `GameConfig.color_from_hex()` is hardened against malformed values
 6. Debounced `PATCH` on movement (~1.5s + flush on path complete)
 
 Same publishable key as [`js/config.example.js`](../../js/config.example.js). See [`docs/supabase-multiplayer-guide.md`](../../docs/supabase-multiplayer-guide.md).
@@ -46,7 +46,27 @@ Poll interval: `GameConfig.POLL_OTHERS_SEC` (1.5s), same as web.
 
 Local player row is skipped (matched by `NetworkService.get_user_id()`). Admin logs show fetched row count and remote-sync counts when they change, which is the first place to check if two simultaneous players do not see each other.
 
+Remote creatures also get a **stable randomized facing** on spawn: `creature.gd`'s `_random_facing_for(user_id)` seeds `rotation.y` per user so idle remotes don't all point the same way (kept fixed unless they walk).
+
+## Idle rest animations
+
+`creature.gd` plays a rest animation when a creature is stationary and awake:
+
+- Local/player: `_apply_idle_local()` — subtle vertical "breathing" undulation (slow, low amplitude)
+- Remote/offline: `_apply_idle_remote()` — a distinct slower, wider side-to-side "sway"; never touches `rotation.y` so the spawn facing is preserved
+- `_phase_offset` (set in `setup()`) desyncs creatures so they don't animate in lockstep; the asleep breathing behavior is unchanged
+
+## Onboarding / spawn screen (redesigned)
+
+`creature_create.gd` + `creature_create.tscn`:
+
+- **3D creature preview removed** — replaced by a color palette of 52px swatch `Button`s in a `GridContainer`; the selected swatch gets a bright cyan (`#00e5ff`) border (`_apply_swatch_style()`). `GameConfig.CREATURE_COLORS` is an expanded palette led by dark gray (also the default selection).
+- **Uppercase names:** live-uppercased while typing and on submit (mirrors `network_service.gd`).
+- **Caret:** desktop caret to end on refocus; mobile `DisplayServer.virtual_keyboard_show()` is passed `cursor_start`/`cursor_end` = text length so it opens at the END of existing text (was a mobile-only prepend-only bug at index 0). Use `KEYBOARD_TYPE_DEFAULT`.
+
 ## Admin panel diagnostics
+
+The **admin** button and panel are gated to the player whose uppercased name is `MOE` (`sc2_hud.gd` `_is_admin_player()`): the button is hidden for everyone else and `_toggle_admin_panel()` refuses to open for non-MOE sessions.
 
 `GameState.add_admin_log()` stores the last 80 log lines. `sc2_hud.gd` shows them under **admin → Logs** in a read-only `TextEdit`; do not use one `Label` per line because it wrapped after each character on mobile. Current log sources:
 
@@ -85,7 +105,7 @@ main.gd _ready()
 
 - **Export gotchas:** Godot may revert `export_presets.cfg` (`ensure_cross_origin_isolation_headers` back to true, `orientation` off 0) and re-serialize `project.godot` (dropping a default line). Verify/restore both to keep the git diff clean.
 - **Build freshness:** GDScript compiles to `.gdc` bytecode, so string literals are **not** plain-text searchable in `web/index.pck` — don't grep the `.pck` to check whether a build is fresh; use `CACHE_VERSION` in `web/index.service.worker.js` + file timestamps.
-- **PWA cache-busting:** `custom_shell.html`'s `setupServiceWorkerAutoUpdate()` force-activates a newer service worker on reload (Godot's default SW is cache-first / never `skipWaiting()`s). Bump `GameConfig.BUILD_ID` (+ the `#build-stamp` string in `custom_shell.html`) each shipped build; it renders bottom-right in the shell and on the onboarding screen so users can confirm freshness.
+- **PWA cache-busting:** `custom_shell.html`'s `setupServiceWorkerAutoUpdate()` force-activates a newer service worker on reload (Godot's default SW is cache-first / never `skipWaiting()`s). Bump `GameConfig.BUILD_ID` (currently `build 2026-07-01c`; + the `#build-stamp` string in `custom_shell.html`) each shipped build / re-export; it renders bottom-right in the shell and on the onboarding screen so users can confirm freshness.
 
 ## Known gaps vs web
 

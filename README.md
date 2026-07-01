@@ -86,7 +86,7 @@ Constants in web `js/game.js` and Godot `scripts/config.gd` (`GameConfig`):
 
 **Web only (live):** fight, eat, stamina, AFK sleep, grow, multiplayer polling, follow camera, tap-to-move.
 
-**Godot only (current scope):** onboarding spawn screen (name + color), default worm, **fluid A\*** movement, tap/click + pinch zoom, **Supabase session save** (restore last profile on return), **other players visible** via REST poll. Camera **starts fully zoomed in**. Top bar shows name only — **health/stamina removed**. Admin panel contains configurable pain test, profile deletion, readable logs, and a clear-session/reload button. No fight, eat, or persistent AI.
+**Godot only (current scope):** redesigned onboarding spawn screen (uppercase name + color palette, no 3D preview), default worm with **idle rest animations** (local "breathing", remote "sway"), **fluid A\*** movement, tap/click + pinch zoom, **Supabase session save** (restore last profile on return), **other players visible** via REST poll with stable randomized facing. Camera **starts fully zoomed in**. Top bar shows name only — **health/stamina removed**. Admin panel (visible only to player `MOE`) contains configurable pain test, profile deletion, readable logs, and a clear-session/reload button. Player names are forced **UPPERCASE** (dedupes case-variant profiles). No fight, eat, or persistent AI.
 
 ---
 
@@ -136,13 +136,16 @@ Godot **4.7+**, Forward+. **Boot flow:** `main.gd` → `await NetworkService.boo
 |---------|--------|
 | Default worm creature (dark gray, procedural mesh) | Done |
 | Fluid movement + A* pathfinding | Done |
+| Idle rest animations (local "breathing" vs remote "sway") | Done |
+| Randomized-but-stable facing for remote players | Done |
 | Tap/click ground to move (mobile + desktop) | Done |
 | Pinch / wheel zoom | Done |
 | Supabase anonymous session + position save | Done |
 | Live field: poll + render other players | Done |
 | Top stat bar (name only) | Done |
-| Onboarding spawn screen: name + color | Done |
-| Admin panel: configurable pain test + profile deletion + logs | Done |
+| Onboarding spawn screen: uppercase name + color palette (no 3D preview) | Done |
+| Uppercase name rule (dedupes case-variant profiles) | Done |
+| Admin panel (MOE-only): configurable pain test + profile deletion + logs | Done |
 | PWA portrait + landscape (no forced landscape lock) | Done |
 | Creature appearance customization | **Bypassed** |
 | Health / stamina (Godot) | **Removed** |
@@ -165,6 +168,8 @@ To tune the silhouette, edit `SEGMENT_SPECS` (z spacing, radius, length overlap)
 - **Continuous movement** in [`scripts/units/creature.gd`](creature-godot/scripts/units/creature.gd): creature glides toward waypoints at any angle; rotation lerps toward travel direction
 - **A\*** in [`scripts/world/grid_nav.gd`](creature-godot/scripts/world/grid_nav.gd): 8-directional path around `GameState.blocked_tiles` (trees) and other units; line-of-sight path simplification removes extra corners
 - Click while moving replans from current position
+- **Idle rest animations** when stationary and awake: the local/player creature plays a subtle vertical "breathing" undulation (`_apply_idle_local()`); remote/offline creatures play a distinct slower, wider side-to-side "sway" (`_apply_idle_remote()`, preserves `rotation.y`). A per-creature `_phase_offset` desyncs them so nearby worms don't animate in lockstep. Asleep behavior is unchanged.
+- **Remote facing:** remote creatures get a stable randomized `rotation.y` seeded per `user_id` on spawn (`_random_facing_for()`), so idle remote players no longer all face the same direction (kept fixed unless they actually walk).
 
 ### Supabase session save (Godot)
 
@@ -173,7 +178,7 @@ Implemented in [`scripts/autoload/network_service.gd`](creature-godot/scripts/au
 1. **Anonymous auth** — refresh token in `user://supabase_session.json` (editor) or `localStorage` key `creature_supabase_session` (web via `CreatureNet` in `custom_shell.html`)
 2. **Load session profile** — `GET /rest/v1/creatures?user_id=eq.<uuid>`; existing sessions skip onboarding
 3. **Onboarding** — if no profile exists, `creature_create.gd` asks for name + color
-4. **Create or claim** — `NetworkService.register_or_claim_profile()` creates a new row, or claims an existing typed name by updating its `user_id` to the current anonymous session
+4. **Create or claim** — `NetworkService.register_or_claim_profile()` creates a new row, or claims an existing typed name by updating its `user_id` to the current anonymous session. Names are stored and looked up in **UPPERCASE**: both `register_or_claim_profile()` and `fetch_creature_by_name()` uppercase the stored value and the `eq` lookup, so case-variant duplicates can't be created and returning users match regardless of typed case
 5. **Save position** — debounced `PATCH` on `{x, y}` while moving; flush on path complete / exit
 
 **DB note:** new rows use `appearance: "cute"` in Postgres (schema constraint); client always renders **worm**. Optional: run [`supabase/migration-godot-session.sql`](supabase/migration-godot-session.sql) to allow `worm` in DB.
@@ -199,6 +204,7 @@ Test with two sessions (editor + browser, or two phones on `https://<ip>:8443`).
 
 Top-right **admin** button in [`scripts/ui/sc2_hud.gd`](creature-godot/scripts/ui/sc2_hud.gd), pain-test logic in [`scripts/debug/pain_test.gd`](creature-godot/scripts/debug/pain_test.gd):
 
+- **Visible only to the player whose (uppercased) name is `MOE`** (`_is_admin_player()`); the button is hidden for everyone else and the toggle is guarded so non-MOE sessions can't open the panel
 - Configurable worm/object counts (defaults **20** worms + **50** props)
 - Auto-despawns after **30 seconds**
 - Profile list can refresh and delete stored creature profiles (requires temporary Supabase migration above)
@@ -264,7 +270,7 @@ Or from the editor:
 
 ### Build stamp + PWA cache-busting
 
-- `GameConfig.BUILD_ID` (currently **`build 2026-07-01a`**) is shown bottom-right in the web shell and on the onboarding screen so users can confirm they loaded a fresh build. **Bump this string on every new build you ship**, and keep the `#build-stamp` literal in `web/custom_shell.html` in sync.
+- `GameConfig.BUILD_ID` (currently **`build 2026-07-01c`**) is shown bottom-right in the web shell and on the onboarding screen so users can confirm they loaded a fresh build. **Bump this string on every new build you ship** (and match the `#build-stamp` literal in `web/custom_shell.html`) whenever you re-export the web build.
 - Godot's default service worker is cache-first and never `skipWaiting()`s, which caused the recurring "old cached build keeps loading" bug. `custom_shell.html` now runs `setupServiceWorkerAutoUpdate()`: on reload it calls `registration.update()`, and on `updatefound` posts `'update'` to the new worker → `controllerchange` triggers a one-time reload. It is skipped on the dev-server path (which already unregisters SWs).
 
 | Export setting | Value | Why |
@@ -321,7 +327,11 @@ Touch handling lives in `rts_camera.gd` + input forwarding in `main.gd`:
 - **Click marker:** brief flash via `world_map.show_click_marker()` confirms tap registered
 - **Project setting:** `input_devices/pointing/emulate_mouse_from_touch=true` (touch also arrives as emulated mouse; debounced)
 
-**Onboarding screen:** `creature_create.gd` runs before spawning when no profile exists for the session. It calls `DisplayServer.virtual_keyboard_show()` on web — do **not** use `DisplayServer.VIRTUAL_KEYBOARD_TYPE_DEFAULT` (Godot 4.7 compile error). Preview creature uses `setup.call_deferred()` and id `"preview"` to skip grid registration.
+**Onboarding / spawn screen (redesigned):** `creature_create.gd` + `creature_create.tscn` run before spawning when no profile exists for the session.
+
+- **No 3D creature preview** — replaced by a color palette. Swatches are 52px buttons in a `GridContainer`, each styled by `_apply_swatch_style()`; the selected swatch gets a bright cyan (`#00e5ff`) border. `GameConfig.CREATURE_COLORS` is an expanded palette led by dark gray, which is also the default selected color.
+- **Uppercase names:** input is live-uppercased while typing (`_on_name_text_changed()`), and submit uppercases + trims before calling `NetworkService.register_or_claim_profile()`.
+- **Caret handling:** on refocus the desktop caret jumps to the end (`_place_caret_end()`); the **mobile** virtual keyboard is opened via `DisplayServer.virtual_keyboard_show()` with `cursor_start`/`cursor_end` set to the text length so it lands at the END of existing text (previously opened at index 0 — a mobile-only prepend-only bug). Do **not** use `DisplayServer.VIRTUAL_KEYBOARD_TYPE_DEFAULT` (Godot 4.7 compile error) — use `KEYBOARD_TYPE_DEFAULT`.
 
 ### Mobile fullscreen / PWA
 
@@ -368,6 +378,12 @@ Use `class_name Creature` and typed references. Generic `Node3D` + `grid_pos` ca
 - [x] Chosen creature color now propagates on create/claim (`register_or_claim_profile()` forces `player_data["color"]`; `claim_creature()` PATCHes the color; `color_from_hex()` hardened); onboarding preview reframed so the color is visible
 - [x] PWA service-worker auto-update (`setupServiceWorkerAutoUpdate()`) + visible `BUILD_ID` stamp to defeat stale cached builds
 - [x] Temporary RLS migration (`migration-temp-profile-admin.sql`) for admin delete + name-claim (applied)
+- [x] Idle rest animations — local "breathing" vs remote "sway", with per-creature phase offset so they aren't synchronized (asleep unchanged)
+- [x] Remote/offline creatures spawn with a stable randomized facing (seeded per `user_id`) instead of all facing the same way
+- [x] Spawn-screen redesign — removed 3D creature preview; 52px color swatch grid with bright cyan selected-border; expanded `CREATURE_COLORS` palette led by dark gray (default selection)
+- [x] Player names forced UPPERCASE (submit + live typing + stored/lookup uppercased) — dedupes case-variant profiles and matches returning users regardless of typed case
+- [x] Name field caret fixes — desktop caret to end on refocus; mobile virtual keyboard opens with caret at END of existing text (fixed mobile-only prepend-only bug)
+- [x] Admin button visible/openable only for the player named `MOE`
 
 ---
 
@@ -436,7 +452,7 @@ Use `class_name Creature` and typed references. Generic `Node3D` + `grid_pos` ca
 | Input | Action |
 |-------|--------|
 | Tap / click ground | Move |
-| **admin** (top-right) | Pain test controls + profile deletion |
+| **admin** (top-right, `MOE` only) | Pain test controls + profile deletion |
 | Pinch / mouse wheel | Zoom |
 | WASD / screen edge | Pan camera |
 

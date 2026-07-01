@@ -2,7 +2,7 @@
 
 Local-first 3D port pivoting from the web Creature game. Isometric RTS camera with procedural worm assets.
 
-**Current scope:** onboarding spawn screen (name + color), default worm, fluid movement, A* pathfinding, **Supabase session save**, **live field** (other players via 1.5s REST poll). Camera starts fully zoomed in. Name-only HUD + admin panel with readable logs and clear-session/reload. PWA supports portrait and landscape. No health/stamina, fight, eat, or appearance customization.
+**Current scope:** redesigned onboarding spawn screen (uppercase name + color palette, no 3D preview), default worm with **idle rest animations** (local "breathing" vs remote "sway"), fluid movement, A* pathfinding, **Supabase session save**, **live field** (other players via 1.5s REST poll, each with a stable randomized facing). Camera starts fully zoomed in. Name-only HUD + admin panel (visible only to player `MOE`) with readable logs and clear-session/reload. Player names are forced UPPERCASE (dedupes case-variant profiles). PWA supports portrait and landscape. No health/stamina, fight, eat, or appearance customization.
 
 ## Requirements
 
@@ -34,7 +34,7 @@ Boot is silent on success (no save/restore toasts). Offline boot toasts **"Could
 | Input | Action |
 |-------|--------|
 | Tap / click ground | Move creature |
-| **admin** (top-right) | Pain test controls, profile deletion, logs, clear-session/reload |
+| **admin** (top-right, `MOE` only) | Pain test controls, profile deletion, logs, clear-session/reload |
 | Pinch / mouse wheel | Zoom camera (starts fully zoomed in) |
 | WASD / screen edge | Pan camera |
 
@@ -44,10 +44,13 @@ Boot is silent on success (no save/restore toasts). Offline boot toasts **"Could
 |---------|--------|
 | Default worm (procedural capsules + slither) | Done |
 | Fluid movement + A* pathfinding | Done |
+| Idle rest animations (local "breathing" vs remote "sway") | Done |
+| Randomized-but-stable facing for remote players | Done |
 | Supabase anonymous session + position save | Done |
 | Live field: poll + render other players | Done |
-| Onboarding spawn screen: name + color | Done |
-| Admin panel: configurable pain test + profile deletion + logs | Done |
+| Onboarding spawn screen: uppercase name + color palette (no 3D preview) | Done |
+| Uppercase name rule (dedupes case-variant profiles) | Done |
+| Admin panel (MOE-only): configurable pain test + profile deletion + logs | Done |
 | Top stat bar (name only) | Done |
 | Mobile web tap + pinch | Done |
 | PWA portrait + landscape (no forced landscape) | Done |
@@ -63,7 +66,7 @@ Boot is silent on success (no save/restore toasts). Offline boot toasts **"Could
 | Auth | Anonymous sign-in or refresh; session persisted |
 | Load | `GET /rest/v1/creatures?user_id=eq.<uuid>` |
 | Onboarding | If no row exists for the session, ask for name + color |
-| Create / claim | Insert a new row, or claim an existing typed name by changing its `user_id`. Both paths force `GameState.player_data["color"]` to the chosen color (not the DB round-trip) so the in-game creature shows the picked color; `claim_creature()` also PATCHes the color |
+| Create / claim | Insert a new row, or claim an existing typed name by changing its `user_id`. Names are stored/looked up in **UPPERCASE** (`register_or_claim_profile()` + `fetch_creature_by_name()` uppercase both the stored value and the `eq` query), so case-variant duplicates can't be created and returning users match regardless of typed case. Both paths force `GameState.player_data["color"]` to the chosen color (not the DB round-trip) so the in-game creature shows the picked color; `claim_creature()` also PATCHes the color |
 | Save | Debounced `PATCH {x, y}` on move; flush when path completes |
 | Poll | `GET /rest/v1/creatures?select=*` every 1.5s → `world_map.sync_remote_creatures()` |
 
@@ -103,6 +106,18 @@ Mirrors web polling (`GameConfig.POLL_OTHERS_SEC` = 1.5):
 
 Test: two editor instances, or editor + phone on `https://<wifi-ip>:8443`. The admin logs show fetched row count and `Remote sync: <other profiles>, <visible>` when those counts change.
 
+## Onboarding / spawn screen
+
+[`scripts/ui/creature_create.gd`](scripts/ui/creature_create.gd) + [`scenes/ui/creature_create.tscn`](scenes/ui/creature_create.tscn), run before spawning when no profile exists:
+
+- **No 3D creature preview** — replaced by a color palette. Swatches are 52px `Button`s in a `GridContainer`, styled by `_apply_swatch_style()`; the selected swatch gets a bright cyan (`#00e5ff`) border. `GameConfig.CREATURE_COLORS` is an expanded palette led by dark gray, which is also the default selection.
+- **Uppercase names:** input is live-uppercased while typing (`_on_name_text_changed()`), and `_on_summon()` uppercases + trims before calling `NetworkService.register_or_claim_profile()`.
+- **Caret handling:** desktop caret jumps to the end on refocus (`_place_caret_end()`); the mobile virtual keyboard is opened via `DisplayServer.virtual_keyboard_show()` with `cursor_start`/`cursor_end` = text length so it lands at the END of existing text (fixes the mobile-only prepend-only bug where it opened at index 0). Use `KEYBOARD_TYPE_DEFAULT`, not `VIRTUAL_KEYBOARD_TYPE_DEFAULT` (Godot 4.7 compile error).
+
+## Admin gating
+
+The top-right **admin** button (`sc2_hud.gd`) is only shown when the player's uppercased name is `MOE` (`_is_admin_player()`); `_refresh_stats()` hides it for everyone else and `_toggle_admin_panel()` refuses to open for non-MOE sessions.
+
 ## Worm mesh
 
 Procedural in [`scripts/units/creature.gd`](scripts/units/creature.gd). Segments along local +Z; each capsule rotated 90° on X; **`body_root` must not rotate 90° on X** (snowman bug). Tune `SEGMENT_SPECS`.
@@ -111,6 +126,13 @@ Procedural in [`scripts/units/creature.gd`](scripts/units/creature.gd). Segments
 
 - [`scripts/units/creature.gd`](scripts/units/creature.gd) — continuous waypoint movement, smooth rotation; `_process_remote()` for other players
 - [`scripts/world/grid_nav.gd`](scripts/world/grid_nav.gd) — A* with 8 neighbors, obstacle avoidance, path simplification
+
+**Idle rest animations** (in `creature.gd`) play when a creature is stationary and awake:
+
+- Local/player: `_apply_idle_local()` — subtle vertical "breathing" undulation (slow, low amplitude, never translates the creature)
+- Remote/offline: `_apply_idle_remote()` — a distinct slower, wider side-to-side "sway"; it never touches `rotation.y` so the spawn facing is preserved
+- A per-creature `_phase_offset` (set in `setup()`) desyncs the animations so nearby worms don't move in lockstep; asleep behavior is unchanged
+- **Remote facing:** `_random_facing_for(user_id)` seeds a stable randomized `rotation.y` on spawn so idle remote players don't all face the same way (fixed unless they actually walk)
 
 ## Pain test
 
@@ -175,7 +197,7 @@ Dev mode on `:8443` / `:8080` clears service worker cache (no incognito needed).
 
 **Build freshness / cache-busting:**
 
-- Bump `GameConfig.BUILD_ID` (currently `build 2026-07-01a`) and the matching `#build-stamp` string in `custom_shell.html` on each shipped build. It renders bottom-right in the shell and on the onboarding screen so users can confirm a fresh load.
+- Bump `GameConfig.BUILD_ID` (currently `build 2026-07-01c`) and the matching `#build-stamp` string in `custom_shell.html` on each shipped build (every time you re-export the web build). It renders bottom-right in the shell and on the onboarding screen so users can confirm a fresh load.
 - `custom_shell.html` runs `setupServiceWorkerAutoUpdate()` to force-activate a newer service worker on reload (Godot's default SW is cache-first and never `skipWaiting()`s). Skipped on the dev-server path.
 - **Do not grep `web/index.pck`** to judge freshness — GDScript compiles to `.gdc` bytecode, so string literals aren't plain-text there. Check `CACHE_VERSION` in `web/index.service.worker.js` and file timestamps instead.
 

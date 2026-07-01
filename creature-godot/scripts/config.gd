@@ -17,7 +17,7 @@ const DEFAULT_CREATURE_NAME := "Creature"
 
 ## Visible build stamp so a loaded build can be identified at a glance.
 ## Keep this in sync with the build-stamp string in web/custom_shell.html.
-const BUILD_ID := "build 2026-07-01a"
+const BUILD_ID := "build 2026-07-01c"
 
 const TREE_POSITIONS: Array[Vector2i] = [
 	Vector2i(3, 3), Vector2i(7, 4), Vector2i(12, 2), Vector2i(18, 5),
@@ -31,9 +31,13 @@ const BUILDING_POSITIONS: Array[Vector2i] = [
 	Vector2i(8, 17), Vector2i(18, 16), Vector2i(26, 19),
 ]
 
+## Dark gray is intentionally first (and the default swatch on the spawn screen).
 const CREATURE_COLORS: Array[Color] = [
-	Color("#f48fb1"), Color("#81d4fa"), Color("#a5d6a7"),
-	Color("#fff176"), Color("#ce93d8"), Color("#ffab91"),
+	DEFAULT_CREATURE_COLOR,
+	Color("#ef5350"), Color("#ff7043"), Color("#ffca28"),
+	Color("#66bb6a"), Color("#26a69a"), Color("#29b6f6"),
+	Color("#5c6bc0"), Color("#ab47bc"), Color("#ec407a"),
+	Color("#8d6e63"), Color("#eceff1"),
 ]
 
 static func default_player_data() -> Dictionary:

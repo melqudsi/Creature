@@ -16,6 +16,7 @@ func _ready() -> void:
 	theme = preload("res://assets/themes/sc2_theme.tres")
 	toast_panel.visible = false
 	admin_button.text = "admin"
+	admin_button.visible = false
 	admin_button.pressed.connect(_toggle_admin_panel)
 	_build_admin_panel()
 	GameState.player_stats_changed.connect(_refresh_stats)
@@ -129,7 +130,15 @@ func _make_spin_row(label_text: String, min_value: float, max_value: float, valu
 	row.add_child(spin)
 	return row
 
+func _is_admin_player() -> bool:
+	var c = GameState.player_creature
+	return c != null and c.creature_name.to_upper() == "MOE"
+
 func _toggle_admin_panel() -> void:
+	# Guard: only MOE may open the admin panel, even if the button was somehow hit.
+	if not _is_admin_player():
+		_admin_panel.visible = false
+		return
 	_admin_panel.visible = not _admin_panel.visible
 	if _admin_panel.visible:
 		_refresh_profiles()
@@ -207,8 +216,12 @@ func _append_log_line(line: String) -> void:
 func _refresh_stats() -> void:
 	var c = GameState.player_creature
 	if not c:
+		admin_button.visible = false
 		return
 	name_label.text = c.creature_name
+	admin_button.visible = _is_admin_player()
+	if not admin_button.visible and _admin_panel and _admin_panel.visible:
+		_admin_panel.visible = false
 
 func _show_toast(msg: String) -> void:
 	toast_label.text = msg
