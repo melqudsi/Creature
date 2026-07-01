@@ -20,12 +20,14 @@ Boot chain:
 main.gd _ready()
   → await NetworkService.boot()              # auth + load existing session profile
   → show onboarding if no profile exists     # name + color
-  → world_map.spawn_player()                 # spawn at saved x,y
+  → _begin_world() → world_map.spawn_player()# reveal HUD, spawn at saved x,y
   → NetworkService.start_creature_poll(...)  # when online
   → camera follow
 ```
 
 Boot is silent on success (no save/restore toasts). Offline boot toasts **"Could not reach server — starting locally"**.
+
+> **Engine-virtual naming gotcha (critical):** world entry is `_begin_world()`, **not** `_enter_world()`. `_enter_world` is a `Node3D` engine virtual that Godot auto-invokes on tree entry (before boot), which previously spawned a default gray creature, tripped the `_world_started` guard, and left the HUD hidden — the root cause of "creature stuck gray" and "HUD missing for a new player". Never name your own methods after engine virtuals (`_ready`, `_process`, `_enter_world`, `_exit_world`, `_input`…).
 
 ## Controls
 
@@ -61,7 +63,7 @@ Boot is silent on success (no save/restore toasts). Offline boot toasts **"Could
 | Auth | Anonymous sign-in or refresh; session persisted |
 | Load | `GET /rest/v1/creatures?user_id=eq.<uuid>` |
 | Onboarding | If no row exists for the session, ask for name + color |
-| Create / claim | Insert a new row, or claim an existing typed name by changing its `user_id` |
+| Create / claim | Insert a new row, or claim an existing typed name by changing its `user_id`. Both paths force `GameState.player_data["color"]` to the chosen color (not the DB round-trip) so the in-game creature shows the picked color; `claim_creature()` also PATCHes the color |
 | Save | Debounced `PATCH {x, y}` on move; flush when path completes |
 | Poll | `GET /rest/v1/creatures?select=*` every 1.5s → `world_map.sync_remote_creatures()` |
 
@@ -87,7 +89,7 @@ Godot re-export may flip these — verify after each export.
 
 If auth succeeds but no row exists for the session, `NetworkService.boot()` leaves `GameState.player_data` empty so `main.gd` shows onboarding. Do not recreate the previous behavior that filled `default_player_data()` on successful no-row boot.
 
-**Temporary profile migration:** name-claim login and admin profile deletion require [`../supabase/migration-temp-profile-admin.sql`](../supabase/migration-temp-profile-admin.sql). It is intentionally permissive and should be replaced by passkeys/password phrases before shipping. Admin delete requests returned rows, then re-fetches if Supabase returns an empty body; it only reports success when the deleted row is returned or the re-fetch confirms the row is gone.
+**Temporary profile migration (applied):** name-claim login and admin profile deletion require [`../supabase/migration-temp-profile-admin.sql`](../supabase/migration-temp-profile-admin.sql) (policies `creatures_temp_claim_by_name` + `creatures_temp_admin_delete`). It has been applied to the current Supabase project. It is intentionally permissive and **temporary** — must be replaced by passkeys/password phrases before shipping. Without it, delete and name-claim silently do nothing. Admin delete requests returned rows, then re-fetches if Supabase returns an empty body; it only reports success when the deleted row is returned or the re-fetch confirms the row is gone.
 
 Keys: [`scripts/config.gd`](scripts/config.gd) (`SUPABASE_URL`, `SUPABASE_ANON_KEY`) — same publishable key as [`../js/config.example.js`](../js/config.example.js).
 
@@ -153,18 +155,29 @@ Buildings use a box body, flat red roof slab, chimney, and door. Avoid using the
 
 ## Web export
 
+> **Dev environment:** the repo is on a **Google Drive virtual filesystem**; the in-repo `Godot_v4.7/` folder is an unmaterialized stub. Use the real editor at `C:\godot47\Godot_v4.7-stable_win64.exe` (console: `...win64_console.exe`).
+
+CLI export — run an import/compile pass, then export:
+
+```powershell
+& "C:\godot47\Godot_v4.7-stable_win64.exe" --headless --path "F:\GdriveFS\My Drive\_DEV\Game\Creature_game\creature-godot" --import
+& "C:\godot47\Godot_v4.7-stable_win64.exe" --headless --path "F:\GdriveFS\My Drive\_DEV\Game\Creature_game\creature-godot" --export-release "Web" "web/index.html"
+```
+
+Or from the editor:
+
 1. **Project → Export… → Web** → `web/index.html`
 2. Edit `custom_shell.html` only — re-export to apply
-3. Verify `export_presets.cfg`: COI off, orientation any
+3. Verify `export_presets.cfg`: COI off (`ensure_cross_origin_isolation_headers=false`), orientation any (`orientation=0`) — Godot can revert these; also restore `project.godot` if a default line was dropped on export
 4. Serve: `python serve-web-https.py` → `https://<wifi-ip>:8443`
 
 Dev mode on `:8443` / `:8080` clears service worker cache (no incognito needed).
 
-Latest validation command used:
+**Build freshness / cache-busting:**
 
-```powershell
-& "C:\workspace_C\godot_console.exe" --headless --path "f:\GdriveFS\My Drive\_DEV\Game\Creature_game\creature-godot" --quit-after 900
-```
+- Bump `GameConfig.BUILD_ID` (currently `build 2026-07-01a`) and the matching `#build-stamp` string in `custom_shell.html` on each shipped build. It renders bottom-right in the shell and on the onboarding screen so users can confirm a fresh load.
+- `custom_shell.html` runs `setupServiceWorkerAutoUpdate()` to force-activate a newer service worker on reload (Godot's default SW is cache-first and never `skipWaiting()`s). Skipped on the dev-server path.
+- **Do not grep `web/index.pck`** to judge freshness — GDScript compiles to `.gdc` bytecode, so string literals aren't plain-text there. Check `CACHE_VERSION` in `web/index.service.worker.js` and file timestamps instead.
 
 ## Agent handoff — next tasks
 

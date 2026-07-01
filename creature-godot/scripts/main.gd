@@ -18,11 +18,13 @@ func _ready() -> void:
 	if GameState.player_data.is_empty():
 		_show_onboarding()
 		return
-	_enter_world()
+	_begin_world()
 
 func _resolve_scene_nodes() -> void:
-	var scene_root := get_tree().current_scene if get_tree() else null
-	var root := scene_root if scene_root else self
+	# Resolve relative to this Main node (the script owner). get_tree().current_scene
+	# can be null/incorrect at startup or right after scene changes, which previously
+	# left hud unresolved and the HUD hidden after onboarding.
+	var root: Node = self
 	world_map = root.get_node_or_null("WorldMap") as Node3D
 	rts_camera = root.get_node_or_null("RTSCamera") as Camera3D
 	canvas_layer = root.get_node_or_null("CanvasLayer") as CanvasLayer
@@ -41,21 +43,32 @@ func _show_onboarding() -> void:
 		_onboarding.profile_ready.connect(_on_profile_ready)
 
 func _on_profile_ready() -> void:
+	_dismiss_onboarding()
+	_begin_world()
+
+func _dismiss_onboarding() -> void:
 	if _onboarding and is_instance_valid(_onboarding):
+		# Hide immediately (the overlay has an opaque BG) then free at frame end.
+		_onboarding.visible = false
 		_onboarding.queue_free()
 	_onboarding = null
-	_enter_world()
 
-func _enter_world() -> void:
+# NOTE: This method must NOT be named `_enter_world` — that name collides with
+# Godot's Node3D engine virtual, which the engine auto-invokes when this node
+# enters the 3D world (before boot/onboarding). That premature call previously
+# spawned a default (gray) creature and left the HUD hidden after onboarding.
+func _begin_world() -> void:
 	if _world_started:
 		return
 	_resolve_scene_nodes()
+	_dismiss_onboarding()
+	# Reveal the HUD before the world-setup guard so it is never left hidden.
+	if hud:
+		hud.visible = true
 	if not world_map or not rts_camera:
 		push_error("Main scene missing WorldMap or RTSCamera; cannot enter world.")
 		return
 	_world_started = true
-	if hud:
-		hud.visible = true
 	if world_map.has_method("spawn_player"):
 		world_map.spawn_player()
 	if NetworkService.is_online():

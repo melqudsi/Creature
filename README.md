@@ -126,7 +126,9 @@ Keys: `js/config.example.js` (committed for GitHub Pages). Publishable key only.
 
 ## Godot client (`creature-godot/`)
 
-Godot **4.7+**, Forward+. **Boot flow:** `main.gd` → `await NetworkService.boot()` (auth + load existing session profile) → onboarding if no profile, otherwise `world_map.spawn_player()` at saved `x,y`.
+Godot **4.7+**, Forward+. **Boot flow:** `main.gd` → `await NetworkService.boot()` (auth + load existing session profile) → onboarding if no profile, otherwise `_begin_world()` → `world_map.spawn_player()` at saved `x,y`.
+
+> **Engine-virtual naming gotcha (critical):** the world-entry method is `_begin_world()`, **not** `_enter_world()`. `_enter_world` is a Godot 4.7 `Node3D` engine virtual — the engine auto-invokes it on tree entry, *before* boot/onboarding, which previously spawned a default gray creature, set the `_world_started` guard, and left the HUD hidden (root cause of "creature stuck gray" + "HUD missing for new player"). **Never name your own methods after engine virtuals** (`_ready`, `_process`, `_enter_world`, `_exit_world`, `_input`, etc.) unless you intend to override them.
 
 ### Current feature set
 
@@ -236,12 +238,34 @@ Details: [`creature-godot/README.md`](creature-godot/README.md)
 
 Open `creature-godot/project.godot` → **F5**.
 
+> **Environment (dev PC):** this workspace lives on a **Google Drive virtual filesystem**, so the in-repo `Godot_v4.7/` folder is an unmaterialized stub — do not launch it. The real working editor is `C:\godot47\Godot_v4.7-stable_win64.exe` (console build: `C:\godot47\Godot_v4.7-stable_win64_console.exe`).
+
 ### Web export workflow
+
+CLI export (headless, run an import/compile pass first so scripts/resources are built):
+
+```powershell
+& "C:\godot47\Godot_v4.7-stable_win64.exe" --headless --path "F:\GdriveFS\My Drive\_DEV\Game\Creature_game\creature-godot" --import
+& "C:\godot47\Godot_v4.7-stable_win64.exe" --headless --path "F:\GdriveFS\My Drive\_DEV\Game\Creature_game\creature-godot" --export-release "Web" "web/index.html"
+```
+
+Or from the editor:
 
 1. **Project → Export…** → preset **Web**
 2. Confirm **Custom Html Shell** = `res://web/custom_shell.html`
 3. Export to `creature-godot/web/index.html` (overwrite)
 4. **Never hand-edit `index.html`** — edit `custom_shell.html` instead
+
+**After every export, verify the git diff is clean:**
+
+- `export_presets.cfg` keeps `progressive_web_app/ensure_cross_origin_isolation_headers=false` and `progressive_web_app/orientation=0` (Godot can silently revert these).
+- `project.godot` may get re-serialized (a default line dropped) — restore it so the diff stays clean.
+- GDScript exports as compiled bytecode (`.gdc`), so **string literals are not plain-text searchable in `index.pck`** — don't grep the `.pck` to judge freshness. Use `CACHE_VERSION` in `web/index.service.worker.js` and file timestamps instead.
+
+### Build stamp + PWA cache-busting
+
+- `GameConfig.BUILD_ID` (currently **`build 2026-07-01a`**) is shown bottom-right in the web shell and on the onboarding screen so users can confirm they loaded a fresh build. **Bump this string on every new build you ship**, and keep the `#build-stamp` literal in `web/custom_shell.html` in sync.
+- Godot's default service worker is cache-first and never `skipWaiting()`s, which caused the recurring "old cached build keeps loading" bug. `custom_shell.html` now runs `setupServiceWorkerAutoUpdate()`: on reload it calls `registration.update()`, and on `updatefound` posts `'update'` to the new worker → `controllerchange` triggers a one-time reload. It is skipped on the dev-server path (which already unregisters SWs).
 
 | Export setting | Value | Why |
 |----------------|-------|-----|
@@ -340,6 +364,10 @@ Use `class_name Creature` and typed references. Generic `Node3D` + `grid_pos` ca
 - [x] Fix incognito/no-profile onboarding by not creating default local player on successful auth with no row
 - [x] Fix admin delete success reporting by checking returned deleted rows
 - [x] Fix odd house roof mesh by replacing prism roof with two box roof panels
+- [x] Fix engine-virtual name collision: renamed `_enter_world` → `_begin_world` (was auto-invoked by the engine, spawned a gray creature and hid the HUD)
+- [x] Chosen creature color now propagates on create/claim (`register_or_claim_profile()` forces `player_data["color"]`; `claim_creature()` PATCHes the color; `color_from_hex()` hardened); onboarding preview reframed so the color is visible
+- [x] PWA service-worker auto-update (`setupServiceWorkerAutoUpdate()`) + visible `BUILD_ID` stamp to defeat stale cached builds
+- [x] Temporary RLS migration (`migration-temp-profile-admin.sql`) for admin delete + name-claim (applied)
 
 ---
 
@@ -362,7 +390,7 @@ Use `class_name Creature` and typed references. Generic `Node3D` + `grid_pos` ca
 6. Worm → `creature.gd`; pathing → `grid_nav.gd`; boot → `main.gd` + `world_map.gd`
 7. If web says "Could not reach server": check COI export setting off, re-export, hard refresh
 8. PWA orientation glitch: ensure manifest `orientation: any`, export preset `orientation=0`, no landscape lock in shell
-9. Name-claim login/profile deletion: run [`supabase/migration-temp-profile-admin.sql`](supabase/migration-temp-profile-admin.sql) in Supabase SQL Editor
+9. Name-claim login/profile deletion: requires [`supabase/migration-temp-profile-admin.sql`](supabase/migration-temp-profile-admin.sql) in Supabase SQL Editor (**already applied** to the current project; **temporary** — replace with passwords/passkeys before shipping)
 10. If onboarding or remote players misbehave, open **admin → Logs** and check auth/profile rows, fetch count, and remote-sync count
 11. Use **admin → clear session / reload** to test the new-player onboarding path without manually clearing browser storage
 
@@ -384,8 +412,12 @@ Use `class_name Creature` and typed references. Generic `Node3D` + `grid_pos` ca
 5. iOS browser fullscreen API does not work for canvas — use PWA Add to Home Screen
 6. DB `creatures.appearance` must be `cute` or `ugly` unless migration applied — Godot inserts `cute`
 7. Worm “snowman” bug if `body_root` rotated 90° on X — rotate segments individually
-8. Re-export resets `export_presets.cfg` COI/orientation — verify `ensure_cross_origin_isolation_headers=false` and `orientation=0` after export
-9. `_first.txt` and Postgres password — never commit
+8. Re-export resets `export_presets.cfg` COI/orientation — verify `ensure_cross_origin_isolation_headers=false` and `orientation=0` after export; also restore `project.godot` if a default line was dropped
+9. **Never name methods after engine virtuals** (`_enter_world`, `_exit_world`, `_ready`, `_process`, `_input`…) — the engine auto-invokes them; use names like `_begin_world` instead
+10. Don't grep `web/index.pck` to check build freshness — GDScript is compiled to `.gdc` bytecode; use `CACHE_VERSION` in `index.service.worker.js` + timestamps
+11. Bump `GameConfig.BUILD_ID` (and the `#build-stamp` string in `custom_shell.html`) on every shipped build
+12. Real editor is `C:\godot47\Godot_v4.7-stable_win64.exe`; the in-repo `Godot_v4.7/` is an unmaterialized Google Drive FS stub
+13. `_first.txt` and Postgres password — never commit
 
 ---
 

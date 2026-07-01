@@ -193,12 +193,19 @@ func register_or_claim_profile(profile_name: String, color: Color) -> Dictionary
 	var existing := await fetch_creature_by_name(cleaned_name)
 	if not existing.is_empty():
 		_log("Attempting to claim existing profile '%s'" % cleaned_name)
-		var claimed := await claim_creature(existing)
+		var claimed := await claim_creature(existing, color)
 		if not claimed.is_empty():
 			GameState.player_data = db_row_to_player_data(claimed)
+			# The chosen color is authoritative for this session; do not depend on
+			# the DB round-trip (a claimed row may carry a stale/previous color).
+			GameState.player_data["color"] = color
 			_log("Claimed profile '%s' for current session" % cleaned_name)
 			return GameState.player_data
-		_log("Claim failed for '%s' (temporary profile migration may be missing)" % cleaned_name)
+		var claim_hint := "Claim failed for '%s'." % cleaned_name
+		if not _last_error.is_empty():
+			claim_hint += " Last error: %s." % _short_error(_last_error)
+		claim_hint += " To reclaim an existing profile by name, run supabase/migration-temp-profile-admin.sql in the Supabase SQL editor (adds policy creatures_temp_claim_by_name)."
+		_log(claim_hint)
 		return {}
 
 	var row := _new_creature_row(get_user_id(), cleaned_name, color)
@@ -207,6 +214,8 @@ func register_or_claim_profile(profile_name: String, color: Color) -> Dictionary
 		_log("Create profile failed for '%s'" % cleaned_name)
 		return {}
 	GameState.player_data = db_row_to_player_data(created)
+	# Keep the exact chosen color in-session regardless of DB round-trip quirks.
+	GameState.player_data["color"] = color
 	_log("Created profile '%s'" % cleaned_name)
 	return GameState.player_data
 
@@ -224,12 +233,13 @@ func create_creature(row: Dictionary) -> Dictionary:
 		return resp.data
 	return {}
 
-func claim_creature(row: Dictionary) -> Dictionary:
+func claim_creature(row: Dictionary, color: Color = GameConfig.DEFAULT_CREATURE_COLOR) -> Dictionary:
 	var id := str(row.get("id", ""))
 	if id.is_empty() or get_user_id().is_empty():
 		return {}
 	var patch := {
 		"user_id": get_user_id(),
+		"color": GameConfig.color_to_hex(color),
 		"last_active": _iso_now(),
 		"updated_at": _iso_now(),
 	}
@@ -257,7 +267,7 @@ func delete_creature_profile(creature_id: String) -> bool:
 	if still_exists.is_empty():
 		_log("Deleted profile id %s (verified by re-fetch)" % creature_id)
 		return true
-	_log("Delete returned zero rows and profile still exists for %s (RLS migration may be missing)" % creature_id)
+	_log("Delete returned zero rows and profile %s still exists. RLS is blocking the delete. Run supabase/migration-temp-profile-admin.sql in the Supabase SQL editor (adds policy creatures_temp_admin_delete) to allow admin deletes." % creature_id)
 	return false
 
 func update_creature(id: String, patch: Dictionary) -> void:

@@ -150,6 +150,19 @@ html {
 	color: #78909c;
 	max-width: 22rem;
 }
+
+#build-stamp {
+	position: fixed;
+	right: 6px;
+	bottom: 4px;
+	z-index: 100001;
+	font-family: system-ui, sans-serif;
+	font-size: 0.7rem;
+	color: #78909c;
+	opacity: 0.45;
+	pointer-events: none;
+	user-select: none;
+}
 		</style>
 		<script>
 window.CreatureNet = (function () {
@@ -230,10 +243,13 @@ window.CreatureNet = (function () {
 			<p id="pwa-hint">In browser, this banner dismisses on tap so you can play.</p>
 		</div>
 
+		<!-- Build stamp: keep the string in sync with GameConfig.BUILD_ID. -->
+		<div id="build-stamp">build 2026-07-01a</div>
+
 		<script src="index.js"></script>
 		<script>
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":false,"executable":"index","experimentalVK":true,"fileSizes":{"index.pck":134432,"index.wasm":39509339},"focusCanvas":false,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"index.service.worker.js"};
-const GODOT_THREADS_ENABLED = false;
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":false,"executable":"index","experimentalVK":true,"fileSizes":{"index.pck":135872,"index.wasm":38814086},"focusCanvas":false,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"index.service.worker.js"};
+const GODOT_THREADS_ENABLED = true;
 
 function isDevServer() {
 	const params = new URLSearchParams(location.search);
@@ -353,10 +369,61 @@ async function prepareCachesForDev() {
 			},
 		}).then(() => {
 			setStatusMode('hidden');
+			setupServiceWorkerAutoUpdate();
 			setupMobileFullscreen();
 		}, displayFailureNotice);
 	}
 })();
+
+// Durable cache-busting: when a newer build's service worker installs, tell it to
+// take over immediately (skipWaiting + claim + reload clients) so users never get
+// silently stuck on a stale PWA build. Never runs on the dev-server path, which
+// deliberately unregisters service workers (see prepareCachesForDev).
+let _swAutoReloaded = false;
+function setupServiceWorkerAutoUpdate() {
+	if (isDevServer()) {
+		return;
+	}
+	if (!('serviceWorker' in navigator)) {
+		return;
+	}
+
+	// Reload exactly once when a new worker takes control of this page.
+	navigator.serviceWorker.addEventListener('controllerchange', () => {
+		if (_swAutoReloaded) {
+			return;
+		}
+		_swAutoReloaded = true;
+		window.location.reload();
+	});
+
+	navigator.serviceWorker.getRegistration().then((registration) => {
+		if (registration == null) {
+			return;
+		}
+		// A newer worker may already be waiting from a previous visit.
+		if (registration.waiting && navigator.serviceWorker.controller) {
+			registration.waiting.postMessage('update');
+		}
+		// Ask the browser to check the network for a fresh build.
+		registration.update().catch(() => {});
+		registration.addEventListener('updatefound', () => {
+			const installing = registration.installing;
+			if (installing == null) {
+				return;
+			}
+			installing.addEventListener('statechange', () => {
+				// Only when this is an update (a controller already exists),
+				// not the very first install, activate the new build now.
+				if (installing.state === 'installed' && navigator.serviceWorker.controller) {
+					installing.postMessage('update');
+				}
+			});
+		});
+	}).catch((err) => {
+		console.warn('Service worker auto-update check failed:', err);
+	});
+}
 
 (function setupMobileFullscreen() {
 	const prompt = document.getElementById('fs-prompt');

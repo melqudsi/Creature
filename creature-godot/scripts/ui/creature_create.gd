@@ -29,7 +29,38 @@ func _ready() -> void:
 	_build_color_swatches()
 	_spawn_preview()
 	preview_camera.current = true
+	_frame_preview_camera()
+	_add_build_stamp()
 	call_deferred("_focus_name_field")
+
+## Small, unobtrusive build stamp so the loaded build can be confirmed on the
+## onboarding screen (mirrors the stamp in web/custom_shell.html).
+func _add_build_stamp() -> void:
+	var stamp := Label.new()
+	stamp.text = GameConfig.BUILD_ID
+	stamp.modulate = Color(1, 1, 1, 0.4)
+	stamp.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	stamp.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	stamp.offset_left = -160.0
+	stamp.offset_top = -22.0
+	stamp.offset_right = -8.0
+	stamp.offset_bottom = -4.0
+	stamp.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(stamp)
+
+## Frame the worm so its colored body fills the small preview viewport.
+func _frame_preview_camera() -> void:
+	if not preview_camera:
+		return
+	preview_camera.fov = 40.0
+	preview_camera.look_at_from_position(
+		Vector3(0.55, 0.5, 1.25), Vector3(0.0, 0.12, -0.05), Vector3.UP
+	)
+
+func _process(delta: float) -> void:
+	# Slow idle spin so the chosen body color reads clearly from every angle.
+	if _preview_creature and is_instance_valid(_preview_creature):
+		_preview_creature.rotate_y(delta * 0.7)
 
 func _focus_name_field() -> void:
 	name_edit.grab_focus()
@@ -109,7 +140,7 @@ func _on_summon() -> void:
 	_set_status("Checking profile...")
 	var profile := await NetworkService.register_or_claim_profile(n, _color)
 	if profile.is_empty():
-		_set_status("Could not create or claim profile")
+		_set_status("Could not create or claim '%s' - open admin to see why" % n)
 		summon_btn.disabled = false
 		return
 	_set_status("Welcome, %s" % profile.get("name", n))
