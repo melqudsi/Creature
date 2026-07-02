@@ -74,6 +74,8 @@ The 1.5s poll + in-flight REST writes race each other; these mechanisms keep cli
 - **Remote vehicles** — interpolation speed and the teleport-snap threshold scale with form speed (`apply_remote_state` / `_process_remote`), so a 3x-speed Altima neither lags behind its server position nor "teleports" every poll; `_resolve_contacts()` only lets a **moving** vehicle kill.
 - **Seeding** — first-boot seed + Slice 2 top-up both re-check after a random delay so two clients booting together don't double-seed.
 - **Admin recovery (MOE)** — remove all money / spawn stacks / **reset ALL world objects** (full table wipe + re-seed) in the admin panel.
+- **Online-only creature poll** (`network_service.gd`) — the poll filters `last_active >= now − PRESENCE_WINDOW_SEC` (150s) and selects only rendered columns, so per-poll egress stays flat as stale profiles pile up. Offline profiles no longer render as ghost creatures; objects possessed by them fall to the absent-controller rule (render idle). A 60s **presence heartbeat** (`_touch_presence`) keeps idle-but-connected players inside the window. The admin profile list uses `fetch_all_creatures(false)` (unfiltered). First fetch stays `select=*` until optional columns (`form`) are probed — explicitly naming a missing column would fail the whole query on an un-migrated DB.
+- **JWT expiry** (`network_service.gd`) — access tokens die after ~1h; the client refreshes proactively every `JWT_REFRESH_INTERVAL_SEC` (40 min) and every REST call funnels through `_rest_request_raw`, which refreshes-and-retries once on `HTTP 401` (deduped across concurrent callers via `_refresh_in_flight` / `_last_refresh_unix`).
 
 ## File mapping
 

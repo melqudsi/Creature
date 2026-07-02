@@ -6,6 +6,17 @@ const SESSION_PATH := "user://supabase_session.json"
 const POSITION_SAVE_INTERVAL := 1.5
 ## DB check constraint only allows cute/ugly until migration-godot-session.sql is applied.
 const DB_APPEARANCE := "cute"
+## Supabase access tokens (JWTs) expire after ~60 min. Refresh proactively well
+## before that so long sessions never hit "JWT expired" mid-game; a reactive
+## retry-on-401 in _rest_request_raw covers stragglers (e.g. after device sleep).
+const JWT_REFRESH_INTERVAL_SEC := 2400.0
+## Keep last_active fresh even when the player stands still, so the online-only
+## creature poll filter (PRESENCE_WINDOW_SEC) never hides idle-but-connected
+## players or frees their possessed objects.
+const PRESENCE_HEARTBEAT_SEC := 60.0
+## Poll filter: only creatures active in the last N seconds count as online.
+## Must be comfortably larger than PRESENCE_HEARTBEAT_SEC + save latency.
+const PRESENCE_WINDOW_SEC := 150
 
 var _session: Dictionary = {}
 var _online := false
@@ -36,6 +47,13 @@ var _world_objects_checked := false
 var _world_objects_missing_logged := false
 var _owner_name_column_available := false
 var _slice2_seed_attempted := false
+var _jwt_refresh_t := 0.0
+var _heartbeat_t := 0.0
+var _refresh_in_flight := false
+var _last_refresh_unix := 0.0
+## True once we've seen at least one creature row and learned which optional
+## columns exist; until then the poll uses select=* (see _creature_select_columns).
+var _creature_columns_probed := false
 
 func _log(msg: String) -> void:
 	GameState.add_admin_log(msg)
@@ -65,6 +83,35 @@ func _process(delta: float) -> void:
 		if _poll_accum >= GameConfig.POLL_OTHERS_SEC and not _poll_in_flight:
 			_poll_accum = 0.0
 			_poll_remote_creatures()
+	if _online:
+		_jwt_refresh_t += delta
+		if _jwt_refresh_t >= JWT_REFRESH_INTERVAL_SEC:
+			_jwt_refresh_t = 0.0
+			_refresh_session_in_background()
+		_heartbeat_t += delta
+		if _heartbeat_t >= PRESENCE_HEARTBEAT_SEC:
+			_heartbeat_t = 0.0
+			_touch_presence()
+
+## Proactive JWT refresh so a session older than ~1h keeps working.
+func _refresh_session_in_background() -> void:
+	if _refresh_in_flight:
+		return
+	_refresh_in_flight = true
+	var ok := await _try_refresh_session()
+	_refresh_in_flight = false
+	if not ok:
+		_log("Proactive session refresh failed: %s" % _last_error)
+
+## Mark the local player dirty so the next save flush touches last_active,
+## keeping them visible in other clients' online-only polls while idle.
+func _touch_presence() -> void:
+	var pc: Creature = GameState.player_creature
+	if pc == null or not is_instance_valid(pc):
+		return
+	if pc.creature_id.is_empty():
+		return
+	save_creature_position(pc.creature_id, pc.grid_pos.x, pc.grid_pos.y)
 
 func start_creature_poll(world_map: Node) -> void:
 	_world_map = world_map
@@ -72,24 +119,50 @@ func start_creature_poll(world_map: Node) -> void:
 	_log("Started creature poll")
 	_poll_remote_creatures()
 
-func fetch_all_creatures() -> Array:
-	var resp := await _rest_request(HTTPClient.METHOD_GET, "/rest/v1/creatures?select=*")
+## `online_only` (the poll path) filters to creatures active in the last
+## PRESENCE_WINDOW_SEC and trims columns — this keeps per-poll egress flat no
+## matter how many stale profiles accumulate. Admin tools pass false to list
+## every profile ever created (needed for stale-profile cleanup).
+func fetch_all_creatures(online_only: bool = false) -> Array:
+	var path := "/rest/v1/creatures?select=*"
+	if online_only:
+		var cutoff_unix := int(Time.get_unix_time_from_system()) - PRESENCE_WINDOW_SEC
+		var cutoff := Time.get_datetime_string_from_unix_time(cutoff_unix) + "Z"
+		path = "/rest/v1/creatures?select=%s&last_active=gte.%s" % [
+			_creature_select_columns(), cutoff.uri_encode()]
+	var resp := await _rest_request(HTTPClient.METHOD_GET, path)
 	if not resp.ok:
 		_log("fetch_all_creatures failed: %s" % resp.error)
 		push_warning("fetch_all_creatures failed: %s" % resp.error)
 		return []
 	if typeof(resp.data) == TYPE_ARRAY:
-		if int(resp.data.size()) != _last_fetch_count:
-			_last_fetch_count = int(resp.data.size())
+		var rows: Array = resp.data
+		if not rows.is_empty() and typeof(rows[0]) == TYPE_DICTIONARY:
+			_note_row_columns(rows[0])
+			_creature_columns_probed = true
+		if rows.size() != _last_fetch_count:
+			_last_fetch_count = rows.size()
 			_log("Fetched %d creature rows" % _last_fetch_count)
-		return resp.data
+		return rows
 	return []
+
+## Poll payload trim: only the columns the client actually renders. The first
+## fetch uses select=* so optional columns (form) are detected before we commit
+## to naming them — explicitly selecting a missing column would fail the query
+## on an un-migrated DB instead of degrading gracefully.
+func _creature_select_columns() -> String:
+	if not _creature_columns_probed:
+		return "*"
+	var cols := "id,user_id,name,color,x,y,size_level"
+	if _form_column_available:
+		cols += ",form"
+	return cols
 
 func _poll_remote_creatures() -> void:
 	if not _online or _world_map == null or not is_instance_valid(_world_map):
 		return
 	_poll_in_flight = true
-	var rows: Array = await fetch_all_creatures()
+	var rows: Array = await fetch_all_creatures(true)
 	if _world_map and is_instance_valid(_world_map) and _world_map.has_method("sync_remote_creatures"):
 		_world_map.sync_remote_creatures(rows)
 	# Poll shared world objects on the same cadence (creatures first so the
@@ -222,13 +295,11 @@ func _note_world_row_columns(row: Dictionary) -> void:
 func seed_world_objects(rows: Array) -> Array:
 	if not _online or rows.is_empty():
 		return []
-	var headers := _api_headers(true)
-	headers.append("Prefer: return=representation")
-	var resp := await _request(
+	var resp := await _rest_request_raw(
 		HTTPClient.METHOD_POST,
-		GameConfig.SUPABASE_URL + "/rest/v1/world_objects",
-		headers,
-		JSON.stringify(rows)
+		"/rest/v1/world_objects",
+		JSON.stringify(rows),
+		PackedStringArray(["Prefer: return=representation"])
 	)
 	if not resp.ok:
 		if _looks_like_missing_table(str(resp.error)):
@@ -276,13 +347,11 @@ func create_world_object(fields: Dictionary) -> Dictionary:
 	body["updated_at"] = _iso_now()
 	if not _owner_name_column_available:
 		body.erase("owner_name")
-	var headers := _api_headers(true)
-	headers.append("Prefer: return=representation")
-	var resp := await _request(
+	var resp := await _rest_request_raw(
 		HTTPClient.METHOD_POST,
-		GameConfig.SUPABASE_URL + "/rest/v1/world_objects",
-		headers,
-		JSON.stringify(body)
+		"/rest/v1/world_objects",
+		JSON.stringify(body),
+		PackedStringArray(["Prefer: return=representation"])
 	)
 	if not resp.ok:
 		_log("create_world_object failed: %s" % resp.error)
@@ -697,6 +766,7 @@ func _apply_auth_response(data: Dictionary) -> void:
 		"refresh_token": str(data.get("refresh_token", "")),
 		"user_id": user_id,
 	}
+	_last_refresh_unix = Time.get_unix_time_from_system()
 	_save_session_file()
 
 func _auth_request(path: String, body: Dictionary) -> Dictionary:
@@ -708,11 +778,40 @@ func _auth_request(path: String, body: Dictionary) -> Dictionary:
 	)
 
 func _rest_request(method: int, path: String, body: Dictionary = {}, extra_headers: PackedStringArray = PackedStringArray()) -> Dictionary:
+	var payload := "" if body.is_empty() else JSON.stringify(body)
+	return await _rest_request_raw(method, path, payload, extra_headers)
+
+## All REST traffic funnels through here so an expired JWT (HTTP 401) triggers
+## one refresh + retry instead of silently failing until the page is reloaded.
+## Headers are rebuilt on retry so the fresh access token is used.
+func _rest_request_raw(method: int, path: String, payload: String, extra_headers: PackedStringArray = PackedStringArray()) -> Dictionary:
+	var resp := await _send_rest(method, path, payload, extra_headers)
+	if not resp.ok and str(resp.get("error", "")).begins_with("HTTP 401"):
+		if await _refresh_for_retry():
+			resp = await _send_rest(method, path, payload, extra_headers)
+	return resp
+
+func _send_rest(method: int, path: String, payload: String, extra_headers: PackedStringArray) -> Dictionary:
 	var headers := _api_headers(true)
 	for h in extra_headers:
 		headers.append(h)
-	var payload := "" if body.is_empty() else JSON.stringify(body)
 	return await _request(method, GameConfig.SUPABASE_URL + path, headers, payload)
+
+## Refresh the session for a 401 retry. Deduplicates concurrent callers: if a
+## refresh is already in flight (or just finished), reuse its outcome instead
+## of burning extra token-refresh requests (rate limit: 1800/hour/IP).
+func _refresh_for_retry() -> bool:
+	while _refresh_in_flight:
+		await get_tree().process_frame
+	if Time.get_unix_time_from_system() - _last_refresh_unix < 30.0:
+		return true # token was just refreshed (by us or another caller) — retry with it
+	_refresh_in_flight = true
+	var ok := await _try_refresh_session()
+	_refresh_in_flight = false
+	if ok:
+		_jwt_refresh_t = 0.0
+		_log("Recovered from expired JWT (refreshed mid-session)")
+	return ok
 
 func _request(method: int, url: String, headers: PackedStringArray, body: String) -> Dictionary:
 	if _uses_web_bridge():

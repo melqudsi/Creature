@@ -271,9 +271,11 @@ Boot is silent on success (no “new player” / “restored save” toasts). If
 Same poll interval as web (`GameConfig.POLL_OTHERS_SEC` = 1.5s):
 
 1. After boot, `main.gd` calls `NetworkService.start_creature_poll(world_map)` when online
-2. `NetworkService.fetch_all_creatures()` → `GET /rest/v1/creatures?select=*`
+2. `NetworkService.fetch_all_creatures(true)` → `GET /rest/v1/creatures?select=<trimmed columns>&last_active=gte.<now − 150s>` — **online-only filter**: offline profiles no longer render (and egress stays flat as stale profiles accumulate). Admin profile list calls it unfiltered. First fetch uses `select=*` to detect optional columns (`form`) before trimming.
 3. `world_map.sync_remote_creatures(rows)` spawns/updates/removes worms keyed by `user_id` (skips local player)
 4. Remote worms: `is_remote=true`, no selection ring, no local pathfinding — interpolate toward server `{x,y}` in `creature.apply_remote_state()`
+5. **Presence heartbeat** (60s): an idle player's `last_active` is re-touched via the normal position-save path so they never drop out of others' filtered polls (or lose their possessed object to the absent-controller rule)
+6. **JWT auto-refresh**: proactive refresh every 40 min plus a refresh-and-retry-once on any REST `HTTP 401` — long sessions no longer silently lose connectivity when the ~1h access token expires
 
 Test with two sessions (editor + browser, or two phones on `https://<ip>:8443`). The admin log records fetched creature row counts and remote-sync counts (`other profiles`, `visible`) to diagnose missing remotes.
 
