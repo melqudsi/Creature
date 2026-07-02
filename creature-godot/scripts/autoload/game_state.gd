@@ -14,10 +14,15 @@ signal admin_log_added(message: String)
 signal form_changed(form_key: String)
 signal interaction_changed(can_become: bool, form_display: String)
 signal explosion_requested(world_pos: Vector3, radius: float)
+signal money_combined(world_pos: Vector3)
+signal blood_splat_requested(world_pos: Vector3)
 
 var creatures: Dictionary = {} # id -> Creature
 var player_creature: Creature = null
 var player_data: Dictionary = {}
+## The active WorldMap (set in WorldMap._ready). Lets gameplay code spawn shared
+## objects (e.g. a combined money object) without a hard scene-path dependency.
+var world_map: Node = null
 var blocked_tiles: Array[Vector2i] = []
 var admin_logs: Array[String] = []
 ## Interactive/solid props (trees, buildings, shapeshift sources). Scanned by the

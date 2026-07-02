@@ -36,10 +36,15 @@ create table if not exists public.creature_events (
   created_at timestamptz not null default now()
 );
 
--- Shared / persistent interactive world objects (Slice 1 refinement).
--- See supabase/migration-world-objects.sql for the full rationale. x/y are TILE
--- (grid) coords; state is 'idle' | 'possessed'; possessed_by is the controlling
--- player's user_id while possessed. Client degrades gracefully if this is absent.
+-- Shared / persistent interactive world objects (Slice 1 refinement) + money
+-- objects (Slice 2). See supabase/migration-world-objects.sql and
+-- supabase/migration-money.sql for the full rationale. x/y are TILE (grid)
+-- coords. `type` is the object key (altima / magnolia / propane / pothole / cart
+-- / cone / bus / money_stack / money_bag / vault / trash). `state` is
+-- 'idle' | 'possessed' (a player is shapeshifted into it) | 'carried' (a player
+-- is hauling this money object); `possessed_by` is the controlling/carrying
+-- player's user_id. `owner_name` is the ALL-CAPS money owner label (bags/vaults).
+-- The client degrades gracefully if `owner_name` is absent.
 create table if not exists public.world_objects (
   id uuid primary key default gen_random_uuid(),
   type text not null,
@@ -47,6 +52,7 @@ create table if not exists public.world_objects (
   y real not null default 0,
   state text not null default 'idle',
   possessed_by uuid,
+  owner_name text,
   updated_at timestamptz not null default now()
 );
 

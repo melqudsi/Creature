@@ -17,7 +17,7 @@ const DEFAULT_CREATURE_NAME := "Creature"
 
 ## Visible build stamp so a loaded build can be identified at a glance.
 ## Keep this in sync with the build-stamp string in web/custom_shell.html.
-const BUILD_ID := "build 2026-07-01e"
+const BUILD_ID := "build 2026-07-01j"
 
 ## Landfill Dump: the spawn/respawn zone (bottom-left corner). All new players
 ## and all respawns appear here. LANDFILL_RECT (tile x, y, w, h) is used for the
@@ -82,12 +82,33 @@ static func interactive_objects() -> Array:
 		{"key": "pothole", "tile": Vector2(7, 19)},
 		{"key": "cart", "tile": Vector2(2, 22)},
 		{"key": "cone", "tile": Vector2(4, 23)},
+		{"key": "bus", "tile": Vector2(29, 21)},
 		# --- Road / open-world traps (solo-testable) ---
 		{"key": "pothole", "tile": Vector2(16, 12)},
 		{"key": "propane", "tile": Vector2(21, 11)},
 		{"key": "magnolia", "tile": Vector2(12, 9)},
 		{"key": "altima", "tile": Vector2(24, 13)},
 	]
+
+## Starter money piles (Slice 2) — merged into shared seed on first poll / upgrade.
+static func money_seed_objects() -> Array:
+	return [
+		{"key": "money_stack", "tile": Vector2(3, 20)},
+		{"key": "money_stack", "tile": Vector2(5, 19)},
+		{"key": "money_stack", "tile": Vector2(14, 8)},
+		{"key": "money_stack", "tile": Vector2(18, 15)},
+		{"key": "money_stack", "tile": Vector2(22, 12)},
+	]
+
+## A random walkable tile away from trees/buildings (used by admin money spawns).
+static func random_open_tile() -> Vector2:
+	for _attempt in 24:
+		var t := Vector2(float(randi_range(2, MAP_W - 3)), float(randi_range(2, MAP_H - 3)))
+		var ti := Vector2i(int(t.x), int(t.y))
+		if TREE_POSITIONS.has(ti) or BUILDING_POSITIONS.has(ti):
+			continue
+		return t
+	return LANDFILL_CENTER + Vector2(2, 0)
 
 ## Purely decorative trash piles that dress up the landfill.
 static func trash_pile_tiles() -> Array:

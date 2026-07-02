@@ -8,7 +8,7 @@ Multiplayer **alien shapeshifting** sandbox (pivot). Players spawn as aliens at 
 
 ---
 
-## Slice 1 — shapeshifting prototype (current)
+## Slice 1 — shapeshifting prototype
 
 The Phase-1 fun loop from the PDF is built in the Godot client:
 
@@ -29,12 +29,47 @@ Run in the Supabase SQL Editor (Dashboard → SQL → New query):
 | [`supabase/schema.sql`](supabase/schema.sql) | Base tables + RLS (now also includes `world_objects`) | applied |
 | [`supabase/migration-temp-profile-admin.sql`](supabase/migration-temp-profile-admin.sql) | Temp name-claim + admin delete | applied |
 | [`supabase/migration-forms.sql`](supabase/migration-forms.sql) | Adds `creatures.form` (form sync) | **applied** |
-| [`supabase/migration-world-objects.sql`](supabase/migration-world-objects.sql) | Adds `public.world_objects` (shared/persistent interactive objects) | **MUST RUN** |
+| [`supabase/migration-world-objects.sql`](supabase/migration-world-objects.sql) | Adds `public.world_objects` (shared/persistent interactive objects) | **applied** |
+| [`supabase/migration-money.sql`](supabase/migration-money.sql) | Adds `world_objects.owner_name` (Slice 2 money labels) | **RUN for owner labels** |
 
 Until `migration-world-objects.sql` is run, interactive objects stay client-local (no cross-player sync / persistence), but the game still works.
 
+---
+
+## Slice 2 — money system (current)
+
+The Phase-2 economy loop from the PDF is implemented in the Godot client:
+
+- **Money tiers** — `money_stack` → combine → `money_bag` → combine → `vault`. Stacks/bags/vaults are shared `world_objects` rows (same table as interactive props).
+- **Pick up / drop** — HUD **Pick Up** / **Drop** buttons (shown when eligible). Carry rules depend on your form (alien: one stack or bag; cart: up to 4 stacks or one bag; Altima: 3 stacks or one bag; MATA Bus: up to 3 bags or one vault).
+- **Combine** — dropping matching tiers close together merges them client-side (green sparkle FX); creates a new shared row when online.
+- **Ownership labels** — bags/vaults show `"MOE's Money Bag"` etc. Requires `owner_name` column (`migration-money.sql`).
+- **Stealing (claim zone)** — haul someone else's bag/vault into the landfill and drop to claim it.
+- **Death drop** — carried money falls at your death tile (no auto-combine).
+- **New shapeshift forms** — **Shopping Cart** (`cart` prop) and **MATA Bus** (`bus` prop). Bus is slower but can haul vaults.
+
+The client **degrades gracefully** without `owner_name` (money still works; labels just won't persist). Existing worlds auto-seed money stacks + bus on first poll if missing (no wipe).
+
 **Live web build:** [https://melqudsi.github.io/Creature/](https://melqudsi.github.io/Creature/)  
 **GitHub:** [https://github.com/melqudsi/Creature](https://github.com/melqudsi/Creature)
+
+---
+
+## Slice 2 — Money system (Steps 3 & 4 of the PDF)
+
+Physical, persistent, synced **money** plus the two **transport forms**. Money objects reuse the same `public.world_objects` table as Slice 1 — they're just new `type` values (`money_stack`, `money_bag`, `vault`), so no new table is needed.
+
+- **Three money tiers** — **Money Stack** (T1), **Money Bag** (T2), **Vault** (T3), each with a distinct procedural mesh (`ObjectMesh`). Seeded around the landfill + neighborhood (stacks) and the new **Bus Stop** (bags), so there's money to grab immediately.
+- **Pick up / drop** — HUD **Pick Up** grabs the nearest eligible money in reach; **Drop** sets everything down at your tile. Carried money floats attached to your model and makes you **heavier/slower** (bigger tiers = bigger slowdown). Capacity/eligibility is per form, with a clear toast when refused (e.g. *"Alien can't carry a vault"*).
+- **Per-form carrying** — **Alien**: one stack, or one bag (slowly). **Shopping Cart** (new form): several stacks or one bag, faster than alien / slower than Altima, can't kill. **Altima**: several stacks or one bag. **MATA Bus** (new form): several bags **and one vault**.
+- **Combining** — dropping two matching-tier money objects close together merges them (**Stack + Stack = Bag**, **Bag + Bag = Vault**) with a gold combine sparkle; the combining player becomes the owner.
+- **Ownership + stealing** — bags/vaults show a floating **"NAME's Money Bag / Vault"** label when you're near. Carry someone else's bag/vault into a **claim zone** (the Landfill Dump) and drop it to **steal ownership** (label updates to you). Money stacks stay ownerless.
+- **Drop on death** — dying scatters all carried money at the death spot as idle, synced objects (then you respawn at the landfill as Alien) — the core of the revenge/steal loop.
+- **New kill-matrix rows** — the **MATA Bus** crushes **Alien / Altima / Shopping Cart**; the bus dies at buildings and to propane explosions; explosions now also kill carts and the bus. Shopping carts are squished by Altima/Bus.
+
+**Client-local authority (known limitation):** combining, stealing/claiming and kills are all decided on the acting player's client (like Slice 1 kills), so two players combining/claiming the same money at the exact same instant can race. Fine for the prototype; a server-authoritative pass is deferred.
+
+**Supabase — one migration to run:** [`supabase/migration-money.sql`](supabase/migration-money.sql) adds a single column, `world_objects.owner_name`, for the persistent bag/vault owner labels. **Everything else degrades gracefully without it** — money can still be collected, carried, combined, dropped and stolen (carried money reuses the existing `state='carried'` + `possessed_by` columns; a fresh/pre-Slice-2 world is auto-topped-up with the money + bus objects on first poll). Without the column, bags/vaults just show a generic label and owner names don't persist across clients.
 
 ---
 
@@ -299,7 +334,7 @@ Or from the editor:
 
 ### Build stamp + PWA cache-busting
 
-- `GameConfig.BUILD_ID` (currently **`build 2026-07-01e`**) is shown bottom-right in the web shell and on the onboarding screen so users can confirm they loaded a fresh build. **Bump this string on every new build you ship** (and match the `#build-stamp` literal in `web/custom_shell.html`) whenever you re-export the web build.
+- `GameConfig.BUILD_ID` (currently **`build 2026-07-01f`**) is shown bottom-right in the web shell and on the onboarding screen so users can confirm they loaded a fresh build. **Bump this string on every new build you ship** (and match the `#build-stamp` literal in `web/custom_shell.html`) whenever you re-export the web build.
 - Godot's default service worker is cache-first and never `skipWaiting()`s, which caused the recurring "old cached build keeps loading" bug. `custom_shell.html` now runs `setupServiceWorkerAutoUpdate()`: on reload it calls `registration.update()`, and on `updatefound` posts `'update'` to the new worker → `controllerchange` triggers a one-time reload. It is skipped on the dev-server path (which already unregisters SWs).
 
 | Export setting | Value | Why |

@@ -4,9 +4,23 @@ Local-first 3D port pivoting from the web Creature game. Isometric RTS camera wi
 
 > **📄 GAME DESIGN — READ FIRST:** gameplay is defined by **`Multiplayer Alien Shapeshifting Prototype.pdf`** in the repo root (one level up from this folder). Read it before changing gameplay — it is the source of truth for forms, the kill matrix, money, shapeshifting, and the phased build order.
 
-## Slice 1 — shapeshifting prototype (current)
+## Slice 1 — shapeshifting prototype
 
-Forms/shapeshifting, landfill spawn, kill matrix, death/respawn, and shared world-object state are implemented. See the root [`README.md`](../README.md#slice-1--shapeshifting-prototype-current) for the feature overview and the **required Supabase migrations** (`migration-forms.sql` applied; **`migration-world-objects.sql` must be run** to enable shared/persistent interactive objects — the client degrades gracefully without it).
+Forms/shapeshifting, landfill spawn, kill matrix, death/respawn, and shared world-object state are implemented. See the root [`README.md`](../README.md#slice-1--shapeshifting-prototype) for the feature overview and Supabase migrations.
+
+## Slice 2 — money system (current)
+
+Money stacks/bags/vaults, pick-up/drop/combine, ownership labels, claim-zone stealing, death drops, and Shopping Cart + MATA Bus forms. See root [`README.md`](../README.md#slice-2--money-system-current). Run [`supabase/migration-money.sql`](../supabase/migration-money.sql) for persistent owner labels (client degrades without it).
+
+Key Slice 2 files:
+
+| File | Role |
+|------|------|
+| [`scripts/forms/form_defs.gd`](scripts/forms/form_defs.gd) | `carry_check()`, money tiers, cart/bus forms |
+| [`scripts/units/creature.gd`](scripts/units/creature.gd) | Pick up / drop / combine / claim / death-drop |
+| [`scripts/autoload/network_service.gd`](scripts/autoload/network_service.gd) | `carry_world_object`, `drop_money_object`, `create_world_object`, Slice 2 seed |
+| [`scripts/world/world_map.gd`](scripts/world/world_map.gd) | Money object configs, carried sync, combine FX |
+| [`scripts/ui/sc2_hud.gd`](scripts/ui/sc2_hud.gd) | Pick Up / Drop buttons |
 
 Key Slice 1 files:
 
@@ -27,6 +41,17 @@ Key Slice 1 files:
 - **Form scale:** object forms cancel the creature root's `_body_scale` on `body_root` (`_form_body_scale()`) so a shapeshifted object matches its world prop 1:1.
 
 **Current scope:** redesigned onboarding spawn screen (uppercase name + color palette, no 3D preview), default worm with **idle rest animations** (local "breathing" vs remote "sway"), fluid movement, A* pathfinding, **Supabase session save**, **live field** (other players via 1.5s REST poll, each with a stable randomized facing). Camera starts fully zoomed in. Name-only HUD + admin panel (visible only to player `MOE`) with readable logs and clear-session/reload. Player names are forced UPPERCASE (dedupes case-variant profiles). PWA supports portrait and landscape. No health/stamina, fight, eat, or appearance customization.
+
+## Slice 2 — Money system (current)
+
+Physical **money** (Money Stack / Money Bag / Vault) + two **transport forms** (Shopping Cart, MATA Bus), built on top of the Slice 1 world-object sync. See the root [`README.md`](../README.md#slice-2--money-system-steps-3--4-of-the-pdf) for the full feature list and the single **`migration-money.sql`** to run.
+
+- **Money objects reuse `world_objects`** — new `type` values `money_stack`/`money_bag`/`vault` (`_object_cfg()` in `world_map.gd`, meshes in `object_mesh.gd`). Carried money = `state='carried'` + `possessed_by=<carrier uid>`; the optional `owner_name` column stores bag/vault owner labels.
+- **Carrying** — `creature.gd` holds `_carried` (player-driven); `carried_object_ids()` is the local authority the sync uses so carried props don't flicker. Capacity/eligibility + the "no mixing stacks with bags" and vault-only-bus rules live in `FormDefs.carry_check()`; carrying applies a weight-based speed penalty (`_carry_speed_factor()`).
+- **Combine / steal / drop-on-death** — combining two same-tier idle money merges them one tier up (client-local, `_run_combines()` / `_combine_pair()`), stamping the combiner as owner + a `money_combined` FX. Dropping a bag/vault you don't own inside the landfill claim zone steals it. `apply_death()` scatters carried money at the death tile.
+- **New kill matrix** — `FormDefs.resolve_player_death()` adds `bus` (crushes alien/altima/cart, dies at buildings + propane) and `cart` (squished by altima/bus) kinds; `explosion_kills()` now includes cart + bus; `ignores_units()` makes both the Altima and the bus reckless in pathfinding.
+- **HUD** — `sc2_hud.gd` adds **Pick Up** (shown when eligible money is in reach) and **Drop** (shown while carrying) buttons; both are added to `consumes_pointer_at()` so they don't leak taps to the map.
+- **Graceful degradation** — money works without `migration-money.sql` (only persistent owner labels need it); `NetworkService` detects the `owner_name` column from any fetched row and top-up-seeds the Slice 2 money/bus objects once for pre-Slice-2 worlds.
 
 ## Requirements
 
@@ -221,7 +246,7 @@ Dev mode on `:8443` / `:8080` clears service worker cache (no incognito needed).
 
 **Build freshness / cache-busting:**
 
-- Bump `GameConfig.BUILD_ID` (currently `build 2026-07-01e`) and the matching `#build-stamp` string in `custom_shell.html` on each shipped build (every time you re-export the web build). It renders bottom-right in the shell and on the onboarding screen so users can confirm a fresh load.
+- Bump `GameConfig.BUILD_ID` (currently `build 2026-07-01f`) and the matching `#build-stamp` string in `custom_shell.html` on each shipped build (every time you re-export the web build). It renders bottom-right in the shell and on the onboarding screen so users can confirm a fresh load.
 - `custom_shell.html` runs `setupServiceWorkerAutoUpdate()` to force-activate a newer service worker on reload (Godot's default SW is cache-first and never `skipWaiting()`s). Skipped on the dev-server path.
 - **Do not grep `web/index.pck`** to judge freshness — GDScript compiles to `.gdc` bytecode, so string literals aren't plain-text there. Check `CACHE_VERSION` in `web/index.service.worker.js` and file timestamps instead.
 

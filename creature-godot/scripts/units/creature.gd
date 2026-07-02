@@ -62,6 +62,15 @@ var _last_prompt_name := ""
 var _burst_t := 0.0
 var _burst_cd := 0.0
 
+## Slice 2 money carrying (player-driven). Each entry is
+## {"obj": WorldObject, "id": String, "tier": int}. Carried money is hidden as a
+## ground prop and rendered as loot attached to this creature (`_carried_root`).
+var _carried: Array[Dictionary] = []
+var _carried_root: Node3D = null
+## How close (world units) money must be to pick up / to auto-combine on drop.
+const MONEY_PICKUP_RADIUS := 1.35
+const MONEY_COMBINE_RADIUS := 1.5
+
 var _move_dir := Vector2.ZERO
 var _move_target: Vector2 = Vector2(-1, -1)
 var _path: Array[Vector2] = []
@@ -410,10 +419,10 @@ func set_move_target(target: Vector2) -> void:
 func _replan_path() -> void:
 	if _move_target.x < 0:
 		return
-	# Vehicles are reckless: they ignore other units in pathfinding so they can
-	# ram aliens / drive into tree & pothole traps (kills resolve via proximity).
-	# They still route around solid trees/buildings in blocked_tiles.
-	var units: Dictionary = {} if FormDefs.is_vehicle(form_key) else GameState.get_unit_tiles(creature_id)
+	# Vehicles (Altima) and the MATA Bus are reckless: they ignore other units in
+	# pathfinding so they can ram aliens / drive into tree & pothole traps (kills
+	# resolve via proximity). They still route around solid trees/buildings.
+	var units: Dictionary = {} if FormDefs.ignores_units(form_key) else GameState.get_unit_tiles(creature_id)
 	_path = GridNav.find_path(
 		grid_pos,
 		_move_target,
@@ -510,7 +519,11 @@ func apply_remote_state(row: Dictionary) -> void:
 	var target := Vector2(float(row.get("x", grid_pos.x)), float(row.get("y", grid_pos.y)))
 	# A big jump means this player teleported (respawned at the dump), not walked.
 	# Snap immediately instead of lerping so remotes don't glide across the map.
-	if grid_pos.distance_to(target) > REMOTE_SNAP_TILES:
+	# Fast forms (Altima) legitimately cover more tiles per poll, so the snap
+	# threshold scales with the form's speed — otherwise a driving Altima would
+	# "teleport" every poll and never actually run anyone over.
+	var snap_tiles := maxf(REMOTE_SNAP_TILES, FormDefs.speed_mult(form_key) * GameConfig.POLL_OTHERS_SEC * 1.6)
+	if grid_pos.distance_to(target) > snap_tiles:
 		grid_pos = target
 		_remote_target = target
 		is_moving = false
@@ -544,7 +557,10 @@ func _process_remote(delta: float) -> void:
 	var to_target := _remote_target - grid_pos
 	var dist := to_target.length()
 	if dist > 0.02:
-		var step := minf(dist, delta * GameConfig.MOVE_TILES_PER_SEC * 1.5)
+		# Interpolate at least as fast as the remote's form actually moves, or a
+		# fast Altima permanently lags its server position and can't hit anyone.
+		var catch_up := maxf(1.5, FormDefs.speed_mult(form_key) * 1.6)
+		var step := minf(dist, delta * GameConfig.MOVE_TILES_PER_SEC * catch_up)
 		grid_pos += to_target / dist * step
 		is_moving = true
 		_move_dir = to_target / dist
@@ -565,7 +581,32 @@ func _current_speed() -> float:
 	var mult := FormDefs.speed_mult(form_key)
 	if _burst_t > 0.0:
 		mult *= ALTIMA_BURST_MULT
+	mult *= _carry_speed_factor()
 	return GameConfig.MOVE_TILES_PER_SEC * mult
+
+## Carrying money makes you "heavier and harder to move" — the heavier the loot
+## (bag > stack, vault heaviest), the bigger the slowdown.
+func _carry_speed_factor() -> float:
+	if _carried.is_empty():
+		return 1.0
+	_prune_carried()
+	var weight := 0.0
+	for entry in _carried:
+		weight += FormDefs.tier_weight(int(entry.get("tier", 0)))
+	return clampf(1.0 / (1.0 + 0.35 * weight), 0.2, 1.0)
+
+## Drop stale carried entries whose world object was freed (e.g. another client
+## combined/deleted the shared row). Without this the phantom weight slows the
+## player forever and the Drop button can't clear it.
+func _prune_carried() -> void:
+	var pruned := false
+	for i in range(_carried.size() - 1, -1, -1):
+		var obj: WorldObject = _carried[i].get("obj")
+		if obj == null or not is_instance_valid(obj):
+			_carried.remove_at(i)
+			pruned = true
+	if pruned:
+		update_carried_display(carried_tiers())
 
 func _world_xz() -> Vector2:
 	return Vector2(position.x, position.z)
@@ -638,7 +679,19 @@ func _complete_shapeshift() -> void:
 	if not obj.object_id.is_empty():
 		NetworkService.possess_world_object(obj.object_id, NetworkService.get_user_id())
 	apply_form(obj.form_key)
+	# Whatever the new form can't legally hold falls to the ground here.
+	_revalidate_carried_for_form()
 	GameState.show_toast("You became a %s" % FormDefs.display(form_key))
+
+## Re-link a shared object we already possess on the server (session restore:
+## the player reloaded while shapeshifted, so the local _active_object reference
+## was lost but the server row still says we're wearing it). Without this the
+## player sees their own worn object duplicated at its old spot.
+func adopt_possessed_object(obj: WorldObject) -> void:
+	if not is_player or obj == null or not is_instance_valid(obj):
+		return
+	_active_object = obj
+	obj.consume()
 
 ## Called by the HUD "Pop Out" button. Returns to alien; the worn object
 ## reappears next to us.
@@ -646,17 +699,24 @@ func pop_out() -> void:
 	if not is_player or is_dead or is_alien_form():
 		return
 	_stop_movement()
+	var drop_tile := grid_pos + Vector2(0.9, 0.0)
+	drop_tile.x = clampf(drop_tile.x, 1.0, GameConfig.MAP_W - 2.0)
+	drop_tile.y = clampf(drop_tile.y, 1.0, GameConfig.MAP_H - 2.0)
 	if _active_object and is_instance_valid(_active_object):
 		# Drop the object just beside us at our CURRENT location and leave it
 		# there. In shared mode this writes the new position + idle state to the
 		# server, so it persists for everyone (and survives our disconnect).
-		var drop_tile := grid_pos + Vector2(0.9, 0.0)
-		drop_tile.x = clampf(drop_tile.x, 1.0, GameConfig.MAP_W - 2.0)
-		drop_tile.y = clampf(drop_tile.y, 1.0, GameConfig.MAP_H - 2.0)
 		_active_object.respawn_at(GameConfig.tile_to_world(drop_tile))
 		if not _active_object.object_id.is_empty():
+			_note_local_authority(_active_object.object_id)
 			NetworkService.release_world_object(_active_object.object_id, drop_tile.x, drop_tile.y)
 	_active_object = null
+	# Carried loot stays with the vehicle we popped out of — the alien walks
+	# away empty-handed (a cart's stacks stay AT the cart, not on the alien).
+	if not _carried.is_empty():
+		_drop_carried_entries(_carried.duplicate(), drop_tile)
+		_carried.clear()
+		update_carried_display([])
 	apply_form(FormDefs.ALIEN)
 	GameState.show_toast("Popped out to alien")
 
@@ -668,6 +728,322 @@ func use_special() -> void:
 		_burst_t = ALTIMA_BURST_TIME
 		_burst_cd = ALTIMA_BURST_COOLDOWN
 		GameState.show_toast("Speed burst!")
+
+# ---------------------------------------------------------------------------
+# Money: pick up / carry / drop / combine / ownership (Slice 2, player-local).
+# ---------------------------------------------------------------------------
+
+## Tell the world map our local change to this object is authoritative for a few
+## seconds (ignore stale poll rows while the PATCH is in flight — anti-flicker).
+func _note_local_authority(object_id: String) -> void:
+	var wm := GameState.world_map
+	if wm and is_instance_valid(wm) and wm.has_method("note_local_authority"):
+		wm.note_local_authority(object_id)
+
+func _note_deleted(object_id: String) -> void:
+	var wm := GameState.world_map
+	if wm and is_instance_valid(wm) and wm.has_method("note_deleted"):
+		wm.note_deleted(object_id)
+
+## Ids of the money objects this player is currently carrying (world-object sync
+## uses this as the LOCAL authority so carried props don't flicker on the poll).
+func carried_object_ids() -> Array:
+	var ids: Array = []
+	for entry in _carried:
+		var id := str(entry.get("id", ""))
+		if not id.is_empty():
+			ids.append(id)
+	return ids
+
+func carried_tiers() -> Array:
+	var tiers: Array = []
+	for entry in _carried:
+		tiers.append(int(entry.get("tier", 0)))
+	return tiers
+
+func is_carrying() -> bool:
+	return not _carried.is_empty()
+
+## True if there is an eligible money object nearby we're allowed to pick up right
+## now (drives the HUD "Pick Up" button visibility).
+func can_pick_up_now() -> bool:
+	return _nearest_pickup() != null
+
+## Nearest idle money object within reach that this form may carry given its
+## current load. Returns null if none is eligible.
+func _nearest_pickup() -> WorldObject:
+	if not is_player or is_dead or is_spawning:
+		return null
+	var my := _world_xz()
+	var best: WorldObject = null
+	var best_d := MONEY_PICKUP_RADIUS
+	var tiers := carried_tiers()
+	for obj in GameState.world_objects:
+		if not is_instance_valid(obj) or obj.consumed or not obj.is_money():
+			continue
+		if not FormDefs.carry_check(form_key, tiers, obj.tier).ok:
+			continue
+		var d := my.distance_to(Vector2(obj.position.x, obj.position.z))
+		if d <= best_d:
+			best_d = d
+			best = obj
+	return best
+
+## Nearest money object of ANY tier within reach (used to explain why a pickup was
+## refused, e.g. "Alien can't carry a vault").
+func _nearest_money_any() -> WorldObject:
+	var my := _world_xz()
+	var best: WorldObject = null
+	var best_d := MONEY_PICKUP_RADIUS
+	for obj in GameState.world_objects:
+		if not is_instance_valid(obj) or obj.consumed or not obj.is_money():
+			continue
+		var d := my.distance_to(Vector2(obj.position.x, obj.position.z))
+		if d <= best_d:
+			best_d = d
+			best = obj
+	return best
+
+## HUD "Pick Up" button: grab the nearest eligible money object.
+func pick_up_nearest() -> void:
+	if not is_player or is_dead or is_spawning or is_asleep:
+		return
+	var obj := _nearest_pickup()
+	if obj == null:
+		var near := _nearest_money_any()
+		if near and is_instance_valid(near):
+			GameState.show_toast(FormDefs.carry_check(form_key, carried_tiers(), near.tier).reason)
+		else:
+			GameState.show_toast("No money in reach")
+		return
+	_carried.append({"obj": obj, "id": obj.object_id, "tier": obj.tier})
+	obj.carried_by = NetworkService.get_user_id()
+	obj.consume() # hidden as a ground prop; now drawn as attached loot
+	if not obj.object_id.is_empty():
+		_note_local_authority(obj.object_id)
+		NetworkService.carry_world_object(obj.object_id, NetworkService.get_user_id())
+	update_carried_display(carried_tiers())
+	GameState.show_toast("Picked up a %s" % FormDefs.tier_display(obj.tier))
+
+## HUD "Drop" button: set every carried money object down at our current tile,
+## claim ownership if we hauled someone's bag/vault into a claim zone, then try to
+## combine matching tiers that land close together.
+func drop_all() -> void:
+	if _carried.is_empty():
+		return
+	var base_tile := grid_pos
+	var in_claim_zone := GameConfig.is_in_landfill(base_tile)
+	var dropped: Array[WorldObject] = []
+	var i := 0
+	for entry in _carried:
+		var obj: WorldObject = entry.get("obj")
+		if obj == null or not is_instance_valid(obj):
+			i += 1
+			continue
+		var drop_tile := base_tile + _drop_offset(i)
+		drop_tile.x = clampf(drop_tile.x, 1.0, GameConfig.MAP_W - 2.0)
+		drop_tile.y = clampf(drop_tile.y, 1.0, GameConfig.MAP_H - 2.0)
+		i += 1
+		var wp := GameConfig.tile_to_world(drop_tile)
+		# Claim: hauling a bag/vault you don't own into the landfill steals it.
+		var new_owner := ""
+		if obj.tier >= FormDefs.TIER_BAG and in_claim_zone and obj.owner_name != creature_name and not creature_name.is_empty():
+			new_owner = creature_name
+			GameState.show_toast("Claimed the %s!" % FormDefs.tier_display(obj.tier))
+		obj.carried_by = ""
+		if not new_owner.is_empty():
+			obj.set_money_owner(new_owner)
+		obj.respawn_at(wp)
+		obj.spawn_world_pos = wp
+		obj.spawn_tile = drop_tile
+		if not obj.object_id.is_empty():
+			_note_local_authority(obj.object_id)
+			# Preserve the existing owner label when we aren't claiming.
+			NetworkService.drop_money_object(obj.object_id, drop_tile.x, drop_tile.y, obj.owner_name)
+		dropped.append(obj)
+	_carried.clear()
+	update_carried_display([])
+	_run_combines(dropped)
+
+## Small fan-out so multiple dropped items don't stack on the exact same spot.
+func _drop_offset(index: int) -> Vector2:
+	var ring := [Vector2(0, 0), Vector2(0.7, 0), Vector2(-0.7, 0), Vector2(0, 0.7), Vector2(0, -0.7)]
+	return ring[index % ring.size()]
+
+## Place a list of carried entries on the ground around `base_tile` as idle world
+## objects (owner labels preserved; no claim, no combine). Shared helper for
+## pop-out / form-change overflow drops.
+func _drop_carried_entries(entries: Array, base_tile: Vector2) -> void:
+	var i := 0
+	for entry in entries:
+		var obj: WorldObject = entry.get("obj")
+		if obj == null or not is_instance_valid(obj):
+			i += 1
+			continue
+		var drop_tile := base_tile + _drop_offset(i)
+		drop_tile.x = clampf(drop_tile.x, 1.0, GameConfig.MAP_W - 2.0)
+		drop_tile.y = clampf(drop_tile.y, 1.0, GameConfig.MAP_H - 2.0)
+		i += 1
+		var wp := GameConfig.tile_to_world(drop_tile)
+		obj.carried_by = ""
+		obj.respawn_at(wp)
+		obj.spawn_world_pos = wp
+		obj.spawn_tile = drop_tile
+		if not obj.object_id.is_empty():
+			_note_local_authority(obj.object_id)
+			NetworkService.drop_money_object(obj.object_id, drop_tile.x, drop_tile.y, obj.owner_name)
+
+## After a form change, re-check every carried item against the new form's carry
+## rules (incrementally); anything that no longer fits drops at our feet.
+func _revalidate_carried_for_form() -> void:
+	if _carried.is_empty():
+		return
+	var kept: Array[Dictionary] = []
+	var kept_tiers: Array = []
+	var overflow: Array = []
+	for entry in _carried:
+		var t := int(entry.get("tier", 0))
+		if FormDefs.carry_check(form_key, kept_tiers, t).ok:
+			kept.append(entry)
+			kept_tiers.append(t)
+		else:
+			overflow.append(entry)
+	if overflow.is_empty():
+		return
+	_drop_carried_entries(overflow, grid_pos)
+	_carried = kept
+	update_carried_display(carried_tiers())
+	GameState.show_toast("Dropped loot this form can't carry")
+
+## After a drop, repeatedly merge any two same-tier idle money objects that ended
+## up close together (Stack+Stack=Bag, Bag+Bag=Vault). Client-local authority.
+func _run_combines(dropped: Array) -> void:
+	var guard := 0
+	while guard < 12:
+		guard += 1
+		var pair := _find_combine_pair()
+		if pair.is_empty():
+			return
+		await _combine_pair(pair[0], pair[1])
+
+## Find two combinable idle money objects (same tier < Vault) within range of each
+## other. Returns [a, b] or [].
+func _find_combine_pair() -> Array:
+	var money: Array = []
+	for obj in GameState.world_objects:
+		if not is_instance_valid(obj) or obj.consumed or not obj.is_money():
+			continue
+		if obj.tier < FormDefs.TIER_STACK or obj.tier >= FormDefs.TIER_VAULT:
+			continue
+		money.append(obj)
+	for a in money.size():
+		for b in range(a + 1, money.size()):
+			var oa: WorldObject = money[a]
+			var ob: WorldObject = money[b]
+			if oa.tier != ob.tier:
+				continue
+			if oa.position.distance_to(ob.position) <= MONEY_COMBINE_RADIUS:
+				return [oa, ob]
+	return []
+
+## Merge two money objects into one of the next tier at their midpoint, stamped
+## with this player's ownership. The two sources are removed and the higher-tier
+## object is created (synced when online, local otherwise).
+func _combine_pair(a: WorldObject, b: WorldObject) -> void:
+	if a == null or b == null or not is_instance_valid(a) or not is_instance_valid(b):
+		return
+	var new_tier: int = a.tier + 1
+	var mid_world: Vector3 = (a.position + b.position) * 0.5
+	var mid_tile := Vector2(GameConfig.world_to_tile(mid_world))
+	var type_key := _money_type_key(new_tier)
+	var owner := creature_name
+	_remove_money_object(a)
+	_remove_money_object(b)
+	GameState.money_combined.emit(mid_world)
+	GameState.show_toast("Combined into a %s" % FormDefs.tier_display(new_tier))
+	var new_id := ""
+	if NetworkService.is_online():
+		var fields := {"type": type_key, "x": mid_tile.x, "y": mid_tile.y, "state": "idle"}
+		if new_tier >= FormDefs.TIER_BAG:
+			fields["owner_name"] = owner
+		var created := await NetworkService.create_world_object(fields)
+		new_id = str(created.get("id", ""))
+	# Spawn locally right away for snappy feedback (matched by id on the next poll).
+	if GameState.world_map and is_instance_valid(GameState.world_map) and GameState.world_map.has_method("spawn_money_object"):
+		GameState.world_map.spawn_money_object(type_key, mid_world, owner, new_id)
+
+func _money_type_key(tier: int) -> String:
+	match tier:
+		FormDefs.TIER_BAG: return "money_bag"
+		FormDefs.TIER_VAULT: return "vault"
+		_: return "money_stack"
+
+func _money_visual_for_tier(tier: int) -> String:
+	match tier:
+		FormDefs.TIER_BAG: return "money_bag"
+		FormDefs.TIER_VAULT: return "vault"
+		_: return "money_stack"
+
+## Remove a money object from the world (delete its shared row + free the node).
+func _remove_money_object(obj: WorldObject) -> void:
+	if obj == null or not is_instance_valid(obj):
+		return
+	# Mark consumed immediately so it's excluded from any further combine scan
+	# during the async create round-trip (queue_free only frees next idle frame).
+	obj.consume()
+	if not obj.object_id.is_empty():
+		# Tombstone BEFORE the async DELETE: a poll arriving mid-flight must not
+		# resurrect the row (that's how one combine yielded two bags).
+		_note_deleted(obj.object_id)
+		NetworkService.delete_world_object(obj.object_id)
+	obj.queue_free()
+
+## Rebuild the stack of loot floating above this creature from a list of tiers.
+## Used by the local player (own carry) and by world_map for visible remotes.
+func update_carried_display(tiers: Array) -> void:
+	if _carried_root and is_instance_valid(_carried_root):
+		_carried_root.queue_free()
+		_carried_root = null
+	if tiers.is_empty():
+		return
+	_carried_root = Node3D.new()
+	_carried_root.name = "CarriedLoot"
+	add_child(_carried_root)
+	var y := 0.85
+	for tier in tiers:
+		var node := ObjectMesh.build(_money_visual_for_tier(int(tier)))
+		node.scale = Vector3.ONE * 0.5
+		node.position = Vector3(0, y, 0)
+		_carried_root.add_child(node)
+		y += 0.35
+
+## Drop every carried money object at the death location as idle world objects
+## (ownership preserved — killers/others can then grab it). No combine on death.
+func _drop_carried_on_death() -> void:
+	if _carried.is_empty():
+		update_carried_display([])
+		return
+	var i := 0
+	for entry in _carried:
+		var obj: WorldObject = entry.get("obj")
+		if obj == null or not is_instance_valid(obj):
+			i += 1
+			continue
+		var drop_tile := grid_pos + _drop_offset(i)
+		drop_tile.x = clampf(drop_tile.x, 1.0, GameConfig.MAP_W - 2.0)
+		drop_tile.y = clampf(drop_tile.y, 1.0, GameConfig.MAP_H - 2.0)
+		i += 1
+		var wp := GameConfig.tile_to_world(drop_tile)
+		obj.carried_by = ""
+		obj.respawn_at(wp)
+		obj.spawn_world_pos = wp
+		obj.spawn_tile = drop_tile
+		if not obj.object_id.is_empty():
+			_note_local_authority(obj.object_id)
+			# Keep the previous owner label — dying doesn't launder stolen money.
+			NetworkService.drop_money_object(obj.object_id, drop_tile.x, drop_tile.y, obj.owner_name)
+	_carried.clear()
+	update_carried_display([])
 
 ## Resolve client-local kills against world objects and remote creatures. We
 ## only ever decide whether OUR OWN player dies (see NETWORKING notes): remote
@@ -701,7 +1077,12 @@ func _resolve_contacts() -> void:
 		var d := my.distance_to(Vector2(c.position.x, c.position.z))
 		if d > my_r + FormDefs.radius(c.form_key):
 			continue
-		var res := FormDefs.resolve_player_death(form_key, FormDefs.kind(c.form_key))
+		var other_kind := FormDefs.kind(c.form_key)
+		# A stopped vehicle is harmless: walking up to a parked Altima/bus is
+		# safe; you only die if it actually runs you over (it's moving).
+		if (other_kind == "vehicle" or other_kind == "mata_bus") and not c.is_moving:
+			continue
+		var res := FormDefs.resolve_player_death(form_key, other_kind)
 		if res.die:
 			if res.explode:
 				GameState.explosion_requested.emit(position, EXPLOSION_RADIUS)
@@ -726,8 +1107,14 @@ func apply_death(reason: String, exploded: bool = false) -> void:
 	if is_dead:
 		return
 	is_dead = true
-	# TODO(Slice 2): drop any carried money here before respawning (money system
-	# doesn't exist yet). The dropped stack/bag/vault should spawn at grid_pos.
+	# A squished alien (or cart rider) leaves a blood splat where it happened.
+	# Explosions have their own FX; potholes/trees "wreck", they don't squish.
+	var my_kind := FormDefs.kind(form_key)
+	if not exploded and (my_kind == "alien" or my_kind == "cart"):
+		GameState.blood_splat_requested.emit(position)
+	# Drop any carried money at the death location as idle world objects (synced),
+	# so killers/other players can grab it — central to the revenge/steal loop.
+	_drop_carried_on_death()
 	if not reason.is_empty():
 		GameState.show_toast(reason)
 	GameState.add_admin_log("Player died: %s (form %s)" % [reason, form_key])

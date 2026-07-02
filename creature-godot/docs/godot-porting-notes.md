@@ -26,6 +26,41 @@ Forms, shapeshifting, landfill spawn/respawn, the kill matrix, and shared/persis
 
 Other Slice-1 refinements: top-banner toasts, bottom-left region label (`GameConfig.region_for_tile()`), object forms rendered 1:1 with their world prop (`Creature._form_body_scale()`), remote death teleport (`REMOTE_SNAP_TILES`), and a bigger/brighter propane explosion that lingers before respawn (`EXPLODE_RESPAWN_DELAY`).
 
+## Slice 2 — money system
+
+Physical money + transport forms (Steps 3 & 4 of the PDF), built on the Slice 1 world-object sync.
+
+**Data model.** Money objects reuse `public.world_objects` as new `type` values (`money_stack`, `money_bag`, `vault`) — no new table. Carried money = `state='carried'` with `possessed_by = <carrier user_id>` (no separate `carried_by` column needed). The only new column is **`owner_name`** (bag/vault labels), added by **`supabase/migration-money.sql`** (also folded into `schema.sql`). `NetworkService` detects the column from any fetched row (`_note_world_object_columns`) and strips it from writes when absent, so **money fully works without the migration** (only persistent owner labels degrade). `_ensure_slice2_seed()` top-up-seeds the money + bus objects once for worlds seeded before Slice 2.
+
+| Component | Slice 2 role |
+|-----------|--------------|
+| `form_defs.gd` | `CART` + `BUS` forms; `CARRY_CAPS` + `carry_check()` (capacity / vault-only-bus / no-mixing); `TIER_*` + `tier_weight()`; extended `resolve_player_death()` (bus/cart kinds) + `explosion_kills()` + `ignores_units()` |
+| `object_mesh.gd` | `money_stack` / `money_bag` / `vault` / `bus` procedural meshes |
+| `world_object.gd` | money `tier` / `owner_name` / `carried_by`; floating `Label3D` owner label shown by proximity (`_process`, bag/vault only) |
+| `world_map.gd` | money/bus `_object_cfg`; `sync_world_objects()` handles `carried` state + remote carried-loot visuals + owner labels; `spawn_money_object()`; `spawn_combine_fx()` |
+| `creature.gd` | `_carried` list; `pick_up_nearest()` / `drop_all()` / `_run_combines()` / `_combine_pair()`; `carried_object_ids()` (sync authority); `update_carried_display()`; `_carry_speed_factor()`; drop-on-death in `apply_death()` |
+| `network_service.gd` | `carry_world_object()`, `drop_money_object()`, `create_world_object()`, `delete_world_object()`; `owner_name` column detection; Slice 2 top-up seed |
+| `sc2_hud.gd` | **Pick Up** / **Drop** buttons (+ `consumes_pointer_at`) |
+| `config.gd` | money + bus seeds (`slice2_objects()`), Bus Stop region/rect, landfill claim zone |
+
+**Rules.** Alien carries one stack or one bag (slow); Shopping Cart several stacks or one bag (faster than alien, slower than Altima, can't kill); Altima several stacks or one bag; MATA Bus several bags **and** one vault (crushes alien/altima/cart, dies at buildings + propane). Combine two same-tier idle money → next tier (Stack+Stack=Bag, Bag+Bag=Vault), combiner becomes owner. Steal = carry a bag/vault you don't own into the Landfill claim zone and drop it. Death scatters carried money at the death tile.
+
+**Client-local authority (deferred limitation):** combine, steal/claim and kills are all resolved on the acting client, so simultaneous actions on the same money can race. Also, popping out of a form does not re-enforce carry capacity on the (usually smaller) new form. Acceptable for the prototype.
+
+## Slice 2 — money system
+
+Money stacks → bags → vaults reuse `public.world_objects` with new `type` values (`money_stack`, `money_bag`, `vault`) plus optional `owner_name` ([`migration-money.sql`](../supabase/migration-money.sql)). Carried money uses `state = 'carried'` and `possessed_by = carrier user_id`.
+
+| Component | Role |
+|-----------|------|
+| `scripts/forms/form_defs.gd` | `carry_check()`, tiers, Shopping Cart + MATA Bus forms |
+| `scripts/units/creature.gd` | Pick up / drop / combine / claim-on-drop / death-drop; `_carried_root` loot display |
+| `scripts/autoload/network_service.gd` | carry/drop/create/delete world objects; auto-seed money+bus on upgrade |
+| `scripts/world/world_map.gd` | `sync_world_objects()` hides carried props + remote loot display; `spawn_money_combine_fx()` |
+| `scripts/ui/sc2_hud.gd` | Pick Up / Drop action buttons |
+
+**Combine/steal authority is CLIENT-LOCAL** (like kills): each client resolves its own combine scans and claim-zone drops. Shared rows keep everyone aligned on where money is and who carries it.
+
 ## File mapping
 
 | Web | Godot |
@@ -129,7 +164,7 @@ main.gd _ready()
 
 - **Export gotchas:** Godot may revert `export_presets.cfg` (`ensure_cross_origin_isolation_headers` back to true, `orientation` off 0) and re-serialize `project.godot` (dropping a default line). Verify/restore both to keep the git diff clean.
 - **Build freshness:** GDScript compiles to `.gdc` bytecode, so string literals are **not** plain-text searchable in `web/index.pck` — don't grep the `.pck` to check whether a build is fresh; use `CACHE_VERSION` in `web/index.service.worker.js` + file timestamps.
-- **PWA cache-busting:** `custom_shell.html`'s `setupServiceWorkerAutoUpdate()` force-activates a newer service worker on reload (Godot's default SW is cache-first / never `skipWaiting()`s). Bump `GameConfig.BUILD_ID` (currently `build 2026-07-01e`; + the `#build-stamp` string in `custom_shell.html`) each shipped build / re-export; it renders bottom-right in the shell and on the onboarding screen so users can confirm freshness.
+- **PWA cache-busting:** `custom_shell.html`'s `setupServiceWorkerAutoUpdate()` force-activates a newer service worker on reload (Godot's default SW is cache-first / never `skipWaiting()`s). Bump `GameConfig.BUILD_ID` (currently `build 2026-07-01f`; + the `#build-stamp` string in `custom_shell.html`) each shipped build / re-export; it renders bottom-right in the shell and on the onboarding screen so users can confirm freshness.
 
 ## Known gaps vs web
 

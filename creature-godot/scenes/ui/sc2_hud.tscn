@@ -94,14 +94,15 @@ vertical_alignment = 1
 text = "Toast"
 
 [node name="PainTestButton" type="Button" parent="."]
+custom_minimum_size = Vector2(132, 52)
 layout_mode = 1
 anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
-offset_left = -108.0
+offset_left = -144.0
 offset_top = 12.0
 offset_right = -12.0
-offset_bottom = 40.0
+offset_bottom = 64.0
 grow_horizontal = 0
 text = "admin"
 
@@ -113,13 +114,25 @@ anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
 offset_left = -204.0
-offset_top = -212.0
+offset_top = -400.0
 offset_right = -16.0
 offset_bottom = -24.0
 grow_horizontal = 0
 grow_vertical = 0
 alignment = 2
 theme_override_constants/separation = 10
+
+[node name="PickUpButton" type="Button" parent="ActionBar"]
+custom_minimum_size = Vector2(188, 56)
+layout_mode = 2
+visible = false
+text = "Pick Up"
+
+[node name="DropButton" type="Button" parent="ActionBar"]
+custom_minimum_size = Vector2(188, 56)
+layout_mode = 2
+visible = false
+text = "Drop"
 
 [node name="BecomeButton" type="Button" parent="ActionBar"]
 custom_minimum_size = Vector2(188, 56)

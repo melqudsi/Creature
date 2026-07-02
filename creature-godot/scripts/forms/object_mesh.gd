@@ -23,6 +23,14 @@ static func build(visual: String, tint: Color = Color(0.6, 0.6, 0.6)) -> Node3D:
 			return _build_propane()
 		"cart":
 			return _build_cart()
+		"mata_bus":
+			return _build_mata_bus()
+		"money_stack":
+			return _build_money_stack()
+		"money_bag":
+			return _build_money_bag()
+		"vault":
+			return _build_vault()
 		"cone":
 			return _build_cone()
 		"building":
@@ -148,6 +156,73 @@ static func _build_building() -> Node3D:
 	door_mesh.size = Vector3(0.28, 0.45, 0.04)
 	root.add_child(_mesh_node(door_mesh, _mat(Color(0.23, 0.13, 0.07)), Vector3(0, 0.225, -0.65)))
 	root.rotation.y = [0.0, PI * 0.5, PI, PI * 1.5][randi() % 4]
+	return root
+
+static func _build_mata_bus() -> Node3D:
+	var root := Node3D.new()
+	# White body, raised enough that the wheels sit under it and read clearly.
+	var body_mesh := BoxMesh.new()
+	body_mesh.size = Vector3(0.95, 0.55, 2.2)
+	root.add_child(_mesh_node(body_mesh, _mat(Color(0.93, 0.94, 0.95), 0.45, 0.1), Vector3(0, 0.5, 0)))
+	# MATA green horizontal stripe wrapping the sides (slightly wider than the
+	# body so it visibly stands proud of the white panels).
+	var stripe := BoxMesh.new()
+	stripe.size = Vector3(1.0, 0.14, 2.1)
+	root.add_child(_mesh_node(stripe, _mat(Color(0.08, 0.55, 0.28), 0.5), Vector3(0, 0.42, 0)))
+	# Dark side-window band above the stripe.
+	var windows := BoxMesh.new()
+	windows.size = Vector3(0.97, 0.16, 1.55)
+	root.add_child(_mesh_node(windows, _mat(Color(0.12, 0.16, 0.2), 0.25, 0.3), Vector3(0, 0.62, -0.15)))
+	# Windshield: protrudes from the front face so it's actually visible.
+	var windshield := BoxMesh.new()
+	windshield.size = Vector3(0.8, 0.3, 0.07)
+	root.add_child(_mesh_node(windshield, _mat(Color(0.14, 0.2, 0.26), 0.2, 0.35), Vector3(0, 0.58, 1.09)))
+	# Wheels: pushed out past the body sides so they aren't buried.
+	var wheel_mat := _mat(Color(0.05, 0.05, 0.06), 0.9)
+	for wx in [-0.5, 0.5]:
+		for wz in [-0.78, 0.78]:
+			var wheel := CylinderMesh.new()
+			wheel.top_radius = 0.17
+			wheel.bottom_radius = 0.17
+			wheel.height = 0.12
+			var w := _mesh_node(wheel, wheel_mat, Vector3(wx, 0.17, wz))
+			w.rotation_degrees = Vector3(0, 0, 90)
+			root.add_child(w)
+	return root
+
+static func _build_money_stack() -> Node3D:
+	var root := Node3D.new()
+	for i in 3:
+		var bill := BoxMesh.new()
+		bill.size = Vector3(0.32, 0.04, 0.18)
+		var mi := _mesh_node(bill, _mat(Color(0.45, 0.78, 0.38), 0.6), Vector3(0, 0.06 + i * 0.045, 0))
+		mi.rotation_degrees = Vector3(0, float(i) * 8.0, 0)
+		root.add_child(mi)
+	return root
+
+static func _build_money_bag() -> Node3D:
+	var root := Node3D.new()
+	var bag := SphereMesh.new()
+	bag.radius = 0.22
+	bag.height = 0.38
+	root.add_child(_mesh_node(bag, _mat(Color(0.72, 0.55, 0.18), 0.75), Vector3(0, 0.22, 0)))
+	var tie := BoxMesh.new()
+	tie.size = Vector3(0.12, 0.06, 0.12)
+	root.add_child(_mesh_node(tie, _mat(Color(0.35, 0.22, 0.08)), Vector3(0, 0.38, 0)))
+	return root
+
+static func _build_vault() -> Node3D:
+	var root := Node3D.new()
+	var box := BoxMesh.new()
+	box.size = Vector3(0.55, 0.55, 0.55)
+	root.add_child(_mesh_node(box, _mat(Color(0.28, 0.32, 0.38), 0.35, 0.55), Vector3(0, 0.28, 0)))
+	var dial := CylinderMesh.new()
+	dial.top_radius = 0.08
+	dial.bottom_radius = 0.08
+	dial.height = 0.04
+	var d := _mesh_node(dial, _mat(Color(0.85, 0.72, 0.2), 0.3, 0.6), Vector3(0, 0.58, 0.22))
+	d.rotation_degrees = Vector3(90, 0, 0)
+	root.add_child(d)
 	return root
 
 static func _build_trash() -> Node3D:

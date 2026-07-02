@@ -7,6 +7,8 @@ extends Control
 @onready var become_button: Button = $ActionBar/BecomeButton
 @onready var special_button: Button = $ActionBar/SpecialButton
 @onready var pop_button: Button = $ActionBar/PopOutButton
+@onready var pickup_button: Button = $ActionBar/PickUpButton
+@onready var drop_button: Button = $ActionBar/DropButton
 @onready var region_label: Label = $RegionLabel
 
 var _last_region := ""
@@ -50,17 +52,36 @@ func _process(_delta: float) -> void:
 	if region != _last_region:
 		_last_region = region
 		region_label.text = region
+	_update_money_buttons(c)
+
+## Show "Pick Up" when eligible money is in reach and "Drop" while carrying. Kept
+## cheap: only toggles the buttons when the state actually changes.
+func _update_money_buttons(c: Creature) -> void:
+	if not pickup_button or not drop_button:
+		return
+	var can_pick: bool = c.can_pick_up_now() and not c.is_dead
+	if pickup_button.visible != can_pick:
+		pickup_button.visible = can_pick
+	var carrying: bool = c.is_carrying()
+	if drop_button.visible != carrying:
+		drop_button.visible = carrying
 
 func _setup_action_buttons() -> void:
 	become_button.visible = false
 	special_button.visible = false
 	pop_button.visible = false
+	pickup_button.visible = false
+	drop_button.visible = false
 	become_button.focus_mode = Control.FOCUS_NONE
 	special_button.focus_mode = Control.FOCUS_NONE
 	pop_button.focus_mode = Control.FOCUS_NONE
+	pickup_button.focus_mode = Control.FOCUS_NONE
+	drop_button.focus_mode = Control.FOCUS_NONE
 	become_button.pressed.connect(_on_become_pressed)
 	special_button.pressed.connect(_on_special_pressed)
 	pop_button.pressed.connect(_on_pop_pressed)
+	pickup_button.pressed.connect(_on_pickup_pressed)
+	drop_button.pressed.connect(_on_drop_pressed)
 
 func _player_form() -> String:
 	var c = GameState.player_creature
@@ -98,6 +119,16 @@ func _on_special_pressed() -> void:
 	if c and is_instance_valid(c) and c.has_method("use_special"):
 		c.use_special()
 
+func _on_pickup_pressed() -> void:
+	var c = GameState.player_creature
+	if c and is_instance_valid(c) and c.has_method("pick_up_nearest"):
+		c.pick_up_nearest()
+
+func _on_drop_pressed() -> void:
+	var c = GameState.player_creature
+	if c and is_instance_valid(c) and c.has_method("drop_all"):
+		c.drop_all()
+
 func bind_pain_test(pain_test: Node) -> void:
 	_pain_test = pain_test
 
@@ -106,7 +137,7 @@ func consumes_pointer_at(screen_pos: Vector2) -> bool:
 		return true
 	if _admin_panel and _admin_panel.visible and _admin_panel.get_global_rect().has_point(screen_pos):
 		return true
-	for btn in [become_button, special_button, pop_button]:
+	for btn in [become_button, special_button, pop_button, pickup_button, drop_button]:
 		if btn and btn.visible and btn.get_global_rect().has_point(screen_pos):
 			return true
 	return false
@@ -154,6 +185,25 @@ func _build_admin_panel() -> void:
 	pain_btn.text = "start pain test"
 	pain_btn.pressed.connect(_on_pain_test_pressed)
 	root.add_child(pain_btn)
+
+	var money_row := HBoxContainer.new()
+	money_row.add_theme_constant_override("separation", 8)
+	root.add_child(money_row)
+	var remove_money_btn := Button.new()
+	remove_money_btn.text = "remove all money"
+	remove_money_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	remove_money_btn.pressed.connect(_on_remove_all_money_pressed)
+	money_row.add_child(remove_money_btn)
+	var spawn_stacks_btn := Button.new()
+	spawn_stacks_btn.text = "spawn 5 stacks"
+	spawn_stacks_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	spawn_stacks_btn.pressed.connect(_on_spawn_stacks_pressed)
+	money_row.add_child(spawn_stacks_btn)
+
+	var reset_objects_btn := Button.new()
+	reset_objects_btn.text = "reset ALL world objects"
+	reset_objects_btn.pressed.connect(_on_reset_objects_pressed)
+	root.add_child(reset_objects_btn)
 
 	var profiles_title := Label.new()
 	profiles_title.text = "Profiles"
@@ -220,6 +270,27 @@ func _toggle_admin_panel() -> void:
 	if _admin_panel.visible:
 		_refresh_profiles()
 		_refresh_logs()
+
+func _on_remove_all_money_pressed() -> void:
+	if not NetworkService.is_online():
+		GameState.show_toast("Offline — can't touch shared money")
+		return
+	var n: int = await NetworkService.admin_delete_all_money()
+	GameState.show_toast("Removed %d money objects" % n)
+
+func _on_spawn_stacks_pressed() -> void:
+	if not NetworkService.is_online():
+		GameState.show_toast("Offline — can't spawn shared money")
+		return
+	var created: Array = await NetworkService.admin_spawn_money_stacks(5)
+	GameState.show_toast("Spawned %d money stacks" % created.size())
+
+func _on_reset_objects_pressed() -> void:
+	if not NetworkService.is_online():
+		GameState.show_toast("Offline — can't reset shared objects")
+		return
+	var ok: bool = await NetworkService.admin_reset_world_objects()
+	GameState.show_toast("World objects reset" if ok else "Reset failed — see logs")
 
 func _clear_session_and_reload() -> void:
 	NetworkService.clear_saved_session()

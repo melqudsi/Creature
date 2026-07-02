@@ -14,8 +14,11 @@ var _save_creature_id := ""
 var _save_pos := Vector2.ZERO
 var _save_dirty := false
 var _save_timer := 0.0
-var _web_request_pending := false
-var _web_request_result: Dictionary = {}
+## Web-bridge requests are concurrent (poll + position save + money PATCHes can
+## overlap); each in-flight request gets its own id so responses can't cross.
+var _web_request_seq := 0
+var _web_request_results: Dictionary = {}   # request id -> parsed result
+var _web_request_callbacks: Dictionary = {} # request id -> JS callback (kept alive)
 var _world_map: Node
 var _poll_accum := 0.0
 var _poll_in_flight := false
@@ -31,6 +34,8 @@ var _form_column_available := false
 var _world_objects_available := false
 var _world_objects_checked := false
 var _world_objects_missing_logged := false
+var _owner_name_column_available := false
+var _slice2_seed_attempted := false
 
 func _log(msg: String) -> void:
 	GameState.add_admin_log(msg)
@@ -112,6 +117,9 @@ func _poll_world_objects() -> void:
 		return
 	_world_objects_available = true
 	var rows: Array = res.get("rows", [])
+	for row in rows:
+		if typeof(row) == TYPE_DICTIONARY:
+			_note_world_row_columns(row)
 	if not _world_objects_checked:
 		_world_objects_checked = true
 		if rows.is_empty():
@@ -122,6 +130,8 @@ func _poll_world_objects() -> void:
 				return
 			if not _world_objects_available:
 				return
+	else:
+		await _maybe_seed_slice2_objects(rows)
 	if _world_map and is_instance_valid(_world_map) and _world_map.has_method("sync_world_objects"):
 		_world_map.sync_world_objects(rows)
 
@@ -152,7 +162,62 @@ func _build_world_object_seed() -> Array:
 	for entry in GameConfig.interactive_objects():
 		var tile: Vector2 = entry["tile"]
 		out.append({"type": str(entry["key"]), "x": tile.x, "y": tile.y, "state": "idle"})
+	for entry in GameConfig.money_seed_objects():
+		var tile: Vector2 = entry["tile"]
+		out.append({"type": str(entry["key"]), "x": tile.x, "y": tile.y, "state": "idle"})
 	return out
+
+## If a pre-Slice-2 world already has interactive objects but no money/bus yet,
+## append the Slice 2 starter rows once (no wipe needed).
+func _maybe_seed_slice2_objects(rows: Array) -> void:
+	if _slice2_seed_attempted or not _world_objects_available:
+		return
+	var has_money := false
+	var has_bus := false
+	for row in rows:
+		if typeof(row) != TYPE_DICTIONARY:
+			continue
+		var t := str(row.get("type", ""))
+		if t == "money_stack" or t == "money_bag" or t == "vault":
+			has_money = true
+		if t == "bus":
+			has_bus = true
+	if has_money and has_bus:
+		_slice2_seed_attempted = true
+		return
+	_slice2_seed_attempted = true
+	# Anti-duplication: two clients booting at once would both notice the gap and
+	# both seed. Wait a random beat, re-fetch, and only seed what's STILL missing.
+	await get_tree().create_timer(randf_range(0.4, 2.2)).timeout
+	var recheck := await fetch_world_objects()
+	if not recheck.get("ok", false):
+		return
+	for row in recheck.get("rows", []):
+		if typeof(row) != TYPE_DICTIONARY:
+			continue
+		var t2 := str(row.get("type", ""))
+		if t2 == "money_stack" or t2 == "money_bag" or t2 == "vault":
+			has_money = true
+		if t2 == "bus":
+			has_bus = true
+	var to_add: Array = []
+	if not has_money:
+		to_add.append_array(GameConfig.money_seed_objects())
+	if not has_bus:
+		to_add.append({"key": "bus", "tile": Vector2(29, 21)})
+	if to_add.is_empty():
+		return
+	var payload: Array = []
+	for entry in to_add:
+		var tile: Vector2 = entry["tile"]
+		payload.append({"type": str(entry["key"]), "x": tile.x, "y": tile.y, "state": "idle"})
+	var created := await seed_world_objects(payload)
+	if not created.is_empty():
+		_log("Seeded %d Slice 2 world objects (money/bus)" % created.size())
+
+func _note_world_row_columns(row: Dictionary) -> void:
+	if not _owner_name_column_available and row.has("owner_name"):
+		_owner_name_column_available = true
 
 ## POST the seed rows (array body) and return the created rows (with ids).
 func seed_world_objects(rows: Array) -> Array:
@@ -195,6 +260,93 @@ func possess_world_object(object_id: String, user_id: String) -> void:
 ## Drop an object back into the world at tile (x, y) as idle (visible to all).
 func release_world_object(object_id: String, x: float, y: float) -> void:
 	update_world_object(object_id, {"state": "idle", "possessed_by": null, "x": x, "y": y})
+
+func carry_world_object(object_id: String, user_id: String) -> void:
+	update_world_object(object_id, {"state": "carried", "possessed_by": user_id})
+
+func drop_money_object(object_id: String, x: float, y: float, owner_name: String) -> void:
+	var patch := {"state": "idle", "possessed_by": null, "x": x, "y": y}
+	if _owner_name_column_available:
+		patch["owner_name"] = owner_name if not owner_name.is_empty() else null
+	update_world_object(object_id, patch)
+
+func create_world_object(fields: Dictionary) -> Dictionary:
+	if not _online or not _world_objects_available:
+		return {}
+	var body := fields.duplicate(true)
+	body["updated_at"] = _iso_now()
+	if not _owner_name_column_available:
+		body.erase("owner_name")
+	var headers := _api_headers(true)
+	headers.append("Prefer: return=representation")
+	var resp := await _request(
+		HTTPClient.METHOD_POST,
+		GameConfig.SUPABASE_URL + "/rest/v1/world_objects",
+		headers,
+		JSON.stringify(body)
+	)
+	if not resp.ok:
+		_log("create_world_object failed: %s" % resp.error)
+		return {}
+	if typeof(resp.data) == TYPE_ARRAY and not resp.data.is_empty():
+		return resp.data[0]
+	if typeof(resp.data) == TYPE_DICTIONARY:
+		return resp.data
+	return {}
+
+func delete_world_object(object_id: String) -> void:
+	if not _online or object_id.is_empty() or not _world_objects_available:
+		return
+	var path := "/rest/v1/world_objects?id=eq.%s" % object_id.uri_encode()
+	await _rest_request(HTTPClient.METHOD_DELETE, path)
+
+## ADMIN: delete every money object (all tiers) for everyone. Returns the count.
+func admin_delete_all_money() -> int:
+	if not _online or not _world_objects_available:
+		return 0
+	var headers := PackedStringArray(["Prefer: return=representation"])
+	var resp := await _rest_request(
+		HTTPClient.METHOD_DELETE,
+		"/rest/v1/world_objects?type=in.(money_stack,money_bag,vault)",
+		{},
+		headers
+	)
+	if not resp.ok:
+		_log("admin_delete_all_money failed: %s" % resp.error)
+		return 0
+	var n: int = resp.data.size() if typeof(resp.data) == TYPE_ARRAY else 0
+	_log("ADMIN: deleted %d money objects" % n)
+	return n
+
+## ADMIN: nuke the ENTIRE shared world_objects table and re-seed it fresh from
+## the client config (interactive objects + money + bus). Heals any stuck rows
+## (orphaned possession/carry, duplicates, drifted positions).
+func admin_reset_world_objects() -> bool:
+	if not _online or not _world_objects_available:
+		return false
+	var resp := await _rest_request(
+		HTTPClient.METHOD_DELETE,
+		"/rest/v1/world_objects?id=not.is.null"
+	)
+	if not resp.ok:
+		_log("admin_reset_world_objects delete failed: %s" % resp.error)
+		return false
+	var created := await seed_world_objects(_build_world_object_seed())
+	_log("ADMIN: reset world objects (%d re-seeded)" % created.size())
+	return not created.is_empty()
+
+## ADMIN: seed `count` fresh money stacks at random open tiles. Returns created rows.
+func admin_spawn_money_stacks(count: int) -> Array:
+	if not _online or not _world_objects_available or count <= 0:
+		return []
+	var payload: Array = []
+	for i in count:
+		var tile := GameConfig.random_open_tile()
+		payload.append({"type": "money_stack", "x": tile.x, "y": tile.y, "state": "idle"})
+	var created := await seed_world_objects(payload)
+	if not created.is_empty():
+		_log("ADMIN: spawned %d money stacks" % created.size())
+	return created
 
 func is_online() -> bool:
 	return _online
@@ -585,21 +737,23 @@ func _request_via_web_bridge(method: int, url: String, headers: PackedStringArra
 		var sep := h.find(": ")
 		if sep > 0:
 			headers_obj[h.substr(0, sep)] = h.substr(sep + 2)
-	_web_request_pending = true
-	_web_request_result = {}
-	var cb := JavaScriptBridge.create_callback(_on_web_request_done)
+	_web_request_seq += 1
+	var rid := _web_request_seq
+	var cb := JavaScriptBridge.create_callback(func(args: Array) -> void:
+		var parsed: Variant = null
+		if not args.is_empty():
+			parsed = JSON.parse_string(str(args[0]))
+		if typeof(parsed) != TYPE_DICTIONARY:
+			parsed = {"ok": false, "status": 0, "body": "Bad JS JSON"}
+		_web_request_results[rid] = parsed)
+	_web_request_callbacks[rid] = cb # keep a ref or the JS callback is GC'd
 	net.runRequest(_method_name(method), url, JSON.stringify(headers_obj), body, cb)
-	while _web_request_pending:
+	while not _web_request_results.has(rid):
 		await get_tree().process_frame
-	return _parse_js_http_result(_web_request_result)
-
-func _on_web_request_done(args: Array) -> void:
-	if args.is_empty():
-		_web_request_result = {"ok": false, "status": 0, "body": "Empty JS callback"}
-	else:
-		var parsed = JSON.parse_string(str(args[0]))
-		_web_request_result = parsed if typeof(parsed) == TYPE_DICTIONARY else {"ok": false, "status": 0, "body": "Bad JS JSON"}
-	_web_request_pending = false
+	var result: Dictionary = _web_request_results[rid]
+	_web_request_results.erase(rid)
+	_web_request_callbacks.erase(rid)
+	return _parse_js_http_result(result)
 
 func _method_name(method: int) -> String:
 	match method:
