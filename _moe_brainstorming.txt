@@ -1,0 +1,66 @@
+core changes
+6/30
+`- start zoomed all the way in
+- in WPA mode (shared to home screen on mobile), it opens in vertical mode fine, then when i tilt horizontal, it switches to horizontal mode in full screen just fine, then if i tilt it back to vertical, the screen keeps glitching and flashes really fast like maybe its trying to force it to stay in landscape mode but it can't do it.  i'm fine with allowing vertical mode, no need to force landscape if thats the issue.
+`- see other players
+
+`- lets add a spawn screen (onboarding) where player can enter in their name and pick a color.  if the player leaves and later returns, and we recognize their session id, we should log them back with their profile loaded.  if a new player appears, they'd get the onboarding screen but if they type an existing name, we would log them in as that player profile and update the session id (this is temporary til we implement passwords/phrases later).  
+`- also, replace the pain test button with "admin", when the admin button is pressed, an admin panel appears that has the pain test button and also a way for managing stored player profiles (mainly need to be able to delete profiles).
+`- for the pain test, add a way to adjust the number of worms / objects spawn.
+`- increase the size of the map and add more trees accordingly, also add some buildings/houses
+
+7/1
+`- i see this log when i try to delete a profile in the admin panel: Delete returned zero rows and profile still exists for 15835000-6a2b-497a-afda-fac08a7a8d93 (RLS migration may be missing)
+`- creature color preview in spawn screen barely show the color change on the creature, like only a tiny sliver of the color showing. also, the creature color in game when spawned is still dark gray regardless of color chosen.
+`- when i login as a new player, i dont see any hud items at all (admin button, creature name on top left, etc)
+`- in the onboarding spawn screen, when i type in an existing player name, it says "could not create or claim profile".
+`- creature color in-game is still dark-gray and not the chosen color
+`- hud stuff still doesn't show up. it only shows up when logged in as "creature" name player (which was the default player name before we added onboarding screen and multi-player)
+`- add idle/rest animation when creature is not moving. and a separate idle animation for offline players.
+`- currently a player can see other players, even other offline players (sitting still), but all the other offline players appear to be facing the same direction, add a way to randomize their direction for a better user experience.
+`- remove creature preview from spawn screen, keep the color selection but add a visual indicator to tell which color is selected (like a highlighted box around the color) also make the color buttons bigger and add more colors. add dark-gray and make it the first option and set it as the default one.
+`- force player names to be all caps. so if a new player types Bob, it will go into the system as BOB (all caps) and if the user leaves and returns later and types in boB, it will log them in as BOB. this will also fix the issue where you can create two different players as Bob and bOb, etc.
+`- when typing name in spawn screen, then click away from the text box then return to the text box to edit what i typed, it starts the cursor at the start/before of existing text so i can only add text behind existing text and i have no way to put the cursor at the end so i can backspace or edit existing text or add to it. only happens in mobile
+`- make it where player named MOE is the only player that can see the admin button
+
+------------ core game logic begin -------------
+`- i added a document named Multiplayer Alien Shapeshifting Prototype.pdf in the project root folder.  now that we have a good foundation, lets start developing the actual game logic, read the document and begin.
+
+
+backlog / issues:
+- Server-authoritative combines/claims/kills Known tech debt. I'd keep deferring it until player count or cheating actually makes it hurt.
+- add better collision detection when placing money down (dont want it inside things)
+- when getting close to money and the "pick up" button appears, make it say pick up stack or money bag or whatever it is
+- and when dropping a stack near another stack to combine, make the label say combine instead of just drop so player knows whats about to happen, do same when combining other monies too
+- crash or death then re-spawn happens too fast, lets pause for a little bit so the player can understand what happened and do a 3 second count down till re-spawn
+- give ability to manually detonate propane tank
+- when a player shapeshifted into a propane tank, and if the tank explodes by either manual detonation or if a car runs into propane player, the player also dies
+- if a combined money item (like bag or vault) is near an explosion, it separates into the lower combo, for example, if a vault explodes, it seperates into money bags, and exploded money bags turn into stacks, etc.
+- add more combo money tiers
+- Kill feed toasts for everyone — right now only the victim sees the funny death message; broadcasting "MOE got Altima'd by JOSH" to all players turns every kill into a shared joke.
+- when doing pinch to zoom, it also takes in an unintended tap to move along with it, need for a way to detect pinch to zoom and not accept a tap to move along with it.
+
+
+
+- Sounds?
+- 
+
+
+game play brainstorming:
+players can shapeshift into different units by making contact with NPC
+
+Ideas for unit types and what they do
+
+for Memphis
+- Altimas (based on the ghetto Memphis drivers seem to always drive Nissan altimas) - heavy - can run over light
+- Tigers (because Memphis tigers sports, but these are actual tigers) - light - can move faster 
+- magnolia tree - medium weight? - player can still move as a tree / spy / comical relief
+- the bassproshop pyramid - very heavy - moves very slowly - can generate lots of income
+
+
+-- Brainstorming with GPT
+help me come up with a fun game play that anyone (adults) can enjoy, gamers and non-gamers.  looking for a simple yet engaging and addictive game flow.  i'll tell you a few simple loose requirements and i need you to help me with a game flow design, feel free to suggest better requirements than what i provide.  this will be a mobile phone friendly real time multi-player game. i dont want players to die or severely punish them, but i do want to instill the revenge feeling if another player cons them. i was thinking of an incentive or a main objective would be collect money or coins, but the money/coins are physical objects that they need to move around the world and secure, i want to avoid showing number stats anywhere to give an immersive feel.  other players can steal your money.  players can shape shift into the different world objects to achieve things like spawn more coins or get to a place on the map that is otherwise not reachable or a way to hide or secure the money.  players can still see offline players in the spot where they last played/left.  i want certain player interactions to offline players, for example, if the offline player is in alien form, you can pick them up and move them to another spot, or if the offline player is an object (move close to it to see a popup that says the offline player's name), then you can force them to return to alien form and steal their object.  players have the ability to return to alien form after shapeshifting to an object.  players need to get close to an object to shapeshift into it, and have to do a simple minigame like rotate a 3D DNA strand and find the correct sequences in it or something.  when a player shape shifts into an object, they become the object (not duplicating it) and can move within reason, so a car can move fast but if you become a building, very slow movement, etc.  objects that players can shape shift into need to be purposeful and balanced, for example, you cant shape shift into a plane before shapeshifting into a sky scraper or something tall, you cant shape shift into a sky scraper until you shape shift into a smaller thing, etc.
+
+i want the game to be completely live so no 10 minute time limits or game end sequence, i want it to be never ending but possibly always evolving by people interacting with it.  i dont like the suspicious scanner idea.  now that i think about it, i do want players to die, but no health bar, either you're alive or squished dead, when a player dies, they re-spawn in a designated spawn location (landfill dump), this is also where new players spawn.  now we can designate objects that can kill an alien and which objects can kill other objects, for example a car can squish an alien or an alien shapeshifted into a small animal, we can do funny unexpected things like if you're a car and drive into a tree, you die, or you can become a tree and move infront of cars and get them crash into you and they die, or same for a pothole or a building.  a mata bus kills a car, planes only kill other smaller planes, a grizzley bear kills tigers, tigers kill human (gangster).  money can start with a money stack as the smallest denominator, combine two stacks and you get a money bag, combine two bags, and you get a vault, etc, etc.  combined monies get the player's name as their owner, and other players can see that and can steal and get ownership of it.  if a player is an alien, they can carry one money stack at a time or a money bag, then they'll need a vehicle to carry a vault.  
+
+incorporate stuff that explode to be used to counter altimas/vehicles. propane tank, or think of something looks innocent but explodes for funny factor. revisit the memphis related units list and see where some of it applies to the game idea so far and ensure they are purposeful and balanced, so when a player sees an object they can shapeshift into, i want the player start thinking hmmm how could this object be cleverly counter another object, each objects needs to have a counter object or purpose, if that makes sense.  i already have a starting point of just a simple onboarding screen and you spawn as an alien and can roam a small open world with some trees and houses, but nothing else developed yet, haven't done any of the interactivity or anything, you can just see other players roaming around too and the game persists your location if you leave and return to the game. no collision detection yet either.  give me a comprehensive plan/prompt that i can hand off to my developer agent starting with a minimal quick prototype to test it before implementing everything.
