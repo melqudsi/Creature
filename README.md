@@ -36,40 +36,63 @@ Until `migration-world-objects.sql` is run, interactive objects stay client-loca
 
 ---
 
-## Slice 2 — money system (current)
+## Slice 2 — money system (current, playtested)
 
-The Phase-2 economy loop from the PDF is implemented in the Godot client:
+Physical, persistent, synced **money** plus two **transport forms** (Steps 3 & 4 of the PDF). Money objects reuse the same `public.world_objects` table as Slice 1 — new `type` values (`money_stack`, `money_bag`, `vault`), no new table.
 
-- **Money tiers** — `money_stack` → combine → `money_bag` → combine → `vault`. Stacks/bags/vaults are shared `world_objects` rows (same table as interactive props).
-- **Pick up / drop** — HUD **Pick Up** / **Drop** buttons (shown when eligible). Carry rules depend on your form (alien: one stack or bag; cart: up to 4 stacks or one bag; Altima: 3 stacks or one bag; MATA Bus: up to 3 bags or one vault).
-- **Combine** — dropping matching tiers close together merges them client-side (green sparkle FX); creates a new shared row when online.
-- **Ownership labels** — bags/vaults show `"MOE's Money Bag"` etc. Requires `owner_name` column (`migration-money.sql`).
-- **Stealing (claim zone)** — haul someone else's bag/vault into the landfill and drop to claim it.
-- **Death drop** — carried money falls at your death tile (no auto-combine).
-- **New shapeshift forms** — **Shopping Cart** (`cart` prop) and **MATA Bus** (`bus` prop). Bus is slower but can haul vaults.
+- **Three money tiers** — Stack (T1) → Bag (T2) → Vault (T3), distinct procedural meshes (`ObjectMesh`).
+- **Pick up / drop** — HUD **Pick Up** / **Drop** buttons (shown when eligible/carrying). Carried money floats attached to your model and slows you down (heavier tiers = slower).
+- **Per-form carrying** (`FormDefs.carry_check()`) — **Alien**: one stack or one bag. **Shopping Cart**: up to 4 stacks or one bag. **Altima**: 3 stacks or one bag. **MATA Bus**: up to 3 bags or one vault (only vault hauler).
+- **Combining** — dropping two matching tiers close together merges them (Stack+Stack=Bag, Bag+Bag=Vault) with a green sparkle; the combiner becomes owner.
+- **Ownership + stealing** — bags/vaults show a floating **"NAME's Money Bag / Vault"** label. Haul someone else's bag/vault into the **claim zone** (the Landfill Dump) and drop it to steal ownership. Stacks stay ownerless.
+- **Drop on death** — dying scatters carried money at the death spot (owner labels preserved) — the revenge/steal loop.
+- **New forms + kill matrix** — **Shopping Cart** and **MATA Bus** are shapeshiftable (`cart` / `bus` props). Bus crushes alien/altima/cart when *moving*; dies at buildings/trees and to propane; shrugs off potholes. Every death has a killer-specific message.
+- **Squish FX** — squished aliens/carts leave a fading blood splat (client-local).
+- **Admin tools (MOE only)** — bigger admin button; **remove all money**, **spawn 5 stacks**, and **reset ALL world objects** (wipe + re-seed the shared table — the fix-everything button for stuck/duplicated objects).
 
-The client **degrades gracefully** without `owner_name` (money still works; labels just won't persist). Existing worlds auto-seed money stacks + bus on first poll if missing (no wipe).
+**Sync-robustness rules added after playtest** (see `world_map.gd` / `network_service.gd`):
 
-**Live web build:** [https://melqudsi.github.io/Creature/](https://melqudsi.github.io/Creature/)  
+- **Local-authority grace** — object ids you just changed (pickup/drop/pop-out) ignore stale server rows for ~6s while the PATCH lands (anti-flicker).
+- **Tombstones** — ids deleted locally (combines) can never be resurrected by an in-flight poll (~15s window). This fixed "two stacks became two bags".
+- **Per-request web bridge** — browser fetch responses are keyed by request id; overlapping requests previously crossed responses and silently dropped PATCHes (root cause of stuck carried money / inconsistent placement).
+- **Self-repair** — rows claiming *you* carry/possess something you don't get PATCHed back to idle; a session restore while shapeshifted re-adopts the possessed object (no duplicate).
+- **Moving-vehicle kills only** — a parked/stopped Altima or bus (prop **or** player) is safe to approach; only a moving one kills. Remote interpolation speed scales with form speed so a fast Altima can actually hit things.
+
+**Client-local authority (known limitation):** combining, claiming and kills are decided on the acting client; simultaneous actions on the same money can race. Fine for the prototype; server-authoritative pass deferred.
+
+**Supabase — one migration:** [`supabase/migration-money.sql`](supabase/migration-money.sql) adds `world_objects.owner_name` (persistent owner labels). Everything else degrades gracefully without it; pre-Slice-2 worlds auto-top-up money + bus objects on first poll.
+
+**Live web build:** [https://melqudsi.github.io/Creature/](https://melqudsi.github.io/Creature/) (GitHub Pages from `main` root — see Deployment below)  
 **GitHub:** [https://github.com/melqudsi/Creature](https://github.com/melqudsi/Creature)
 
 ---
 
-## Slice 2 — Money system (Steps 3 & 4 of the PDF)
+## Slice 3 — BBQ Smoker economy (current)
 
-Physical, persistent, synced **money** plus the two **transport forms**. Money objects reuse the same `public.world_objects` table as Slice 1 — they're just new `type` values (`money_stack`, `money_bag`, `vault`), so no new table is needed.
+Step 6 of the PDF (the last Phase-1 system) plus the Step-5 leftover. Money now ENTERS the economy instead of just circulating:
 
-- **Three money tiers** — **Money Stack** (T1), **Money Bag** (T2), **Vault** (T3), each with a distinct procedural mesh (`ObjectMesh`). Seeded around the landfill + neighborhood (stacks) and the new **Bus Stop** (bags), so there's money to grab immediately.
-- **Pick up / drop** — HUD **Pick Up** grabs the nearest eligible money in reach; **Drop** sets everything down at your tile. Carried money floats attached to your model and makes you **heavier/slower** (bigger tiers = bigger slowdown). Capacity/eligibility is per form, with a clear toast when refused (e.g. *"Alien can't carry a vault"*).
-- **Per-form carrying** — **Alien**: one stack, or one bag (slowly). **Shopping Cart** (new form): several stacks or one bag, faster than alien / slower than Altima, can't kill. **Altima**: several stacks or one bag. **MATA Bus** (new form): several bags **and one vault**.
-- **Combining** — dropping two matching-tier money objects close together merges them (**Stack + Stack = Bag**, **Bag + Bag = Vault**) with a gold combine sparkle; the combining player becomes the owner.
-- **Ownership + stealing** — bags/vaults show a floating **"NAME's Money Bag / Vault"** label when you're near. Carry someone else's bag/vault into a **claim zone** (the Landfill Dump) and drop it to **steal ownership** (label updates to you). Money stacks stay ownerless.
-- **Drop on death** — dying scatters all carried money at the death spot as idle, synced objects (then you respawn at the landfill as Alien) — the core of the revenge/steal loop.
-- **New kill-matrix rows** — the **MATA Bus** crushes **Alien / Altima / Shopping Cart**; the bus dies at buildings and to propane explosions; explosions now also kill carts and the bus. Shopping carts are squished by Altima/Bus.
+- **BBQ Smoker** — new shapeshiftable prop seeded at the new **BBQ Corner** region (near the houses at the top of the map; the HUD region label knows it, and **Bus Stop** too). Slow (0.6x), can't kill anything, dies to a **moving bus** or explosions — but an Altima **can't** kill it (per the PDF it's vulnerable to *theft*, not squishing: raiders must stop and grab).
+- **Money generation** — the smoker earns a **money stack every ~18s ONLY while player-possessed AND parked near a house** (`SMOKER_GEN_INTERVAL_SEC`, `SMOKER_NEAR_HOUSE_TILES`). Parked in the open it toasts "Park near houses to sell BBQ". Going AFK-asleep stops the earning (no idle farming). Generation is capped at **20 loose stacks world-wide** (`MONEY_STACK_WORLD_CAP`) — at cap it toasts "Market's flooded — combine some money first", pushing players toward the combine loop.
+- **Smoke Cloud special** — 10s cloud on a 20s cooldown, synced to all players via a temporary `smoke_cloud` world-object row (no schema change). Remote players and loose money inside the ~3-tile radius are **invisible to everyone else**; the deployer deletes the row when it ends, and any client cleans up stale clouds from a deployer who died/disconnected (row age via `updated_at`).
+- **Carrying** — smoker hauls 1 bag or up to 2 stacks (a raider can't kill the owner AND drive off with everything in one trip).
+- **Explosion money scatter (Step 5 gap)** — explosions now fling nearby loose money 1.5–3 tiles outward to synced positions. Scattered, never destroyed (design rule).
 
-**Client-local authority (known limitation):** combining, stealing/claiming and kills are all decided on the acting player's client (like Slice 1 kills), so two players combining/claiming the same money at the exact same instant can race. Fine for the prototype; a server-authoritative pass is deferred.
+No new Supabase migration needed — the smoker and smoke clouds reuse `world_objects` as-is; existing worlds top-up-seed the smoker automatically on first poll.
 
-**Supabase — one migration to run:** [`supabase/migration-money.sql`](supabase/migration-money.sql) adds a single column, `world_objects.owner_name`, for the persistent bag/vault owner labels. **Everything else degrades gracefully without it** — money can still be collected, carried, combined, dropped and stolen (carried money reuses the existing `state='carried'` + `possessed_by` columns; a fresh/pre-Slice-2 world is auto-topped-up with the money + bus objects on first poll). Without the column, bags/vaults just show a generic label and owner names don't persist across clients.
+---
+
+## Deployment — GitHub Pages
+
+The Godot **web export lands in the repo root** (`index.html`, `index.pck`, `index.wasm`, `index.service.worker.js`, …) and GitHub Pages serves `main`'s root directly. The old Phase-1 web game was archived to `_arc/`.
+
+1. Bump `GameConfig.BUILD_ID` + the `#build-stamp` string in `creature-godot/web/custom_shell.html`.
+2. Export (headless command below, or editor → preset default `../index.html`).
+3. Commit the changed root export files + push `main`. Pages redeploys automatically in ~1–2 min.
+4. Verify the live build stamp (bottom-right on the spawn screen).
+
+**Critical: `variant/thread_support=false` must stay OFF in `export_presets.cfg`.** GitHub Pages cannot send the COOP/COEP headers that threaded WASM builds require (SharedArrayBuffer); with threads on, the live site shows a "Cross-Origin Isolation / SharedArrayBuffer missing" error. The local dev servers send those headers, so the bug only appears in production. `.nojekyll` at the root must also stay (stops Pages from running Jekyll).
+
+Returning visitors who had the OLD web game cached may need one hard refresh (its legacy service worker is replaced on the next load).
 
 ---
 
@@ -77,14 +100,14 @@ Physical, persistent, synced **money** plus the two **transport forms**. Money o
 
 ```mermaid
 flowchart TB
-  subgraph web [Web client - Phase 1 LIVE]
-    HTML[index.html + js/]
-    Pages[GitHub Pages]
+  subgraph godot [Godot client - CURRENT]
+    Editor[Godot 4.7 project creature-godot/]
+    Export[Web export at repo root index.html + .pck + .wasm]
+    Pages[GitHub Pages serves main root]
   end
 
-  subgraph godot [Godot client - local-first]
-    Editor[Godot 4.7 project]
-    Shell[web/custom_shell.html]
+  subgraph legacy [Legacy web client - archived]
+    Arc[_arc/ index.html + js/]
   end
 
   subgraph backend [Supabase - shared project]
@@ -92,13 +115,12 @@ flowchart TB
     PG[(Postgres + RLS)]
   end
 
-  HTML --> Pages
-  HTML --> Auth
-  HTML --> PG
-  Editor --> Shell
+  Editor -->|export| Export
+  Export --> Pages
+  Export --> HTTPS[serve-web-https.py :8443 local/LAN]
   Editor -->|NetworkService| Auth
   Editor -->|NetworkService| PG
-  Shell --> HTTPS[serve-web-https.py :8443]
+  Arc -.->|same tables| PG
 ```
 
 | Client | Path | Multiplayer | Visual style | Status |
@@ -141,7 +163,7 @@ Creature/
 
 ## Shared gameplay rules
 
-Constants in web `js/game.js` and Godot `scripts/config.gd` (`GameConfig`):
+Constants in web `_arc/js/game.js` (archived) and Godot `scripts/config.gd` (`GameConfig`):
 
 | Rule | Value |
 |------|-------|
@@ -149,43 +171,32 @@ Constants in web `js/game.js` and Godot `scripts/config.gd` (`GameConfig`):
 | Move speed | 1 tile/sec (Godot); web also has stamina rules |
 | Name | Max 10 chars |
 
-**Web only (live):** fight, eat, stamina, AFK sleep, grow, multiplayer polling, follow camera, tap-to-move.
+**Web only (archived):** fight, eat, stamina, AFK sleep, grow, multiplayer polling, follow camera, tap-to-move.
 
 **Godot only (current scope):** redesigned onboarding spawn screen (uppercase name + color palette, no 3D preview), default worm with **idle rest animations** (local "breathing", remote "sway"), **fluid A\*** movement, tap/click + pinch zoom, **Supabase session save** (restore last profile on return), **other players visible** via REST poll with stable randomized facing. Camera **starts fully zoomed in**. Top bar shows name only — **health/stamina removed**. Admin panel (visible only to player `MOE`) contains configurable pain test, profile deletion, readable logs, and a clear-session/reload button. Player names are forced **UPPERCASE** (dedupes case-variant profiles). No fight, eat, or persistent AI.
 
 ---
 
-## Web client (Phase 1 — complete)
+## Web client (Phase 1 — ARCHIVED in `_arc/`)
 
-### Supabase setup (required once)
+The original 2D canvas web game was archived to [`_arc/`](_arc/) when the Godot export took over the repo root (GitHub Pages). It still documents the original Supabase patterns.
+
+### Supabase setup (required once, shared by both clients)
 
 1. Dashboard → **Authentication → Anonymous sign-ins → ON → Save** (Save is mandatory).
 2. SQL Editor → run [`supabase/schema.sql`](supabase/schema.sql).
 3. **Do not** enable Realtime/replication (game uses REST polling ~1.5s).
 
-Keys: `js/config.example.js` (committed for GitHub Pages). Publishable key only.
+Keys: `_arc/js/config.example.js` (publishable key only).
 
-### Run locally
-
-```powershell
-.\start-server.ps1
-# Desktop: http://localhost:3456
-# Phone (Wi‑Fi): http://<wifi-ip>:3456  (not Ethernet 10.x if phone is on Wi‑Fi)
-```
-
-### Key files
+### Key archived files
 
 | File | Role |
 |------|------|
-| [`js/api.js`](js/api.js) | Supabase client |
-| [`js/game.js`](js/game.js) | Game loop, combat, camera, polling |
-| [`js/main.js`](js/main.js) | Auth, create flow |
-| [`supabase/schema.sql`](supabase/schema.sql) | Schema + RLS |
-
-### Known web issues
-
-- Fight may need Postgres RPC for cross-player HP updates (see multiplayer guide).
-- Poll-based sync (~1.5s), not Realtime.
+| [`_arc/js/api.js`](_arc/js/api.js) | Supabase client |
+| [`_arc/js/game.js`](_arc/js/game.js) | Game loop, combat, camera, polling |
+| [`_arc/js/main.js`](_arc/js/main.js) | Auth, create flow |
+| [`_arc/start-server.ps1`](_arc/start-server.ps1) | Old LAN dev server (port 3456) |
 
 ---
 
@@ -337,7 +348,7 @@ Or from the editor:
 
 ### Build stamp + PWA cache-busting
 
-- `GameConfig.BUILD_ID` (currently **`build 2026-07-01f`**) is shown bottom-right in the web shell and on the onboarding screen so users can confirm they loaded a fresh build. **Bump this string on every new build you ship** (and match the `#build-stamp` literal in `web/custom_shell.html`) whenever you re-export the web build.
+- `GameConfig.BUILD_ID` (currently **`build 2026-07-02a`**) is shown bottom-right in the web shell and on the onboarding screen so users can confirm they loaded a fresh build. **Bump this string on every new build you ship** (and match the `#build-stamp` literal in `creature-godot/web/custom_shell.html`) whenever you re-export the web build.
 - Godot's default service worker is cache-first and never `skipWaiting()`s, which caused the recurring "old cached build keeps loading" bug. `custom_shell.html` now runs `setupServiceWorkerAutoUpdate()`: on reload it calls `registration.update()`, and on `updatefound` posts `'update'` to the new worker → `controllerchange` triggers a one-time reload. It is skipped on the dev-server path (which already unregisters SWs).
 
 | Export setting | Value | Why |
@@ -456,19 +467,18 @@ Use `class_name Creature` and typed references. Generic `Node3D` + `grid_pos` ca
 
 ## Agent handoff checklist
 
-### Web multiplayer
+### Web multiplayer (legacy client — archived)
 
 1. Read [`docs/supabase-multiplayer-guide.md`](docs/supabase-multiplayer-guide.md)
 2. Confirm anonymous auth + schema applied
-3. Test two browser sessions (normal + incognito)
-4. Constants: `js/game.js`; API: `js/api.js`
+3. Constants: `_arc/js/game.js`; API: `_arc/js/api.js` (archived — active client is Godot)
 
 ### Godot
 
 1. Read [`creature-godot/docs/godot-porting-notes.md`](creature-godot/docs/godot-porting-notes.md) and [`docs/supabase-multiplayer-guide.md`](docs/supabase-multiplayer-guide.md) (Godot section)
 2. Confirm Supabase **anonymous auth ON** (saved) + [`schema.sql`](supabase/schema.sql) applied
 3. **F5 in editor** — move and relaunch to verify position; open second session to see remote worms
-4. **Web:** re-export after any `custom_shell.html` change; test on `https://<ip>:8443` with two devices
+4. **Web:** re-export after any `custom_shell.html` change (export lands at the **repo root**); test locally on `https://<ip>:8443` with two devices, or push `main` to redeploy GitHub Pages
 5. Supabase → `network_service.gd` (`fetch_all_creatures`, `start_creature_poll`); remotes → `world_map.sync_remote_creatures()`
 6. Worm → `creature.gd`; pathing → `grid_nav.gd`; boot → `main.gd` + `world_map.gd`
 7. If web says "Could not reach server": check COI export setting off, re-export, hard refresh
@@ -495,12 +505,14 @@ Use `class_name Creature` and typed references. Generic `Node3D` + `grid_pos` ca
 5. iOS browser fullscreen API does not work for canvas — use PWA Add to Home Screen
 6. DB `creatures.appearance` must be `cute` or `ugly` unless migration applied — Godot inserts `cute`
 7. Worm “snowman” bug if `body_root` rotated 90° on X — rotate segments individually
-8. Re-export resets `export_presets.cfg` COI/orientation — verify `ensure_cross_origin_isolation_headers=false` and `orientation=0` after export; also restore `project.godot` if a default line was dropped
-9. **Never name methods after engine virtuals** (`_enter_world`, `_exit_world`, `_ready`, `_process`, `_input`…) — the engine auto-invokes them; use names like `_begin_world` instead
-10. Don't grep `web/index.pck` to check build freshness — GDScript is compiled to `.gdc` bytecode; use `CACHE_VERSION` in `index.service.worker.js` + timestamps
-11. Bump `GameConfig.BUILD_ID` (and the `#build-stamp` string in `custom_shell.html`) on every shipped build
-12. Real editor is `C:\godot47\Godot_v4.7-stable_win64.exe`; the in-repo `Godot_v4.7/` is an unmaterialized Google Drive FS stub
-13. `_first.txt` and Postgres password — never commit
+8. Re-export resets `export_presets.cfg` COI/orientation/threads — verify `ensure_cross_origin_isolation_headers=false`, `orientation=0` **and `variant/thread_support=false`** after export; also restore `project.godot` if a default line was dropped
+9. **`variant/thread_support` must be `false` for GitHub Pages** — Pages can't send COOP/COEP headers; a threaded build works locally but fails live with "SharedArrayBuffer missing"
+10. **Never name methods after engine virtuals** (`_enter_world`, `_exit_world`, `_ready`, `_process`, `_input`…) — the engine auto-invokes them; use names like `_begin_world` instead
+11. Don't grep `index.pck` to check build freshness — GDScript is compiled to `.gdc` bytecode; use `CACHE_VERSION` in the repo-root `index.service.worker.js` + timestamps
+12. Bump `GameConfig.BUILD_ID` (and the `#build-stamp` string in `custom_shell.html`) on every shipped build
+13. Real editor is `C:\godot47\Godot_v4.7-stable_win64.exe`; the in-repo `Godot_v4.7/` is an unmaterialized Google Drive FS stub
+14. Git on Google Drive FS can throw phantom "File exists" errors on checkout/merge — retry, or move refs without touching the tree (`git branch -f main <sha>` + push)
+15. `_first.txt` and Postgres password — never commit
 
 ---
 

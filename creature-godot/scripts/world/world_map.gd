@@ -31,6 +31,10 @@ var _known_user_ids: Dictionary = {}
 var _local_authority: Dictionary = {} # object_id -> expiry msec
 var _tombstones: Dictionary = {}      # object_id -> expiry msec
 
+## Active smoke clouds (Slice 3): row id (or local key) -> {pos, until_msec, node}.
+## Everything inside a cloud's radius (remote players + loose money) is hidden.
+var _smoke_clouds: Dictionary = {}
+
 func note_local_authority(object_id: String, secs: float = 6.0) -> void:
 	if object_id.is_empty():
 		return
@@ -195,6 +199,8 @@ func _object_cfg(key: String) -> Dictionary:
 			# kind "prop", NOT "mata_bus": a PARKED bus is harmless (only a
 			# player-driven bus, resolved via remote creatures, can kill).
 			return {"kind": "prop", "form_key": FormDefs.MATA_BUS, "visual": "mata_bus", "radius": 0.75, "display_name": "MATA Bus"}
+		"smoker":
+			return {"kind": "prop", "form_key": FormDefs.BBQ_SMOKER, "visual": "smoker", "radius": 0.5, "display_name": "BBQ Smoker"}
 		"money_stack":
 			return {"kind": "prop", "form_key": "", "visual": "money_stack", "radius": 0.35, "display_name": "Money Stack", "tier": FormDefs.TIER_STACK}
 		"money_bag":
@@ -262,6 +268,19 @@ func sync_world_objects(rows: Array) -> void:
 			continue
 		var type_key := str(row.get("type", "trash"))
 		var tile := Vector2(float(row.get("x", 0.0)), float(row.get("y", 0.0)))
+		# Smoke clouds are transient FX rows, not props: register (using the row's
+		# age so late joiners see the remaining duration), and clean up stale rows
+		# whose deployer never got to delete them (death/disconnect).
+		if type_key == "smoke_cloud":
+			if _smoke_clouds.has(id):
+				continue
+			var remain := GameConfig.SMOKE_CLOUD_DURATION_SEC - _row_age_sec(row)
+			if remain <= 0.5:
+				note_deleted(id)
+				NetworkService.delete_world_object(id)
+			else:
+				register_smoke_cloud(id, GameConfig.tile_to_world(tile), remain)
+			continue
 		var state := str(row.get("state", "idle"))
 		var possessed_by := str(row.get("possessed_by", ""))
 		var possessed := state == "possessed" and not possessed_by.is_empty()
@@ -349,6 +368,94 @@ func sync_world_objects(rows: Array) -> void:
 		if is_instance_valid(gone):
 			gone.queue_free()
 		_shared_objects.erase(id)
+
+# ---------------------------------------------------------------------------
+# Smoke clouds (Slice 3): synced via temporary world_objects rows.
+# ---------------------------------------------------------------------------
+
+## Register a smoke cloud (local deploy or seen via poll) and build its visual.
+func register_smoke_cloud(id: String, world_pos: Vector3, duration: float) -> void:
+	var key := id if not id.is_empty() else "local_%d" % Time.get_ticks_msec()
+	if _smoke_clouds.has(key):
+		return
+	var node := _make_smoke_node(world_pos)
+	add_child(node)
+	_smoke_clouds[key] = {
+		"pos": world_pos,
+		"until": Time.get_ticks_msec() + int(duration * 1000.0),
+		"node": node,
+	}
+
+## A puffy cluster of soft gray blobs; scales in for a quick "FWOOSH" feel.
+func _make_smoke_node(world_pos: Vector3) -> Node3D:
+	var root := Node3D.new()
+	root.position = Vector3(world_pos.x, 0.0, world_pos.z)
+	var r := GameConfig.SMOKE_CLOUD_RADIUS_TILES * GameConfig.TILE_SIZE
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = Color(0.62, 0.62, 0.64, 0.55)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(world_pos)
+	for i in 9:
+		var blob := MeshInstance3D.new()
+		var mesh := SphereMesh.new()
+		var br := rng.randf_range(r * 0.35, r * 0.6)
+		mesh.radius = br
+		mesh.height = br * 1.6
+		blob.mesh = mesh
+		blob.material_override = mat
+		var a := rng.randf() * TAU
+		var d := rng.randf_range(0.0, r * 0.62)
+		blob.position = Vector3(cos(a) * d, rng.randf_range(0.3, 1.1), sin(a) * d)
+		root.add_child(blob)
+	root.scale = Vector3.ONE * 0.15
+	var tween := create_tween()
+	tween.tween_property(root, "scale", Vector3.ONE, 0.45).set_trans(Tween.TRANS_BACK)
+	return root
+
+func _in_smoke(world_pos: Vector3) -> bool:
+	var r := GameConfig.SMOKE_CLOUD_RADIUS_TILES * GameConfig.TILE_SIZE
+	var p := Vector2(world_pos.x, world_pos.z)
+	for key in _smoke_clouds:
+		var cp: Vector3 = _smoke_clouds[key]["pos"]
+		if p.distance_to(Vector2(cp.x, cp.z)) <= r:
+			return true
+	return false
+
+## Expire finished clouds and apply concealment: remote players and loose money
+## inside any cloud are invisible (the local player always sees themself).
+func _process(_delta: float) -> void:
+	if _smoke_clouds.is_empty():
+		return
+	var now := Time.get_ticks_msec()
+	for key in _smoke_clouds.keys():
+		if now > int(_smoke_clouds[key]["until"]):
+			var node: Node3D = _smoke_clouds[key]["node"]
+			if is_instance_valid(node):
+				var tween := create_tween()
+				tween.tween_property(node, "scale", Vector3.ONE * 0.05, 0.5)
+				tween.tween_callback(node.queue_free)
+			_smoke_clouds.erase(key)
+	var any_active := not _smoke_clouds.is_empty()
+	for uid in _remote_by_user:
+		var remote: Creature = _remote_by_user[uid]
+		if is_instance_valid(remote):
+			remote.visible = not (any_active and _in_smoke(remote.position))
+	for obj in GameState.world_objects:
+		if is_instance_valid(obj) and obj.is_money() and not obj.consumed:
+			obj.visible = not (any_active and _in_smoke(obj.position))
+	# All clouds just ended -> one final pass above already restored visibility.
+
+## Seconds since a row's updated_at stamp ("YYYY-MM-DDTHH:MM:SSZ", UTC).
+func _row_age_sec(row: Dictionary) -> float:
+	var stamp := str(row.get("updated_at", ""))
+	if stamp.length() < 19:
+		return 0.0
+	var then := Time.get_unix_time_from_datetime_string(stamp.substr(0, 19))
+	if then <= 0:
+		return 0.0
+	return maxf(0.0, Time.get_unix_time_from_system() - float(then))
 
 ## owner_name straight from a row can be JSON null; str(null) would give "<null>".
 func _row_owner_name(row: Dictionary) -> String:
@@ -451,6 +558,35 @@ func spawn_explosion(world_pos: Vector3, radius: float) -> void:
 	var player := GameState.player_creature
 	if player and is_instance_valid(player) and player.has_method("apply_explosion"):
 		player.apply_explosion(world_pos, radius)
+
+	# Blasts scatter nearby loose money — never destroy it (design rule). Only
+	# the client that spawned the explosion runs this, so there's no PATCH race.
+	_scatter_money(world_pos, maxf(radius * 1.6, 3.0))
+
+## Fling idle money objects near a blast to random open tiles a couple of tiles
+## away, and persist the new positions so every client agrees where it landed.
+func _scatter_money(world_pos: Vector3, scatter_radius: float) -> void:
+	var origin := Vector2(world_pos.x, world_pos.z)
+	for obj in GameState.world_objects:
+		if not is_instance_valid(obj) or obj.consumed or not obj.is_money():
+			continue
+		if origin.distance_to(Vector2(obj.position.x, obj.position.z)) > scatter_radius:
+			continue
+		var away := (Vector2(obj.position.x, obj.position.z) - origin).normalized()
+		if away.length_squared() < 0.01:
+			away = Vector2.RIGHT.rotated(randf() * TAU)
+		var dist := randf_range(1.5, 3.0)
+		var cur_tile := Vector2(GameConfig.world_to_tile(obj.position))
+		var new_tile := cur_tile + away * dist + Vector2(randf_range(-0.6, 0.6), randf_range(-0.6, 0.6))
+		new_tile.x = clampf(new_tile.x, 1.0, GameConfig.MAP_W - 2.0)
+		new_tile.y = clampf(new_tile.y, 1.0, GameConfig.MAP_H - 2.0)
+		var new_pos := GameConfig.tile_to_world(new_tile)
+		obj.respawn_at(new_pos)
+		obj.spawn_world_pos = new_pos
+		obj.spawn_tile = new_tile
+		if not obj.object_id.is_empty():
+			note_local_authority(obj.object_id)
+			NetworkService.drop_money_object(obj.object_id, new_tile.x, new_tile.y, obj.owner_name)
 
 ## A squished alien leaves a blood splat: one main puddle + a few random droplet
 ## blobs, all flat against the ground, fading away over several seconds.

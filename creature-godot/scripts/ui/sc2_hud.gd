@@ -100,7 +100,15 @@ func _on_interaction_changed(can_become: bool, form_display: String) -> void:
 func _on_form_changed(form_key: String) -> void:
 	var alien := FormDefs.is_alien(form_key)
 	pop_button.visible = not alien
-	special_button.visible = form_key == FormDefs.ALTIMA
+	match form_key:
+		FormDefs.ALTIMA:
+			special_button.visible = true
+			special_button.text = "Speed Burst"
+		FormDefs.BBQ_SMOKER:
+			special_button.visible = true
+			special_button.text = "Smoke Cloud"
+		_:
+			special_button.visible = false
 	if not alien:
 		become_button.visible = false
 

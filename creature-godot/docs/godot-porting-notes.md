@@ -43,33 +43,49 @@ Physical money + transport forms (Steps 3 & 4 of the PDF), built on the Slice 1 
 | `sc2_hud.gd` | **Pick Up** / **Drop** buttons (+ `consumes_pointer_at`) |
 | `config.gd` | money + bus seeds (`slice2_objects()`), Bus Stop region/rect, landfill claim zone |
 
-**Rules.** Alien carries one stack or one bag (slow); Shopping Cart several stacks or one bag (faster than alien, slower than Altima, can't kill); Altima several stacks or one bag; MATA Bus several bags **and** one vault (crushes alien/altima/cart, dies at buildings + propane). Combine two same-tier idle money → next tier (Stack+Stack=Bag, Bag+Bag=Vault), combiner becomes owner. Steal = carry a bag/vault you don't own into the Landfill claim zone and drop it. Death scatters carried money at the death tile.
+**Rules.** Alien carries one stack or one bag (slow); Shopping Cart several stacks or one bag (faster than alien, slower than Altima, can't kill); Altima several stacks or one bag; MATA Bus several bags **or** one vault (crushes alien/altima/cart **only while moving**, dies at buildings/trees + propane, shrugs off potholes). Combine two same-tier idle money → next tier (Stack+Stack=Bag, Bag+Bag=Vault), combiner becomes owner. Steal = carry a bag/vault you don't own into the Landfill claim zone and drop it. Death scatters carried money at the death tile (owner labels preserved) + a fading blood splat for squish deaths. Pop-out drops ALL carried loot at the vehicle; Become re-validates carry rules and drops overflow (`_revalidate_carried_for_form()`).
 
-**Client-local authority (deferred limitation):** combine, steal/claim and kills are all resolved on the acting client, so simultaneous actions on the same money can race. Also, popping out of a form does not re-enforce carry capacity on the (usually smaller) new form. Acceptable for the prototype.
+**Client-local authority (deferred limitation):** combine, steal/claim and kills are all resolved on the acting client, so simultaneous actions on the same money can race. Acceptable for the prototype.
 
-## Slice 2 — money system
+## Slice 3 — BBQ Smoker economy
 
-Money stacks → bags → vaults reuse `public.world_objects` with new `type` values (`money_stack`, `money_bag`, `vault`) plus optional `owner_name` ([`migration-money.sql`](../supabase/migration-money.sql)). Carried money uses `state = 'carried'` and `possessed_by = carrier user_id`.
+The money faucet (PDF Step 6) + explosion scatter (Step 5 gap). Design intent: earning is an **active, defendable choice** — the smoker only generates while player-possessed, parked, and near houses, so it creates a spot worth raiding, and a world-wide loose-stack cap (20) makes combining the pressure valve instead of inflation.
 
-| Component | Role |
-|-----------|------|
-| `scripts/forms/form_defs.gd` | `carry_check()`, tiers, Shopping Cart + MATA Bus forms |
-| `scripts/units/creature.gd` | Pick up / drop / combine / claim-on-drop / death-drop; `_carried_root` loot display |
-| `scripts/autoload/network_service.gd` | carry/drop/create/delete world objects; auto-seed money+bus on upgrade |
-| `scripts/world/world_map.gd` | `sync_world_objects()` hides carried props + remote loot display; `spawn_money_combine_fx()` |
-| `scripts/ui/sc2_hud.gd` | Pick Up / Drop action buttons |
+| Component | Slice 3 role |
+|-----------|--------------|
+| `form_defs.gd` | `BBQ_SMOKER` form (kind `"smoker"`: dies to moving bus/explosion, NOT Altima — theft > squish); carry 1 bag / 2 stacks |
+| `config.gd` | `SMOKER_GEN_*`, `MONEY_STACK_WORLD_CAP`, `SMOKE_CLOUD_*`, `BBQ_CORNER_RECT` + `BUS_STOP_RECT` regions, `is_near_building()` |
+| `creature.gd` | `_update_smoker_economy()` (parked money gen, cap + hint toasts), `_deploy_smoke_cloud()` special |
+| `world_map.gd` | `smoke_cloud` row interception in `sync_world_objects()` (never becomes a `WorldObject`; remaining life from `updated_at`; stale-row cleanup), `register_smoke_cloud()` + `_process()` concealment pass, `_scatter_money()` on explosions |
+| `object_mesh.gd` | `smoker` trailer mesh (barrel + chimney + wheels) |
+| `sc2_hud.gd` | per-form Special button text (Speed Burst / Smoke Cloud) |
 
-**Combine/steal authority is CLIENT-LOCAL** (like kills): each client resolves its own combine scans and claim-zone drops. Shared rows keep everyone aligned on where money is and who carries it.
+**Smoke cloud sync trick:** clouds are transient `world_objects` rows (`type='smoke_cloud'`) — zero schema changes. The deployer creates the row, registers the visual locally, and deletes the row after the duration; other clients register it from the poll with remaining life computed from `updated_at`, and ANY client deletes a stale cloud row whose deployer died/disconnected. Concealment (remote creatures + loose money invisible inside a cloud) is a per-frame visibility pass in `WorldMap._process()` — kill checks intentionally still work inside smoke (a bus lurking in smoke is funny and legal).
+
+### Sync-robustness layer (post-playtest — read before touching sync)
+
+The 1.5s poll + in-flight REST writes race each other; these mechanisms keep clients converged (all in `world_map.gd` unless noted):
+
+- **`_local_authority`** — ids the local player just changed (pickup/drop/pop-out/repair) skip server rows for ~6s while the PATCH lands. Registered from `creature.gd` via `_note_local_authority()`. Anti-flicker.
+- **`_tombstones`** — ids deleted locally (combines) are ignored ~15s so a stale poll can never resurrect them. Skipping this is how one combine used to produce two bags.
+- **Per-request web bridge** (`network_service.gd`) — browser fetches are keyed by request id (`_web_request_results`); a single shared pending flag used to cross responses between overlapping requests and silently drop PATCHes (stuck carried money, drifting placements).
+- **Self-repair** — a row claiming the local player carries something it doesn't gets PATCHed back to idle; a `possessed` row matching the player's current form on session restore is **re-adopted** (`Creature.adopt_possessed_object()`) instead of rendering a duplicate prop.
+- **Absent carriers** — money `carried` by a user with no live creature renders idle (not invisible).
+- **Remote vehicles** — interpolation speed and the teleport-snap threshold scale with form speed (`apply_remote_state` / `_process_remote`), so a 3x-speed Altima neither lags behind its server position nor "teleports" every poll; `_resolve_contacts()` only lets a **moving** vehicle kill.
+- **Seeding** — first-boot seed + Slice 2 top-up both re-check after a random delay so two clients booting together don't double-seed.
+- **Admin recovery (MOE)** — remove all money / spawn stacks / **reset ALL world objects** (full table wipe + re-seed) in the admin panel.
 
 ## File mapping
 
-| Web | Godot |
+The legacy web client now lives in `_arc/` (archived; repo root belongs to the Godot web export).
+
+| Web (archived) | Godot |
 |-----|-------|
-| [`js/game.js`](../js/game.js) | [`scripts/autoload/game_state.gd`](../scripts/autoload/game_state.gd), [`scripts/units/creature.gd`](../scripts/units/creature.gd) |
-| [`js/api.js`](../js/api.js) | [`scripts/autoload/network_service.gd`](../scripts/autoload/network_service.gd) |
-| [`js/eyes.js`](../js/eyes.js) | [`scripts/units/creature_eyes.gd`](../scripts/units/creature_eyes.gd) |
-| [`js/renderer.js`](../js/renderer.js) | [`scripts/units/creature.gd`](../scripts/units/creature.gd) (meshes/materials) |
-| [`js/main.js`](../js/main.js) | [`scripts/main.gd`](../scripts/main.gd), [`scripts/ui/creature_create.gd`](../scripts/ui/creature_create.gd) (active onboarding/spawn screen) |
+| [`_arc/js/game.js`](../../_arc/js/game.js) | [`scripts/autoload/game_state.gd`](../scripts/autoload/game_state.gd), [`scripts/units/creature.gd`](../scripts/units/creature.gd) |
+| [`_arc/js/api.js`](../../_arc/js/api.js) | [`scripts/autoload/network_service.gd`](../scripts/autoload/network_service.gd) |
+| [`_arc/js/eyes.js`](../../_arc/js/eyes.js) | [`scripts/units/creature_eyes.gd`](../scripts/units/creature_eyes.gd) |
+| [`_arc/js/renderer.js`](../../_arc/js/renderer.js) | [`scripts/units/creature.gd`](../scripts/units/creature.gd) (meshes/materials) |
+| [`_arc/js/main.js`](../../_arc/js/main.js) | [`scripts/main.gd`](../scripts/main.gd), [`scripts/ui/creature_create.gd`](../scripts/ui/creature_create.gd) (active onboarding/spawn screen) |
 | [`supabase/schema.sql`](../supabase/schema.sql) | Same tables; run [`migration-godot-session.sql`](../supabase/migration-godot-session.sql) for worm appearance |
 
 ## Constants
@@ -164,9 +180,11 @@ main.gd _ready()
 
 The export lands in the **repo root** (GitHub Pages serves from `main` root; the old web client was archived to `_arc/`). Push `main` to deploy.
 
-- **Export gotchas:** Godot may revert `export_presets.cfg` (`ensure_cross_origin_isolation_headers` back to true, `orientation` off 0) and re-serialize `project.godot` (dropping a default line). Verify/restore both to keep the git diff clean.
-- **Build freshness:** GDScript compiles to `.gdc` bytecode, so string literals are **not** plain-text searchable in `web/index.pck` — don't grep the `.pck` to check whether a build is fresh; use `CACHE_VERSION` in `web/index.service.worker.js` + file timestamps.
-- **PWA cache-busting:** `custom_shell.html`'s `setupServiceWorkerAutoUpdate()` force-activates a newer service worker on reload (Godot's default SW is cache-first / never `skipWaiting()`s). Bump `GameConfig.BUILD_ID` (currently `build 2026-07-01f`; + the `#build-stamp` string in `custom_shell.html`) each shipped build / re-export; it renders bottom-right in the shell and on the onboarding screen so users can confirm freshness.
+- **GitHub Pages deploy:** the export lands at the **repo root**; Pages serves `main`'s root. Deploy = export → commit changed root files → push `main` (rebuilds in ~1–2 min). **`variant/thread_support` must stay `false`** — Pages can't send COOP/COEP headers, so a threaded build fails in production with "SharedArrayBuffer missing" (local dev servers send the headers, masking it). Keep `.nojekyll` at the root.
+- **Export gotchas:** Godot may revert `export_presets.cfg` (`ensure_cross_origin_isolation_headers` back to true, `orientation` off 0, `thread_support` back to true) and re-serialize `project.godot` (dropping a default line). Verify/restore both to keep the git diff clean.
+- **Build freshness:** GDScript compiles to `.gdc` bytecode, so string literals are **not** plain-text searchable in `index.pck` — don't grep the `.pck` to check whether a build is fresh; use `CACHE_VERSION` in the repo-root `index.service.worker.js` + file timestamps.
+- **PWA cache-busting:** `custom_shell.html`'s `setupServiceWorkerAutoUpdate()` force-activates a newer service worker on reload (Godot's default SW is cache-first / never `skipWaiting()`s). Bump `GameConfig.BUILD_ID` (currently `build 2026-07-02a`; + the `#build-stamp` string in `custom_shell.html`) each shipped build / re-export; it renders bottom-right in the shell and on the onboarding screen so users can confirm freshness.
+- **Git on Google Drive:** `git checkout`/`merge` across many files can fail with phantom "File exists" errors (Drive FS lag). Workaround: update refs without touching the tree (`git branch -f main <sha>` + push), or retry `checkout -f` until clean.
 
 ## Known gaps vs web
 

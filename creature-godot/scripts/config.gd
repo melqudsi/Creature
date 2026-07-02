@@ -17,13 +17,31 @@ const DEFAULT_CREATURE_NAME := "Creature"
 
 ## Visible build stamp so a loaded build can be identified at a glance.
 ## Keep this in sync with the build-stamp string in web/custom_shell.html.
-const BUILD_ID := "build 2026-07-01k"
+const BUILD_ID := "build 2026-07-02a"
 
 ## Landfill Dump: the spawn/respawn zone (bottom-left corner). All new players
 ## and all respawns appear here. LANDFILL_RECT (tile x, y, w, h) is used for the
 ## ground tint marker.
 const LANDFILL_CENTER := Vector2(3, 21)
 const LANDFILL_RECT := Rect2i(0, 16, 9, 8)
+
+## Named map regions (Slice 3): BBQ Corner hosts the smoker spawn near the
+## houses; Bus Stop is where the MATA Bus parks.
+const BBQ_CORNER_RECT := Rect2i(11, 4, 7, 6)
+const BUS_STOP_RECT := Rect2i(26, 18, 6, 6)
+
+## BBQ Smoker economy (Slice 3). The smoker only generates money while a player
+## is possessing it AND it's parked near a house — an active, defendable choice,
+## not a passive faucet. The world stack cap keeps the map from flooding.
+const SMOKER_GEN_INTERVAL_SEC := 18.0
+const SMOKER_NEAR_HOUSE_TILES := 3.0
+const MONEY_STACK_WORLD_CAP := 20
+
+## Smoke cloud special (BBQ Smoker): synced to everyone as a temporary
+## world_objects row; hides remote players + loose money inside the radius.
+const SMOKE_CLOUD_DURATION_SEC := 10.0
+const SMOKE_CLOUD_COOLDOWN_SEC := 20.0
+const SMOKE_CLOUD_RADIUS_TILES := 3.0
 
 const TREE_POSITIONS: Array[Vector2i] = [
 	Vector2i(3, 3), Vector2i(7, 4), Vector2i(12, 2), Vector2i(18, 5),
@@ -83,6 +101,7 @@ static func interactive_objects() -> Array:
 		{"key": "cart", "tile": Vector2(2, 22)},
 		{"key": "cone", "tile": Vector2(4, 23)},
 		{"key": "bus", "tile": Vector2(29, 21)},
+		{"key": "smoker", "tile": Vector2(12, 6)},
 		# --- Road / open-world traps (solo-testable) ---
 		{"key": "pothole", "tile": Vector2(16, 12)},
 		{"key": "propane", "tile": Vector2(21, 11)},
@@ -142,9 +161,19 @@ static func is_in_landfill(tile: Vector2) -> bool:
 	return LANDFILL_RECT.has_point(Vector2i(int(floor(tile.x)), int(floor(tile.y))))
 
 ## Map a world/tile position to a human-readable region name for the HUD.
-## Extend this as more regions are added (Neighborhood Road, BBQ Corner, Bus
-## Stop...); for now it's just the landfill vs everything else ("Memphis").
 static func region_for_tile(tile: Vector2) -> String:
+	var ti := Vector2i(int(floor(tile.x)), int(floor(tile.y)))
 	if is_in_landfill(tile):
 		return "The Dump"
+	if BBQ_CORNER_RECT.has_point(ti):
+		return "BBQ Corner"
+	if BUS_STOP_RECT.has_point(ti):
+		return "Bus Stop"
 	return "Memphis"
+
+## True when a tile is within `max_tiles` of any house (smoker money generation).
+static func is_near_building(tile: Vector2, max_tiles: float) -> bool:
+	for b in BUILDING_POSITIONS:
+		if tile.distance_to(Vector2(b)) <= max_tiles:
+			return true
+	return false

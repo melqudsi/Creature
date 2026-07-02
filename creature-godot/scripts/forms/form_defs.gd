@@ -10,6 +10,7 @@ const POTHOLE := "pothole"
 const PROPANE := "propane_tank"
 const SHOPPING_CART := "shopping_cart"
 const MATA_BUS := "mata_bus"
+const BBQ_SMOKER := "bbq_smoker"
 
 const DEFAULT_FORM := ALIEN
 
@@ -26,6 +27,7 @@ const FORMS := {
 	PROPANE: {"display": "Propane Tank", "speed": 0.5, "radius": 0.45, "kind": "propane", "visual": "propane"},
 	SHOPPING_CART: {"display": "Shopping Cart", "speed": 1.4, "radius": 0.42, "kind": "cart", "visual": "cart"},
 	MATA_BUS: {"display": "MATA Bus", "speed": 0.85, "radius": 0.75, "kind": "mata_bus", "visual": "mata_bus"},
+	BBQ_SMOKER: {"display": "BBQ Smoker", "speed": 0.6, "radius": 0.5, "kind": "smoker", "visual": "smoker"},
 }
 
 const DEATH_ALTIMA := "You got Altima'd."
@@ -114,7 +116,7 @@ static func carry_check(form_key: String, carried_tiers: Array, new_tier: int) -
 			if count >= 1:
 				return fail.call("Alien can only carry one item")
 			return ok
-		if form_key == SHOPPING_CART or form_key == ALTIMA:
+		if form_key == SHOPPING_CART or form_key == ALTIMA or form_key == BBQ_SMOKER:
 			if count >= 1:
 				return fail.call("%s can carry one bag OR stacks, not both" % display(form_key))
 			return ok
@@ -141,6 +143,10 @@ static func carry_check(form_key: String, carried_tiers: Array, new_tier: int) -
 			ALTIMA:
 				if stack_count >= 3:
 					return fail.call("Altima is full")
+				return ok
+			BBQ_SMOKER:
+				if stack_count >= 2:
+					return fail.call("Smoker is full")
 				return ok
 			_:
 				return fail.call("%s can't carry stacks" % display(form_key))
@@ -203,8 +209,15 @@ static func resolve_player_death(my_key: String, other_kind: String) -> Dictiona
 					out.die = true
 					out.explode = true
 					out.reason = DEATH_PROPANE
+		"smoker":
+			# Per the design PDF, an Altima can't kill the smoker (it's vulnerable
+			# to THEFT, not squishing) — only a moving bus or an explosion can.
+			match other_kind:
+				"mata_bus":
+					out.die = true
+					out.reason = DEATH_BUS
 	return out
 
 static func explosion_kills(key: String) -> bool:
 	var k := kind(key)
-	return k == "alien" or k == "vehicle" or k == "cart" or k == "mata_bus"
+	return k == "alien" or k == "vehicle" or k == "cart" or k == "mata_bus" or k == "smoker"

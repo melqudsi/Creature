@@ -25,6 +25,8 @@ static func build(visual: String, tint: Color = Color(0.6, 0.6, 0.6)) -> Node3D:
 			return _build_cart()
 		"mata_bus":
 			return _build_mata_bus()
+		"smoker":
+			return _build_smoker()
 		"money_stack":
 			return _build_money_stack()
 		"money_bag":
@@ -188,6 +190,51 @@ static func _build_mata_bus() -> Node3D:
 			var w := _mesh_node(wheel, wheel_mat, Vector3(wx, 0.17, wz))
 			w.rotation_degrees = Vector3(0, 0, 90)
 			root.add_child(w)
+	return root
+
+## BBQ smoker trailer: big black barrel on a trailer frame, offset firebox,
+## a tall chimney, and two wheels — reads as "Memphis BBQ rig" at a glance.
+static func _build_smoker() -> Node3D:
+	var root := Node3D.new()
+	var steel := _mat(Color(0.08, 0.08, 0.09), 0.55, 0.35)
+	# Trailer frame + hitch bar.
+	var frame := BoxMesh.new()
+	frame.size = Vector3(0.5, 0.06, 0.85)
+	root.add_child(_mesh_node(frame, _mat(Color(0.2, 0.2, 0.22), 0.8, 0.2), Vector3(0, 0.22, 0.05)))
+	var hitch := BoxMesh.new()
+	hitch.size = Vector3(0.08, 0.06, 0.35)
+	root.add_child(_mesh_node(hitch, _mat(Color(0.25, 0.25, 0.27), 0.8, 0.2), Vector3(0, 0.22, -0.5)))
+	# Main barrel (horizontal along the trailer).
+	var barrel := CylinderMesh.new()
+	barrel.top_radius = 0.24
+	barrel.bottom_radius = 0.24
+	barrel.height = 0.7
+	var b := _mesh_node(barrel, steel, Vector3(0, 0.48, 0.08))
+	b.rotation_degrees = Vector3(90, 0, 0)
+	root.add_child(b)
+	# Offset firebox at the back.
+	var firebox := BoxMesh.new()
+	firebox.size = Vector3(0.3, 0.3, 0.28)
+	root.add_child(_mesh_node(firebox, steel, Vector3(0, 0.36, 0.52)))
+	# Chimney with a red-hot lid handle accent.
+	var chimney := CylinderMesh.new()
+	chimney.top_radius = 0.05
+	chimney.bottom_radius = 0.05
+	chimney.height = 0.45
+	root.add_child(_mesh_node(chimney, steel, Vector3(0, 0.85, 0.45)))
+	var handle := BoxMesh.new()
+	handle.size = Vector3(0.4, 0.04, 0.06)
+	root.add_child(_mesh_node(handle, _mat(Color(0.65, 0.15, 0.1), 0.6), Vector3(0, 0.74, 0.08)))
+	# Wheels.
+	var wheel_mat := _mat(Color(0.05, 0.05, 0.06), 0.9)
+	for wx in [-0.28, 0.28]:
+		var wheel := CylinderMesh.new()
+		wheel.top_radius = 0.14
+		wheel.bottom_radius = 0.14
+		wheel.height = 0.09
+		var w := _mesh_node(wheel, wheel_mat, Vector3(wx, 0.14, 0.15))
+		w.rotation_degrees = Vector3(0, 0, 90)
+		root.add_child(w)
 	return root
 
 static func _build_money_stack() -> Node3D:

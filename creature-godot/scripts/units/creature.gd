@@ -61,6 +61,10 @@ var _last_prompt_name := ""
 # Altima speed-burst special.
 var _burst_t := 0.0
 var _burst_cd := 0.0
+# BBQ Smoker (Slice 3): smoke-cloud cooldown + parked money-generation timer.
+var _smoke_cd := 0.0
+var _smoker_gen_t := 0.0
+var _smoker_hint_shown := false
 
 ## Slice 2 money carrying (player-driven). Each entry is
 ## {"obj": WorldObject, "id": String, "tier": int}. Carried money is hidden as a
@@ -381,6 +385,8 @@ func _process(delta: float) -> void:
 		_burst_t = maxf(0.0, _burst_t - delta)
 	if _burst_cd > 0.0:
 		_burst_cd = maxf(0.0, _burst_cd - delta)
+	if _smoke_cd > 0.0:
+		_smoke_cd = maxf(0.0, _smoke_cd - delta)
 
 	if is_moving:
 		_advance_along_path(delta)
@@ -619,6 +625,7 @@ func _update_player_interactions(delta: float) -> void:
 	_scan_shapeshift_target()
 	_update_shapeshift_progress(delta)
 	_resolve_contacts()
+	_update_smoker_economy(delta)
 
 func _scan_shapeshift_target() -> void:
 	_nearby_object = null
@@ -720,7 +727,7 @@ func pop_out() -> void:
 	apply_form(FormDefs.ALIEN)
 	GameState.show_toast("Popped out to alien")
 
-## Optional Altima special: a short speed burst on a cooldown.
+## Form specials: Altima speed burst; BBQ Smoker smoke cloud.
 func use_special() -> void:
 	if not is_player or is_dead:
 		return
@@ -728,6 +735,87 @@ func use_special() -> void:
 		_burst_t = ALTIMA_BURST_TIME
 		_burst_cd = ALTIMA_BURST_COOLDOWN
 		GameState.show_toast("Speed burst!")
+	elif form_key == FormDefs.BBQ_SMOKER:
+		if _smoke_cd > 0.0:
+			GameState.show_toast("Smoker recharging (%ds)" % int(ceil(_smoke_cd)))
+		else:
+			_deploy_smoke_cloud()
+
+# ---------------------------------------------------------------------------
+# BBQ Smoker (Slice 3): smoke cover + parked money generation.
+# ---------------------------------------------------------------------------
+
+## Drop a synced smoke cloud at our tile. Everyone sees it via a temporary
+## world_objects row; we delete the row when the cloud ends (stale rows from a
+## deployer who vanished get cleaned up by any client on poll).
+func _deploy_smoke_cloud() -> void:
+	_smoke_cd = GameConfig.SMOKE_CLOUD_COOLDOWN_SEC
+	var tile := grid_pos
+	var wpos := GameConfig.tile_to_world(tile)
+	GameState.show_toast("Smoke cloud!")
+	var wm := GameState.world_map
+	var id := ""
+	if NetworkService.is_online():
+		var created: Dictionary = await NetworkService.create_world_object(
+			{"type": "smoke_cloud", "x": tile.x, "y": tile.y, "state": "idle"})
+		id = str(created.get("id", ""))
+	if wm and is_instance_valid(wm) and wm.has_method("register_smoke_cloud"):
+		wm.register_smoke_cloud(id, wpos, GameConfig.SMOKE_CLOUD_DURATION_SEC)
+	if not id.is_empty():
+		await get_tree().create_timer(GameConfig.SMOKE_CLOUD_DURATION_SEC).timeout
+		_note_deleted(id)
+		NetworkService.delete_world_object(id)
+
+## The smoker only earns while PARKED NEAR HOUSES — an active, defendable spot
+## (BBQ Corner is built for it), not a passive money faucet. A world-wide cap on
+## loose stacks keeps the map from flooding.
+func _update_smoker_economy(delta: float) -> void:
+	if form_key != FormDefs.BBQ_SMOKER:
+		_smoker_gen_t = 0.0
+		_smoker_hint_shown = false
+		return
+	if is_moving or is_asleep:
+		_smoker_gen_t = 0.0
+		return
+	if not GameConfig.is_near_building(grid_pos, GameConfig.SMOKER_NEAR_HOUSE_TILES):
+		_smoker_gen_t = 0.0
+		if not _smoker_hint_shown:
+			_smoker_hint_shown = true
+			GameState.show_toast("Park near houses to sell BBQ")
+		return
+	_smoker_gen_t += delta
+	if _smoker_gen_t < GameConfig.SMOKER_GEN_INTERVAL_SEC:
+		return
+	_smoker_gen_t = 0.0
+	if _count_world_stacks() >= GameConfig.MONEY_STACK_WORLD_CAP:
+		GameState.show_toast("Market's flooded — combine some money first")
+		return
+	_generate_money_stack()
+
+## Every money-stack object in the local world (idle AND carried both count
+## toward the economy cap).
+func _count_world_stacks() -> int:
+	var n := 0
+	for obj in GameState.world_objects:
+		if is_instance_valid(obj) and obj.tier == FormDefs.TIER_STACK:
+			n += 1
+	return n
+
+## Spawn a fresh stack on a tile right beside the smoker (synced when online).
+func _generate_money_stack() -> void:
+	var offs: Array[Vector2] = [Vector2(1, 0), Vector2(-1, 0), Vector2(0, 1), Vector2(0, -1), Vector2(1, 1), Vector2(-1, 1)]
+	var tile: Vector2 = grid_pos + offs[randi() % offs.size()]
+	tile.x = clampf(tile.x, 1.0, GameConfig.MAP_W - 2.0)
+	tile.y = clampf(tile.y, 1.0, GameConfig.MAP_H - 2.0)
+	GameState.show_toast("BBQ sold — fresh money stack!")
+	var new_id := ""
+	if NetworkService.is_online():
+		var created := await NetworkService.create_world_object(
+			{"type": "money_stack", "x": tile.x, "y": tile.y, "state": "idle"})
+		new_id = str(created.get("id", ""))
+	var wm := GameState.world_map
+	if wm and is_instance_valid(wm) and wm.has_method("spawn_money_object"):
+		wm.spawn_money_object("money_stack", GameConfig.tile_to_world(tile), "", new_id)
 
 # ---------------------------------------------------------------------------
 # Money: pick up / carry / drop / combine / ownership (Slice 2, player-local).

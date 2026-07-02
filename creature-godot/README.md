@@ -8,20 +8,6 @@ Local-first 3D port pivoting from the web Creature game. Isometric RTS camera wi
 
 Forms/shapeshifting, landfill spawn, kill matrix, death/respawn, and shared world-object state are implemented. See the root [`README.md`](../README.md#slice-1--shapeshifting-prototype) for the feature overview and Supabase migrations.
 
-## Slice 2 — money system (current)
-
-Money stacks/bags/vaults, pick-up/drop/combine, ownership labels, claim-zone stealing, death drops, and Shopping Cart + MATA Bus forms. See root [`README.md`](../README.md#slice-2--money-system-current). Run [`supabase/migration-money.sql`](../supabase/migration-money.sql) for persistent owner labels (client degrades without it).
-
-Key Slice 2 files:
-
-| File | Role |
-|------|------|
-| [`scripts/forms/form_defs.gd`](scripts/forms/form_defs.gd) | `carry_check()`, money tiers, cart/bus forms |
-| [`scripts/units/creature.gd`](scripts/units/creature.gd) | Pick up / drop / combine / claim / death-drop |
-| [`scripts/autoload/network_service.gd`](scripts/autoload/network_service.gd) | `carry_world_object`, `drop_money_object`, `create_world_object`, Slice 2 seed |
-| [`scripts/world/world_map.gd`](scripts/world/world_map.gd) | Money object configs, carried sync, combine FX |
-| [`scripts/ui/sc2_hud.gd`](scripts/ui/sc2_hud.gd) | Pick Up / Drop buttons |
-
 Key Slice 1 files:
 
 | File | Role |
@@ -42,16 +28,35 @@ Key Slice 1 files:
 
 **Current scope:** redesigned onboarding spawn screen (uppercase name + color palette, no 3D preview), default worm with **idle rest animations** (local "breathing" vs remote "sway"), fluid movement, A* pathfinding, **Supabase session save**, **live field** (other players via 1.5s REST poll, each with a stable randomized facing). Camera starts fully zoomed in. Name-only HUD + admin panel (visible only to player `MOE`) with readable logs and clear-session/reload. Player names are forced UPPERCASE (dedupes case-variant profiles). PWA supports portrait and landscape. No health/stamina, fight, eat, or appearance customization.
 
-## Slice 2 — Money system (current)
+## Slice 2 — Money system (current, playtested)
 
-Physical **money** (Money Stack / Money Bag / Vault) + two **transport forms** (Shopping Cart, MATA Bus), built on top of the Slice 1 world-object sync. See the root [`README.md`](../README.md#slice-2--money-system-steps-3--4-of-the-pdf) for the full feature list and the single **`migration-money.sql`** to run.
+Physical **money** (Money Stack / Money Bag / Vault) + two **transport forms** (Shopping Cart, MATA Bus), built on top of the Slice 1 world-object sync. See the root [`README.md`](../README.md#slice-2--money-system-current-playtested) for the full feature list and the single **`migration-money.sql`** to run.
 
 - **Money objects reuse `world_objects`** — new `type` values `money_stack`/`money_bag`/`vault` (`_object_cfg()` in `world_map.gd`, meshes in `object_mesh.gd`). Carried money = `state='carried'` + `possessed_by=<carrier uid>`; the optional `owner_name` column stores bag/vault owner labels.
-- **Carrying** — `creature.gd` holds `_carried` (player-driven); `carried_object_ids()` is the local authority the sync uses so carried props don't flicker. Capacity/eligibility + the "no mixing stacks with bags" and vault-only-bus rules live in `FormDefs.carry_check()`; carrying applies a weight-based speed penalty (`_carry_speed_factor()`).
-- **Combine / steal / drop-on-death** — combining two same-tier idle money merges them one tier up (client-local, `_run_combines()` / `_combine_pair()`), stamping the combiner as owner + a `money_combined` FX. Dropping a bag/vault you don't own inside the landfill claim zone steals it. `apply_death()` scatters carried money at the death tile.
-- **New kill matrix** — `FormDefs.resolve_player_death()` adds `bus` (crushes alien/altima/cart, dies at buildings + propane) and `cart` (squished by altima/bus) kinds; `explosion_kills()` now includes cart + bus; `ignores_units()` makes both the Altima and the bus reckless in pathfinding.
-- **HUD** — `sc2_hud.gd` adds **Pick Up** (shown when eligible money is in reach) and **Drop** (shown while carrying) buttons; both are added to `consumes_pointer_at()` so they don't leak taps to the map.
-- **Graceful degradation** — money works without `migration-money.sql` (only persistent owner labels need it); `NetworkService` detects the `owner_name` column from any fetched row and top-up-seeds the Slice 2 money/bus objects once for pre-Slice-2 worlds.
+- **Carrying** — `creature.gd` holds `_carried` (player-driven); `carried_object_ids()` is the local authority the sync uses so carried props don't flicker. Capacity/eligibility + the "no mixing stacks with bags" and vault-only-bus rules live in `FormDefs.carry_check()`; carrying applies a weight-based speed penalty (`_carry_speed_factor()`, with `_prune_carried()` guarding against phantom weight from freed objects).
+- **Combine / steal / drop-on-death** — combining two same-tier idle money merges them one tier up (client-local, `_run_combines()` / `_combine_pair()`), stamping the combiner as owner + a `money_combined` FX. Dropping a bag/vault you don't own inside the landfill claim zone steals it. `apply_death()` scatters carried money at the death tile (owner labels preserved) and leaves a fading blood splat for squish deaths.
+- **Form-change carry rules** — popping out drops ALL carried loot at the vehicle (`pop_out()` → `_drop_carried_entries()`); becoming a form re-validates and drops what the new form can't hold (`_revalidate_carried_for_form()`).
+- **New kill matrix** — `FormDefs.resolve_player_death()` adds `bus`/`cart` kinds with **killer-specific death lines** (`DEATH_BUS` "MATA said move." vs `DEATH_HOUSE` etc.). A stopped vehicle (prop or player) never kills — `_resolve_contacts()` requires the remote vehicle to be moving; parked Altima/bus props use kind `"prop"`. `ignores_units()` keeps vehicles reckless in pathfinding.
+- **HUD** — `sc2_hud.gd` adds **Pick Up** / **Drop** buttons (in `consumes_pointer_at()` so taps don't leak to the map).
+- **Admin tools (MOE)** — remove all money / spawn 5 stacks / **reset ALL world objects** (wipe + re-seed the shared table; the recovery button for stuck or duplicated objects).
+- **Graceful degradation** — money works without `migration-money.sql` (only persistent owner labels need it); `NetworkService` detects the `owner_name` column from any fetched row and top-up-seeds the Slice 2 money/bus objects once for pre-Slice-2 worlds (with a random-delay re-check so two booting clients don't double-seed).
+
+## Slice 3 — BBQ Smoker economy (current)
+
+Money generation + smoke cover (PDF Step 6) and explosion money scatter (Step 5 gap). See the root [`README.md`](../README.md#slice-3--bbq-smoker-economy-current) for the design rationale.
+
+- **Form** — `FormDefs.BBQ_SMOKER` (kind `"smoker"`, 0.6x speed): killed by moving bus + explosions only (NOT by Altima). Carries 1 bag or 2 stacks. Prop key `"smoker"`, seeded at BBQ Corner tile (12,6).
+- **Money gen** — `Creature._update_smoker_economy()` (called from `_update_player_interactions`, so local player only): while parked (`not is_moving`) near a house (`GameConfig.is_near_building`), every `SMOKER_GEN_INTERVAL_SEC` it creates a synced `money_stack` on an adjacent tile — unless `_count_world_stacks() >= MONEY_STACK_WORLD_CAP`. Sleeping (AFK) stops the loop.
+- **Smoke cloud** — `Creature._deploy_smoke_cloud()` creates a temporary `smoke_cloud` row (reuses `world_objects`, no migration), registers the local visual immediately after, and deletes the row after `SMOKE_CLOUD_DURATION_SEC`. `WorldMap` intercepts `smoke_cloud` rows in `sync_world_objects()` (they never become `WorldObject`s), computes remaining life from the row's `updated_at` for late joiners, and deletes stale rows from vanished deployers. `WorldMap._process()` hides remote creatures + loose money inside any active cloud.
+- **Explosion scatter** — `WorldMap._scatter_money()` runs on the client that spawned the explosion (no PATCH race): idle money within ~1.6x blast radius is flung 1.5–3 tiles away and PATCHed (`drop_money_object` + local-authority grace).
+- **HUD** — the Special button is now per-form: "Speed Burst" (Altima) / "Smoke Cloud" (smoker).
+
+**Sync-robustness layer (added after playtest — read before touching sync):**
+
+- `world_map.gd` keeps `_local_authority` (ids we just changed → stale server rows ignored ~6s) and `_tombstones` (ids we deleted → never resurrected by an in-flight poll, ~15s). Creature code registers these via `_note_local_authority()` / `_note_deleted()` on every pickup/drop/combine.
+- `network_service.gd` web-bridge requests are **keyed by request id** — never revert to a single shared pending flag; overlapping fetches used to cross responses and silently drop PATCHes.
+- `sync_world_objects()` **self-repairs** rows that claim the local player carries/possesses something it doesn't (PATCHes them idle), and **re-adopts** a possessed object on session restore (`Creature.adopt_possessed_object()`) so reloading while shapeshifted doesn't duplicate the prop.
+- Money carried by an absent (disconnected) player renders idle instead of staying invisible.
 
 ## Requirements
 
@@ -132,7 +137,9 @@ Boot is silent on success (no save/restore toasts). Offline boot toasts **"Could
 
 | Setting | Value |
 |---------|-------|
+| Export path | `../index.html` (**repo root** → GitHub Pages) |
 | COI headers | **Off** (`ensure_cross_origin_isolation_headers=false`) |
+| Thread support | **Off** (`variant/thread_support=false`) — required for GitHub Pages (no COOP/COEP headers) |
 | PWA orientation | **Any** (`orientation=0`) |
 
 Godot re-export may flip these — verify after each export.
@@ -241,16 +248,17 @@ Or from the editor:
 
 1. **Project → Export… → Web** → `../index.html` (repo root; preset default)
 2. Edit `custom_shell.html` only — re-export to apply
-3. Verify `export_presets.cfg`: COI off (`ensure_cross_origin_isolation_headers=false`), orientation any (`orientation=0`) — Godot can revert these; also restore `project.godot` if a default line was dropped on export
+3. Verify `export_presets.cfg`: COI off (`ensure_cross_origin_isolation_headers=false`), orientation any (`orientation=0`), threads off (`variant/thread_support=false`) — Godot can revert these; also restore `project.godot` if a default line was dropped on export
 4. Serve: `python serve-web-https.py` → `https://<wifi-ip>:8443`
 
 Dev mode on `:8443` / `:8080` clears service worker cache (no incognito needed).
 
 **Build freshness / cache-busting:**
 
-- Bump `GameConfig.BUILD_ID` (currently `build 2026-07-01f`) and the matching `#build-stamp` string in `custom_shell.html` on each shipped build (every time you re-export the web build). It renders bottom-right in the shell and on the onboarding screen so users can confirm a fresh load.
+- Bump `GameConfig.BUILD_ID` (currently `build 2026-07-02a`) and the matching `#build-stamp` string in `custom_shell.html` on each shipped build (every time you re-export the web build). It renders bottom-right in the shell and on the onboarding screen so users can confirm a fresh load.
 - `custom_shell.html` runs `setupServiceWorkerAutoUpdate()` to force-activate a newer service worker on reload (Godot's default SW is cache-first and never `skipWaiting()`s). Skipped on the dev-server path.
-- **Do not grep `web/index.pck`** to judge freshness — GDScript compiles to `.gdc` bytecode, so string literals aren't plain-text there. Check `CACHE_VERSION` in `web/index.service.worker.js` and file timestamps instead.
+- **Do not grep `index.pck`** to judge freshness — GDScript compiles to `.gdc` bytecode, so string literals aren't plain-text there. Check `CACHE_VERSION` in the repo-root `index.service.worker.js` and file timestamps instead.
+- **GitHub Pages requires `variant/thread_support=false`** in `export_presets.cfg` — Pages can't send COOP/COEP headers, so a threaded build errors with "SharedArrayBuffer missing" in production (local dev servers send the headers, hiding the bug). Deploy = export → commit root export files → push `main`.
 
 ## Agent handoff — next tasks
 

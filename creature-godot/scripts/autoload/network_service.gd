@@ -167,22 +167,13 @@ func _build_world_object_seed() -> Array:
 		out.append({"type": str(entry["key"]), "x": tile.x, "y": tile.y, "state": "idle"})
 	return out
 
-## If a pre-Slice-2 world already has interactive objects but no money/bus yet,
-## append the Slice 2 starter rows once (no wipe needed).
+## Top-up seed for worlds created before the current slice: if money/bus
+## (Slice 2) or the BBQ smoker (Slice 3) are missing, append them once (no wipe).
 func _maybe_seed_slice2_objects(rows: Array) -> void:
 	if _slice2_seed_attempted or not _world_objects_available:
 		return
-	var has_money := false
-	var has_bus := false
-	for row in rows:
-		if typeof(row) != TYPE_DICTIONARY:
-			continue
-		var t := str(row.get("type", ""))
-		if t == "money_stack" or t == "money_bag" or t == "vault":
-			has_money = true
-		if t == "bus":
-			has_bus = true
-	if has_money and has_bus:
+	var found := _note_seed_types(rows, {"money": false, "bus": false, "smoker": false})
+	if found.money and found.bus and found.smoker:
 		_slice2_seed_attempted = true
 		return
 	_slice2_seed_attempted = true
@@ -192,19 +183,14 @@ func _maybe_seed_slice2_objects(rows: Array) -> void:
 	var recheck := await fetch_world_objects()
 	if not recheck.get("ok", false):
 		return
-	for row in recheck.get("rows", []):
-		if typeof(row) != TYPE_DICTIONARY:
-			continue
-		var t2 := str(row.get("type", ""))
-		if t2 == "money_stack" or t2 == "money_bag" or t2 == "vault":
-			has_money = true
-		if t2 == "bus":
-			has_bus = true
+	found = _note_seed_types(recheck.get("rows", []), found)
 	var to_add: Array = []
-	if not has_money:
+	if not found.money:
 		to_add.append_array(GameConfig.money_seed_objects())
-	if not has_bus:
+	if not found.bus:
 		to_add.append({"key": "bus", "tile": Vector2(29, 21)})
+	if not found.smoker:
+		to_add.append({"key": "smoker", "tile": Vector2(12, 6)})
 	if to_add.is_empty():
 		return
 	var payload: Array = []
@@ -213,7 +199,20 @@ func _maybe_seed_slice2_objects(rows: Array) -> void:
 		payload.append({"type": str(entry["key"]), "x": tile.x, "y": tile.y, "state": "idle"})
 	var created := await seed_world_objects(payload)
 	if not created.is_empty():
-		_log("Seeded %d Slice 2 world objects (money/bus)" % created.size())
+		_log("Top-up seeded %d world objects (money/bus/smoker)" % created.size())
+
+func _note_seed_types(rows: Array, found: Dictionary) -> Dictionary:
+	for row in rows:
+		if typeof(row) != TYPE_DICTIONARY:
+			continue
+		var t := str(row.get("type", ""))
+		if t == "money_stack" or t == "money_bag" or t == "vault":
+			found.money = true
+		elif t == "bus":
+			found.bus = true
+		elif t == "smoker":
+			found.smoker = true
+	return found
 
 func _note_world_row_columns(row: Dictionary) -> void:
 	if not _owner_name_column_available and row.has("owner_name"):
