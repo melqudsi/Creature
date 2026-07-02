@@ -17,7 +17,7 @@ const DEFAULT_CREATURE_NAME := "Creature"
 
 ## Visible build stamp so a loaded build can be identified at a glance.
 ## Keep this in sync with the build-stamp string in web/custom_shell.html.
-const BUILD_ID := "build 2026-07-02d"
+const BUILD_ID := "build 2026-07-02e"
 
 ## Landfill Dump: the spawn/respawn zone (bottom-left corner). All new players
 ## and all respawns appear here. LANDFILL_RECT (tile x, y, w, h) is used for the

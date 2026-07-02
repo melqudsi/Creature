@@ -272,12 +272,35 @@ window.CreatureNet = (function () {
 		</div>
 
 		<!-- Build stamp: keep the string in sync with GameConfig.BUILD_ID. -->
-		<div id="build-stamp">build 2026-07-02d</div>
+		<div id="build-stamp">build 2026-07-02e</div>
 
 		<script src="$GODOT_URL"></script>
 		<script>
 const GODOT_CONFIG = $GODOT_CONFIG;
 const GODOT_THREADS_ENABLED = $GODOT_THREADS_ENABLED;
+
+// iOS installed-PWA (standalone) launches can report a STALE window.innerWidth /
+// innerHeight until the phone is physically rotated. Godot's adaptive canvas and
+// its touch-coordinate scaling both read those values, so taps land offset (tap
+// bottom -> ring mid-screen) until a rotate + rotate-back. The layout viewport
+// (documentElement.clientWidth/Height) stays correct, so in standalone mode remap
+// inner* to it before the engine boots. Must run before engine.startGame().
+(function fixStandaloneViewport() {
+	const standalone = window.navigator.standalone === true
+		|| (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+	if (!standalone) return;
+	try {
+		const de = document.documentElement;
+		Object.defineProperty(window, 'innerWidth', {
+			get: () => de.clientWidth || window.outerWidth,
+			configurable: true,
+		});
+		Object.defineProperty(window, 'innerHeight', {
+			get: () => de.clientHeight || window.outerHeight,
+			configurable: true,
+		});
+	} catch (_e) { /* engine falls back to native innerWidth/innerHeight */ }
+})();
 
 function isDevServer() {
 	const params = new URLSearchParams(location.search);
@@ -409,22 +432,60 @@ async function prepareCachesForDev() {
 // scroll position and synthesize resize events so Godot's adaptive canvas
 // picks up the real dimensions without needing a rotation.
 function setupViewportResizeKicks() {
+	const canvas = document.getElementById('canvas');
+
+	function keyboardOpen() {
+		const el = document.activeElement;
+		return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA');
+	}
+
+	// True when the canvas no longer covers the visual viewport (stale size or
+	// a phantom scroll offset). Skipped while the on-screen keyboard is up —
+	// the shrunken visual viewport is expected then, not a layout bug.
+	function geometryMismatch() {
+		try {
+			if (!canvas || keyboardOpen()) return false;
+			const vv = window.visualViewport;
+			const vw = vv ? vv.width : window.innerWidth;
+			const vh = vv ? vv.height : window.innerHeight;
+			const offY = vv ? Math.abs(vv.offsetTop || 0) + Math.abs(vv.pageTop || 0) : 0;
+			const rect = canvas.getBoundingClientRect();
+			return offY > 1
+				|| Math.abs(rect.top) > 1 || Math.abs(rect.left) > 1
+				|| Math.abs(rect.width - vw) > 2 || Math.abs(rect.height - vh) > 2;
+		} catch (_e) {
+			return false;
+		}
+	}
+
 	function kick() {
 		try {
 			window.scrollTo(0, 0);
 			window.dispatchEvent(new Event('resize'));
 		} catch (_e) {}
 	}
+
+	function kickIfBroken() {
+		if (geometryMismatch()) kick();
+	}
+
 	// Staggered kicks after engine start: the iOS viewport can settle late.
 	[150, 400, 900, 1800].forEach((t) => setTimeout(kick, t));
 	window.addEventListener('orientationchange', () => {
 		setTimeout(kick, 100);
 		setTimeout(kick, 400);
 	});
+	// CONDITIONAL only: unconditionally kicking on every visualViewport resize
+	// fed back into itself (kick -> engine canvas resize -> visualViewport
+	// resize -> kick ...) and made the screen bounce/shake rapidly after a
+	// landscape -> portrait rotation in installed-PWA mode.
 	if (window.visualViewport) {
-		window.visualViewport.addEventListener('resize', () => setTimeout(kick, 0));
+		window.visualViewport.addEventListener('resize', () => setTimeout(kickIfBroken, 50));
 	}
 	window.addEventListener('pageshow', () => setTimeout(kick, 100));
+	// Slow watchdog: self-heal whenever iOS finally reports real geometry
+	// (fixes launch-time tap offset without requiring a rotate + rotate-back).
+	setInterval(kickIfBroken, 1000);
 }
 
 // Durable cache-busting: when a newer build's service worker installs, tell it to

@@ -25,10 +25,16 @@ var _last_tap_pos := Vector2.ZERO
 
 var _world_map: Node
 
+## Mouse-edge panning is a desktop affordance. On touch devices the emulated
+## mouse cursor parks wherever the last tap landed, which after a rotation can
+## sit inside the edge margin and shove the camera every frame (screen shake).
+var _edge_pan_enabled := true
+
 func _ready() -> void:
 	projection = PROJECTION_PERSPECTIVE
 	fov = 42.0
 	_desired_distance = zoom_min
+	_edge_pan_enabled = not DisplayServer.is_touchscreen_available()
 	_update_position(true)
 
 func bind_world_map(world_map: Node) -> void:
@@ -151,16 +157,17 @@ func _process(delta: float) -> void:
 		_focus = _focus.lerp(Vector3(GameConfig.MAP_W * 0.5, 0, GameConfig.MAP_H * 0.5), delta * 2.0)
 
 	var pan := Vector2.ZERO
-	var mp := get_viewport().get_mouse_position()
-	var vp := get_viewport().get_visible_rect().size
-	if mp.x < edge_margin:
-		pan.x -= 1
-	elif mp.x > vp.x - edge_margin:
-		pan.x += 1
-	if mp.y < edge_margin:
-		pan.y -= 1
-	elif mp.y > vp.y - edge_margin:
-		pan.y += 1
+	if _edge_pan_enabled:
+		var mp := get_viewport().get_mouse_position()
+		var vp := get_viewport().get_visible_rect().size
+		if mp.x < edge_margin:
+			pan.x -= 1
+		elif mp.x > vp.x - edge_margin:
+			pan.x += 1
+		if mp.y < edge_margin:
+			pan.y -= 1
+		elif mp.y > vp.y - edge_margin:
+			pan.y += 1
 	if Input.is_action_pressed("camera_pan_left"):
 		pan.x -= 1
 	if Input.is_action_pressed("camera_pan_right"):
