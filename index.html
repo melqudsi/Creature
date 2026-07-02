@@ -1,60 +1,527 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <meta name="mobile-web-app-capable" content="yes" />
-  <title>Creature — multiplayer field</title>
-  <link rel="stylesheet" href="css/style.css" />
-</head>
-<body>
-  <div id="app">
-    <section id="loading-screen" class="screen active">
-      <p id="loading">Connecting...</p>
-    </section>
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+		<meta name="theme-color" content="#0a1628">
+		<meta name="mobile-web-app-capable" content="yes">
+		<meta name="apple-mobile-web-app-capable" content="yes">
+		<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+		<meta name="apple-mobile-web-app-title" content="Creature">
+		<link rel="manifest" href="manifest.webmanifest">
+		<title>Creature RTS</title>
+		<style>
+html, body, #canvas {
+	margin: 0;
+	padding: 0;
+	border: 0;
+}
 
-    <section id="welcome-screen" class="screen">
-      <h1>CREATURE</h1>
-      <p>A raunchy tamagotchi-ish field. Raise your blob, meet others, fight, feast.</p>
-      <p id="welcome-alert" class="welcome-alert" hidden></p>
-      <button type="button" class="btn" id="btn-play">Enter the field</button>
-    </section>
+body {
+	color: white;
+	background-color: black;
+	overflow: hidden;
+	touch-action: none;
+	height: 100%;
+	height: 100dvh;
+}
 
-    <section id="create-screen" class="screen">
-      <h1>Spawn your creature</h1>
-      <form id="create-form">
-        <label for="creature-name">Name (max 10)</label>
-        <input type="text" id="creature-name" maxlength="10" placeholder="Blobby" autocomplete="off" />
-        <span class="char-count"><span id="name-len">0</span>/10</span>
+html {
+	height: 100%;
+	height: 100dvh;
+}
 
-        <label>Color</label>
-        <div class="color-row" id="color-picker"></div>
+#canvas {
+	display: block;
+}
 
-        <label>Appearance</label>
-        <div class="radio-row">
-          <label><input type="radio" name="appearance" value="cute" checked /><span>Cute</span></label>
-          <label><input type="radio" name="appearance" value="ugly" /><span>Ugly</span></label>
-        </div>
+#canvas:focus {
+	outline: none;
+}
 
-        <canvas id="preview-canvas" width="96" height="96"></canvas>
+#status, #status-splash, #status-progress {
+	position: absolute;
+	left: 0;
+	right: 0;
+}
 
-        <button type="submit" class="btn" id="btn-create">Summon!</button>
-      </form>
-    </section>
+#status, #status-splash {
+	top: 0;
+	bottom: 0;
+}
 
-    <section id="game-screen" class="screen">
-      <canvas id="game-canvas"></canvas>
-      <div id="click-marker" hidden></div>
-      <div id="hud">
-        <div class="bar"><span>HP</span><div class="bar-track"><div class="bar-fill health" id="hp-bar"></div></div></div>
-        <div class="bar"><span>ST</span><div class="bar-track"><div class="bar-fill stamina" id="st-bar"></div></div></div>
-        <span id="hud-name"></span>
-      </div>
-      <p id="controls-hint">Tap map to move · WASD · F fight · E eat</p>
-      <div id="toast"></div>
-    </section>
-  </div>
+#status {
+	background-color: #242424;
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	align-items: center;
+	visibility: hidden;
+}
 
-  <script type="module" src="js/main.js"></script>
-</body>
+#status-splash {
+	max-height: 100%;
+	max-width: 100%;
+	margin: auto;
+}
+
+#status-splash.show-image--false {
+	display: none;
+}
+
+#status-splash.fullsize--true {
+	height: 100%;
+	width: 100%;
+	object-fit: contain;
+}
+
+#status-splash.use-filter--false {
+	image-rendering: pixelated;
+}
+
+#status-progress, #status-notice {
+	display: none;
+}
+
+#status-progress {
+	bottom: 10%;
+	width: 50%;
+	margin: 0 auto;
+}
+
+#status-notice {
+	background-color: #5b3943;
+	border-radius: 0.5rem;
+	border: 1px solid #9b3943;
+	color: #e0e0e0;
+	font-family: 'Noto Sans', 'Droid Sans', Arial, sans-serif;
+	line-height: 1.3;
+	margin: 0 2rem;
+	overflow: hidden;
+	padding: 1rem;
+	text-align: center;
+	z-index: 1;
+}
+
+#fs-prompt {
+	position: fixed;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 100000;
+	display: none;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 0.5rem;
+	padding: 0.75rem 1rem;
+	padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+	background: rgba(10, 22, 40, 0.92);
+	text-align: center;
+	font-family: system-ui, sans-serif;
+}
+
+#fs-prompt.visible {
+	display: flex;
+}
+
+#fs-btn {
+	font-size: 1rem;
+	padding: 0.75rem 1.4rem;
+	border: 2px solid #00e5ff;
+	background: #0a1628;
+	color: #00e5ff;
+	border-radius: 4px;
+	cursor: pointer;
+	touch-action: manipulation;
+	-webkit-tap-highlight-color: transparent;
+}
+
+#fs-hint {
+	max-width: 20rem;
+	font-size: 0.85rem;
+	line-height: 1.5;
+	color: #b0bec5;
+	margin: 0;
+}
+
+#pwa-hint {
+	font-size: 0.75rem;
+	color: #78909c;
+	max-width: 22rem;
+}
+
+#build-stamp {
+	position: fixed;
+	right: 6px;
+	bottom: 4px;
+	z-index: 100001;
+	font-family: system-ui, sans-serif;
+	font-size: 0.7rem;
+	color: #78909c;
+	opacity: 0.45;
+	pointer-events: none;
+	user-select: none;
+}
+		</style>
+		<script>
+window.CreatureNet = (function () {
+	const SESSION_KEY = 'creature_supabase_session';
+
+	function getSessionJson() {
+		try {
+			return localStorage.getItem(SESSION_KEY) || '';
+		} catch (e) {
+			return '';
+		}
+	}
+
+	function saveSessionJson(json) {
+		try {
+			localStorage.setItem(SESSION_KEY, json);
+		} catch (e) {
+			console.warn('CreatureNet session save failed', e);
+		}
+	}
+
+	function clearSessionJson() {
+		try {
+			localStorage.removeItem(SESSION_KEY);
+		} catch (e) {
+			console.warn('CreatureNet session clear failed', e);
+		}
+	}
+
+	function runRequest(method, url, headersJson, body, callback) {
+		let headers = {};
+		try {
+			headers = JSON.parse(headersJson || '{}');
+		} catch (e) {
+			callback(JSON.stringify({ ok: false, status: 0, body: 'Bad headers JSON' }));
+			return;
+		}
+		const opts = { method, headers };
+		if (body && body.length > 0) {
+			opts.body = body;
+		}
+		fetch(url, opts)
+			.then(async (res) => {
+				const text = await res.text();
+				callback(JSON.stringify({ ok: res.ok, status: res.status, body: text }));
+			})
+			.catch((err) => {
+				callback(JSON.stringify({ ok: false, status: 0, body: String(err) }));
+			});
+	}
+
+	return { getSessionJson, saveSessionJson, clearSessionJson, runRequest };
+})();
+		</script>
+		<link id="-gd-engine-icon" rel="icon" type="image/png" href="index.icon.png" />
+<link rel="apple-touch-icon" href="index.apple-touch-icon.png"/>
+<link rel="manifest" href="index.manifest.json">
+
+	</head>
+	<body>
+		<canvas id="canvas">
+			Your browser does not support the canvas tag.
+		</canvas>
+
+		<noscript>
+			Your browser does not support JavaScript.
+		</noscript>
+
+		<div id="status">
+			<img id="status-splash" class="show-image--true fullsize--true use-filter--true" src="index.png" alt="">
+			<progress id="status-progress"></progress>
+			<div id="status-notice"></div>
+		</div>
+
+		<div id="fs-prompt" aria-hidden="true">
+			<button type="button" id="fs-btn">Tap to start</button>
+			<p id="fs-hint">For true fullscreen on iPhone, use Share → Add to Home Screen.</p>
+			<p id="pwa-hint">In browser, this banner dismisses on tap so you can play.</p>
+		</div>
+
+		<!-- Build stamp: keep the string in sync with GameConfig.BUILD_ID. -->
+		<div id="build-stamp">build 2026-07-01j</div>
+
+		<script src="index.js"></script>
+		<script>
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":false,"executable":"index","experimentalVK":true,"fileSizes":{"index.pck":190468,"index.wasm":38814086},"focusCanvas":false,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"index.service.worker.js"};
+const GODOT_THREADS_ENABLED = true;
+
+function isDevServer() {
+	const params = new URLSearchParams(location.search);
+	if (params.get('dev') === '1') return true;
+	if (params.get('dev') === '0') return false;
+	const port = location.port;
+	const host = location.hostname;
+	if (port === '8443' || port === '8080') return true;
+	if (host === 'localhost' || host === '127.0.0.1') return true;
+	if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(host) && port === '8443') return true;
+	return false;
+}
+
+async function prepareCachesForDev() {
+	if (!isDevServer()) return;
+	GODOT_CONFIG.serviceWorker = '';
+	if (!('serviceWorker' in navigator)) return;
+	const regs = await navigator.serviceWorker.getRegistrations();
+	await Promise.all(regs.map((reg) => reg.unregister()));
+	if (typeof caches !== 'undefined') {
+		const keys = await caches.keys();
+		await Promise.all(keys.map((key) => caches.delete(key)));
+	}
+}
+
+(async function () {
+	await prepareCachesForDev();
+	const engine = new Engine(GODOT_CONFIG);
+	const statusOverlay = document.getElementById('status');
+	const statusProgress = document.getElementById('status-progress');
+	const statusNotice = document.getElementById('status-notice');
+
+	let initializing = true;
+	let statusMode = '';
+
+	function setStatusMode(mode) {
+		if (statusMode === mode || !initializing) {
+			return;
+		}
+		if (mode === 'hidden') {
+			statusOverlay.remove();
+			initializing = false;
+			return;
+		}
+		statusOverlay.style.visibility = 'visible';
+		statusProgress.style.display = mode === 'progress' ? 'block' : 'none';
+		statusNotice.style.display = mode === 'notice' ? 'block' : 'none';
+		statusMode = mode;
+	}
+
+	function setStatusNotice(text) {
+		while (statusNotice.lastChild) {
+			statusNotice.removeChild(statusNotice.lastChild);
+		}
+		const lines = text.split('\n');
+		lines.forEach((line) => {
+			statusNotice.appendChild(document.createTextNode(line));
+			statusNotice.appendChild(document.createElement('br'));
+		});
+	}
+
+	function displayFailureNotice(err) {
+		console.error(err);
+		if (err instanceof Error) {
+			setStatusNotice(err.message);
+		} else if (typeof err === 'string') {
+			setStatusNotice(err);
+		} else {
+			setStatusNotice('An unknown error occurred.');
+		}
+		setStatusMode('notice');
+		initializing = false;
+	}
+
+	const missing = Engine.getMissingFeatures({
+		threads: GODOT_THREADS_ENABLED,
+	});
+
+	if (missing.length !== 0) {
+		if (GODOT_CONFIG['serviceWorker'] && GODOT_CONFIG['ensureCrossOriginIsolationHeaders'] && 'serviceWorker' in navigator) {
+			let serviceWorkerRegistrationPromise;
+			try {
+				serviceWorkerRegistrationPromise = navigator.serviceWorker.getRegistration();
+			} catch (err) {
+				serviceWorkerRegistrationPromise = Promise.reject(new Error('Service worker registration failed.'));
+			}
+			Promise.race([
+				serviceWorkerRegistrationPromise.then((registration) => {
+					if (registration != null) {
+						return Promise.reject(new Error('Service worker already exists.'));
+					}
+					return registration;
+				}).then(() => engine.installServiceWorker()),
+				new Promise((resolve) => {
+					setTimeout(() => resolve(), 2000);
+				}),
+			]).then(() => {
+				window.location.reload();
+			}).catch((err) => {
+				console.error('Error while registering service worker:', err);
+			});
+		} else {
+			const missingMsg = 'Error\nThe following features required to run Godot projects on the Web are missing:\n';
+			displayFailureNotice(missingMsg + missing.join('\n'));
+		}
+	} else {
+		setStatusMode('progress');
+		engine.startGame({
+			'onProgress': function (current, total) {
+				if (current > 0 && total > 0) {
+					statusProgress.value = current;
+					statusProgress.max = total;
+				} else {
+					statusProgress.removeAttribute('value');
+					statusProgress.removeAttribute('max');
+				}
+			},
+		}).then(() => {
+			setStatusMode('hidden');
+			setupServiceWorkerAutoUpdate();
+			setupMobileFullscreen();
+		}, displayFailureNotice);
+	}
+})();
+
+// Durable cache-busting: when a newer build's service worker installs, tell it to
+// take over immediately (skipWaiting + claim + reload clients) so users never get
+// silently stuck on a stale PWA build. Never runs on the dev-server path, which
+// deliberately unregisters service workers (see prepareCachesForDev).
+let _swAutoReloaded = false;
+function setupServiceWorkerAutoUpdate() {
+	if (isDevServer()) {
+		return;
+	}
+	if (!('serviceWorker' in navigator)) {
+		return;
+	}
+
+	// Reload exactly once when a new worker takes control of this page.
+	navigator.serviceWorker.addEventListener('controllerchange', () => {
+		if (_swAutoReloaded) {
+			return;
+		}
+		_swAutoReloaded = true;
+		window.location.reload();
+	});
+
+	navigator.serviceWorker.getRegistration().then((registration) => {
+		if (registration == null) {
+			return;
+		}
+		// A newer worker may already be waiting from a previous visit.
+		if (registration.waiting && navigator.serviceWorker.controller) {
+			registration.waiting.postMessage('update');
+		}
+		// Ask the browser to check the network for a fresh build.
+		registration.update().catch(() => {});
+		registration.addEventListener('updatefound', () => {
+			const installing = registration.installing;
+			if (installing == null) {
+				return;
+			}
+			installing.addEventListener('statechange', () => {
+				// Only when this is an update (a controller already exists),
+				// not the very first install, activate the new build now.
+				if (installing.state === 'installed' && navigator.serviceWorker.controller) {
+					installing.postMessage('update');
+				}
+			});
+		});
+	}).catch((err) => {
+		console.warn('Service worker auto-update check failed:', err);
+	});
+}
+
+(function setupMobileFullscreen() {
+	const prompt = document.getElementById('fs-prompt');
+	const btn = document.getElementById('fs-btn');
+	const canvas = document.getElementById('canvas');
+	let userActivated = false;
+	let dismissed = false;
+
+	const isStandalone = window.matchMedia('(display-mode: fullscreen)').matches
+		|| window.matchMedia('(display-mode: standalone)').matches
+		|| window.navigator.standalone === true;
+
+	const isMobile = window.matchMedia('(pointer: coarse)').matches
+		|| window.matchMedia('(max-width: 900px)').matches;
+
+	function isFullscreen() {
+		return !!(document.fullscreenElement || document.webkitFullscreenElement);
+	}
+
+	function focusCanvas() {
+		try {
+			canvas.setAttribute('tabindex', '0');
+			canvas.focus({ preventScroll: true });
+		} catch (_e) {}
+	}
+
+	function dismissPrompt() {
+		dismissed = true;
+		prompt.classList.remove('visible');
+		prompt.setAttribute('aria-hidden', 'true');
+		focusCanvas();
+	}
+
+	async function enterFullscreen() {
+		userActivated = true;
+		dismissPrompt();
+
+		const targets = [canvas, document.documentElement];
+		for (const target of targets) {
+			try {
+				if (isFullscreen()) {
+					break;
+				}
+				if (target.requestFullscreen) {
+					await target.requestFullscreen({ navigationUI: 'hide' });
+					break;
+				}
+				if (target.webkitRequestFullscreen) {
+					target.webkitRequestFullscreen();
+					break;
+				}
+			} catch (err) {
+				console.warn('Fullscreen request failed:', err);
+			}
+		}
+	}
+
+	function maybeShowPrompt() {
+		if (dismissed || !isMobile || isStandalone || isFullscreen()) {
+			prompt.classList.remove('visible');
+			return;
+		}
+		prompt.classList.add('visible');
+		prompt.setAttribute('aria-hidden', 'false');
+	}
+
+	function onStartTap(e) {
+		e.preventDefault();
+		e.stopPropagation();
+		enterFullscreen();
+	}
+
+	btn.addEventListener('click', onStartTap);
+	btn.addEventListener('touchend', onStartTap, { passive: false });
+
+	document.addEventListener('fullscreenchange', () => {
+		if (isFullscreen()) {
+			dismissPrompt();
+		} else if (isMobile && !isStandalone && !dismissed) {
+			prompt.classList.add('visible');
+			prompt.setAttribute('aria-hidden', 'false');
+		}
+	});
+
+	if (isStandalone) {
+		dismissPrompt();
+	} else {
+		maybeShowPrompt();
+	}
+
+	canvas.addEventListener('touchstart', () => {
+		try {
+			canvas.setAttribute('tabindex', '0');
+			canvas.focus({ preventScroll: true });
+		} catch (_e) {}
+	}, { passive: true });
+})();
+		</script>
+	</body>
 </html>
+

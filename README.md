@@ -103,8 +103,8 @@ flowchart TB
 
 | Client | Path | Multiplayer | Visual style | Status |
 |--------|------|-------------|--------------|--------|
-| **Web** | repo root (`index.html`, `js/`, `css/`) | Supabase REST + 1.5s polling | Stardew-like top-down 2D canvas | **Deployed**, full gameplay (fight/eat/sleep) |
-| **Godot** | `creature-godot/` | Supabase session + position save + **1.5s poll for other players** | SC2-inspired 3D RTS | **Spawn + move + cloud save + live field** in editor and web export |
+| **Web (legacy)** | `_arc/` (`index.html`, `js/`, `css/`) | Supabase REST + 1.5s polling | Stardew-like top-down 2D canvas | **Archived** — superseded by the Godot client |
+| **Godot** | `creature-godot/` (web export at **repo root** → GitHub Pages) | Supabase session + position save + **1.5s poll for other players** | SC2-inspired 3D RTS | **Deployed** — current game |
 
 Godot shares the Supabase **project** with the web client and polls the same `creatures` table (~1.5s) to show other players as remote worms. Web and Godot are separate codebases pivoting toward a new game direction.
 
@@ -114,22 +114,23 @@ Godot shares the Supabase **project** with the web client and polls the same `cr
 
 ```
 Creature/
-├── index.html, css/, js/              # Web game (Phase 1 — complete)
+├── index.html, index.pck, index.wasm, …  # Godot WEB EXPORT (generated → GitHub Pages)
+├── index.service.worker.js            # Godot PWA SW (generated on export)
+├── manifest.webmanifest               # PWA manifest (manual copy; source in creature-godot/web/)
+├── .nojekyll                          # Keep GitHub Pages from running Jekyll
+├── _arc/                              # ARCHIVED Phase-1 web game (index.html, js/, css/)
 ├── supabase/schema.sql
 ├── supabase/migration-godot-session.sql  # Optional: allow appearance=worm in DB
 ├── docs/supabase-multiplayer-guide.md
-├── start-server.ps1                   # Web LAN dev (port 3456)
 ├── creature-godot/                    # Godot 4.7 project
 │   ├── project.godot
 │   ├── scenes/, scripts/
 │   ├── web/
 │   │   ├── custom_shell.html          # Edit this — survives re-export
-│   │   ├── index.html                 # Godot export output (generated)
-│   │   ├── manifest.webmanifest       # PWA manifest (manual)
-│   │   └── index.service.worker.js    # Godot PWA SW (generated on export)
-│   ├── serve-web-https.py             # Phone/LAN testing (port 8443)
-│   ├── serve-web.py                   # Desktop localhost (port 8080)
-│   ├── export_presets.cfg
+│   │   └── manifest.webmanifest       # PWA manifest source
+│   ├── serve-web-https.py             # Phone/LAN testing (port 8443, serves repo root)
+│   ├── serve-web.py                   # Desktop localhost (port 8080, serves repo root)
+│   ├── export_presets.cfg             # export_path="../index.html" (repo root)
 │   └── docs/godot-porting-notes.md
 └── README.md
 ```
@@ -316,15 +317,17 @@ CLI export (headless, run an import/compile pass first so scripts/resources are 
 
 ```powershell
 & "C:\godot47\Godot_v4.7-stable_win64.exe" --headless --path "F:\GdriveFS\My Drive\_DEV\Game\Creature_game\creature-godot" --import
-& "C:\godot47\Godot_v4.7-stable_win64.exe" --headless --path "F:\GdriveFS\My Drive\_DEV\Game\Creature_game\creature-godot" --export-release "Web" "web/index.html"
+& "C:\godot47\Godot_v4.7-stable_win64.exe" --headless --path "F:\GdriveFS\My Drive\_DEV\Game\Creature_game\creature-godot" --export-release "Web" "../index.html"
 ```
+
+**The export lands in the REPO ROOT** (`index.html`, `index.pck`, `index.wasm`, …) because GitHub Pages serves from the root of `main`. Push to `main` to deploy.
 
 Or from the editor:
 
 1. **Project → Export…** → preset **Web**
 2. Confirm **Custom Html Shell** = `res://web/custom_shell.html`
-3. Export to `creature-godot/web/index.html` (overwrite)
-4. **Never hand-edit `index.html`** — edit `custom_shell.html` instead
+3. Export to the repo root `index.html` (preset default; overwrite)
+4. **Never hand-edit `index.html`** — edit `creature-godot/web/custom_shell.html` instead
 
 **After every export, verify the git diff is clean:**
 

@@ -13,7 +13,8 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 PORT = 8443
-ROOT = Path(__file__).resolve().parent / "web"
+# Web export now lands in the REPO ROOT (GitHub Pages serves from main root).
+ROOT = Path(__file__).resolve().parent.parent
 CERT_DIR = Path(__file__).resolve().parent / "web-certs"
 
 

@@ -232,12 +232,14 @@ CLI export — run an import/compile pass, then export:
 
 ```powershell
 & "C:\godot47\Godot_v4.7-stable_win64.exe" --headless --path "F:\GdriveFS\My Drive\_DEV\Game\Creature_game\creature-godot" --import
-& "C:\godot47\Godot_v4.7-stable_win64.exe" --headless --path "F:\GdriveFS\My Drive\_DEV\Game\Creature_game\creature-godot" --export-release "Web" "web/index.html"
+& "C:\godot47\Godot_v4.7-stable_win64.exe" --headless --path "F:\GdriveFS\My Drive\_DEV\Game\Creature_game\creature-godot" --export-release "Web" "../index.html"
 ```
+
+**The export lands in the REPO ROOT** (GitHub Pages serves from `main` root). Push `main` to deploy.
 
 Or from the editor:
 
-1. **Project → Export… → Web** → `web/index.html`
+1. **Project → Export… → Web** → `../index.html` (repo root; preset default)
 2. Edit `custom_shell.html` only — re-export to apply
 3. Verify `export_presets.cfg`: COI off (`ensure_cross_origin_isolation_headers=false`), orientation any (`orientation=0`) — Godot can revert these; also restore `project.godot` if a default line was dropped on export
 4. Serve: `python serve-web-https.py` → `https://<wifi-ip>:8443`

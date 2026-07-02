@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Creature — multiplayer field</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div id="app">
+    <section id="loading-screen" class="screen active">
+      <p id="loading">Connecting...</p>
+    </section>
+
+    <section id="welcome-screen" class="screen">
+      <h1>CREATURE</h1>
+      <p>A raunchy tamagotchi-ish field. Raise your blob, meet others, fight, feast.</p>
+      <p id="welcome-alert" class="welcome-alert" hidden></p>
+      <button type="button" class="btn" id="btn-play">Enter the field</button>
+    </section>
+
+    <section id="create-screen" class="screen">
+      <h1>Spawn your creature</h1>
+      <form id="create-form">
+        <label for="creature-name">Name (max 10)</label>
+        <input type="text" id="creature-name" maxlength="10" placeholder="Blobby" autocomplete="off" />
+        <span class="char-count"><span id="name-len">0</span>/10</span>
+
+        <label>Color</label>
+        <div class="color-row" id="color-picker"></div>
+
+        <label>Appearance</label>
+        <div class="radio-row">
+          <label><input type="radio" name="appearance" value="cute" checked /><span>Cute</span></label>
+          <label><input type="radio" name="appearance" value="ugly" /><span>Ugly</span></label>
+        </div>
+
+        <canvas id="preview-canvas" width="96" height="96"></canvas>
+
+        <button type="submit" class="btn" id="btn-create">Summon!</button>
+      </form>
+    </section>
+
+    <section id="game-screen" class="screen">
+      <canvas id="game-canvas"></canvas>
+      <div id="click-marker" hidden></div>
+      <div id="hud">
+        <div class="bar"><span>HP</span><div class="bar-track"><div class="bar-fill health" id="hp-bar"></div></div></div>
+        <div class="bar"><span>ST</span><div class="bar-track"><div class="bar-fill stamina" id="st-bar"></div></div></div>
+        <span id="hud-name"></span>
+      </div>
+      <p id="controls-hint">Tap map to move · WASD · F fight · E eat</p>
+      <div id="toast"></div>
+    </section>
+  </div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

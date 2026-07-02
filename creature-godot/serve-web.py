@@ -5,7 +5,8 @@ import os
 import socket
 
 PORT = 8080
-ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
+# Web export now lands in the REPO ROOT (GitHub Pages serves from main root).
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 class GodotWebHandler(SimpleHTTPRequestHandler):
