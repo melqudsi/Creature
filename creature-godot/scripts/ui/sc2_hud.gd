@@ -36,6 +36,37 @@ func _ready() -> void:
 	if region_label:
 		region_label.text = ""
 	call_deferred("_refresh_stats")
+	# Inset the whole HUD away from iPhone notch/rounded corners/home bar in
+	# installed-PWA mode. Insets change on rotation (size_changed) and can
+	# settle late on iOS launch, so re-apply a few times after startup.
+	get_viewport().size_changed.connect(_apply_safe_area)
+	_apply_safe_area()
+	for delay in [0.5, 1.5, 3.0]:
+		get_tree().create_timer(delay).timeout.connect(_apply_safe_area)
+
+## Shift the full-rect HUD root inward by the browser's safe-area insets
+## (notch, rounded corners, home indicator). CSS px are converted to design
+## units: the short viewport side always equals 720 design units (see
+## project.godot stretch settings), so design = css * 720 / min(vw, vh).
+func _apply_safe_area() -> void:
+	if not OS.has_feature("web"):
+		return
+	var raw: Variant = JavaScriptBridge.eval(
+		"window.CreatureNet && window.CreatureNet.getSafeAreaJson ? window.CreatureNet.getSafeAreaJson() : ''", true)
+	if typeof(raw) != TYPE_STRING or str(raw).is_empty():
+		return
+	var parsed: Variant = JSON.parse_string(str(raw))
+	if typeof(parsed) != TYPE_DICTIONARY:
+		return
+	var d: Dictionary = parsed
+	var short_side: float = minf(float(d.get("vw", 0.0)), float(d.get("vh", 0.0)))
+	if short_side <= 0.0:
+		return
+	var to_design: float = 720.0 / short_side
+	offset_left = float(d.get("left", 0.0)) * to_design
+	offset_top = float(d.get("top", 0.0)) * to_design
+	offset_right = -float(d.get("right", 0.0)) * to_design
+	offset_bottom = -float(d.get("bottom", 0.0)) * to_design
 
 ## Keep the bottom-left region label in sync with where the player is standing.
 ## Cheap: only touches the label when the region name actually changes.

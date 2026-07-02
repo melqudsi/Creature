@@ -221,6 +221,9 @@ Buildings use a box body, flat red roof slab, chimney, and door. Avoid using the
 - `project.godot` display settings: base viewport **720×720** with `stretch/mode="canvas_items"` and `stretch/aspect="expand"`. The *short* side of any window always maps to 720 design units and the long side expands — no letterboxing, and UI keeps a consistent physical size in portrait, landscape, and ultrawide. (`window_width_override`/`window_height_override` keep the editor run window at 1280×720.)
 - All HUD/onboarding layouts must fit within a 720px-wide strip (centered panels ≤ ~640px wide) so portrait never clips them; the spawn panel is 480px wide.
 - `rts_camera.gd` `_update_aspect_mode()` switches the camera to `KEEP_WIDTH` when the viewport is taller than wide, so portrait keeps the same horizontal view as landscape and gains vertical view instead of cramping.
+- **iOS installed-PWA fixes** (browser mode was already fine):
+  - *Launch shift:* iOS standalone PWAs can report a stale window size / phantom scroll at launch, cutting off the bottom action buttons until a rotation. `custom_shell.html` pins the body (`position: fixed`) and `setupViewportResizeKicks()` re-asserts `scrollTo(0,0)` + synthesizes `resize` events after engine start, on `orientationchange`, `visualViewport` resize, and `pageshow`.
+  - *Notch / rounded corners / home bar:* `:root` CSS vars capture `env(safe-area-inset-*)`; `CreatureNet.getSafeAreaJson()` exposes them (plus `innerWidth/Height`) to Godot, and `sc2_hud.gd::_apply_safe_area()` insets the full-rect HUD root (design units = css × 720 / min(vw, vh)). Re-applied on viewport `size_changed` and at 0.5/1.5/3 s after startup because iOS settles insets late.
 
 ## Key files
 

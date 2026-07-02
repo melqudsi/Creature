@@ -11,6 +11,15 @@
 		<link rel="manifest" href="manifest.webmanifest">
 		<title>$GODOT_PROJECT_NAME</title>
 		<style>
+:root {
+	/* Read by CreatureNet.getSafeAreaJson() and applied as HUD margins in-game
+	   (iPhone notch / rounded corners / home bar in installed-PWA mode). */
+	--safe-top: env(safe-area-inset-top, 0px);
+	--safe-right: env(safe-area-inset-right, 0px);
+	--safe-bottom: env(safe-area-inset-bottom, 0px);
+	--safe-left: env(safe-area-inset-left, 0px);
+}
+
 html, body, #canvas {
 	margin: 0;
 	padding: 0;
@@ -24,6 +33,11 @@ body {
 	touch-action: none;
 	height: 100%;
 	height: 100dvh;
+	/* Pin the page: iOS standalone PWAs can launch with a phantom scroll
+	   offset that shifts the canvas down until a rotation. */
+	position: fixed;
+	inset: 0;
+	width: 100%;
 }
 
 html {
@@ -214,7 +228,24 @@ window.CreatureNet = (function () {
 			});
 	}
 
-	return { getSessionJson, saveSessionJson, clearSessionJson, runRequest };
+	function getSafeAreaJson() {
+		try {
+			const cs = getComputedStyle(document.documentElement);
+			const px = (name) => parseFloat(cs.getPropertyValue(name)) || 0;
+			return JSON.stringify({
+				top: px('--safe-top'),
+				right: px('--safe-right'),
+				bottom: px('--safe-bottom'),
+				left: px('--safe-left'),
+				vw: window.innerWidth,
+				vh: window.innerHeight,
+			});
+		} catch (e) {
+			return '';
+		}
+	}
+
+	return { getSessionJson, saveSessionJson, clearSessionJson, runRequest, getSafeAreaJson };
 })();
 		</script>
 		$GODOT_HEAD_INCLUDE
@@ -241,7 +272,7 @@ window.CreatureNet = (function () {
 		</div>
 
 		<!-- Build stamp: keep the string in sync with GameConfig.BUILD_ID. -->
-		<div id="build-stamp">build 2026-07-02b</div>
+		<div id="build-stamp">build 2026-07-02c</div>
 
 		<script src="$GODOT_URL"></script>
 		<script>
@@ -368,9 +399,33 @@ async function prepareCachesForDev() {
 			setStatusMode('hidden');
 			setupServiceWorkerAutoUpdate();
 			setupMobileFullscreen();
+			setupViewportResizeKicks();
 		}, displayFailureNotice);
 	}
 })();
+
+// iOS standalone PWAs report a stale window size at launch (canvas appears
+// shifted down / bottom UI cut off until the phone is rotated). Re-assert
+// scroll position and synthesize resize events so Godot's adaptive canvas
+// picks up the real dimensions without needing a rotation.
+function setupViewportResizeKicks() {
+	function kick() {
+		try {
+			window.scrollTo(0, 0);
+			window.dispatchEvent(new Event('resize'));
+		} catch (_e) {}
+	}
+	// Staggered kicks after engine start: the iOS viewport can settle late.
+	[150, 400, 900, 1800].forEach((t) => setTimeout(kick, t));
+	window.addEventListener('orientationchange', () => {
+		setTimeout(kick, 100);
+		setTimeout(kick, 400);
+	});
+	if (window.visualViewport) {
+		window.visualViewport.addEventListener('resize', () => setTimeout(kick, 0));
+	}
+	window.addEventListener('pageshow', () => setTimeout(kick, 100));
+}
 
 // Durable cache-busting: when a newer build's service worker installs, tell it to
 // take over immediately (skipWaiting + claim + reload clients) so users never get
