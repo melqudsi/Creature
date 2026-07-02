@@ -23,17 +23,16 @@ var player_data: Dictionary = {}
 ## The active WorldMap (set in WorldMap._ready). Lets gameplay code spawn shared
 ## objects (e.g. a combined money object) without a hard scene-path dependency.
 var world_map: Node = null
-var blocked_tiles: Array[Vector2i] = []
+## Solid tiles (water/trees/houses/towers) as a Dictionary (Vector2i -> true)
+## for O(1) pathfinding lookups — the Memphis map has thousands of them.
+var blocked_tiles: Dictionary = {}
 var admin_logs: Array[String] = []
 ## Interactive/solid props (trees, buildings, shapeshift sources). Scanned by the
 ## local player each frame for collisions/kills/shapeshift prompts.
 var world_objects: Array[WorldObject] = []
 
 func _ready() -> void:
-	for pos in GameConfig.TREE_POSITIONS:
-		blocked_tiles.append(pos)
-	for pos in GameConfig.BUILDING_POSITIONS:
-		blocked_tiles.append(pos)
+	blocked_tiles = MemphisLayout.blocked_tiles()
 
 func register_creature(creature: Creature, data: Dictionary, is_player: bool = false) -> void:
 	var id: String = data.get("id", str(creature.get_instance_id()))

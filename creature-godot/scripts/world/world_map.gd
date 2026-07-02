@@ -65,6 +65,9 @@ func _ready() -> void:
 	_build_trees()
 	_build_buildings()
 	_build_interactive_objects()
+	var traffic := NpcTraffic.new()
+	traffic.name = "Traffic"
+	add_child(traffic)
 	# Propane tanks and other blasts ask the world to spawn an explosion here.
 	GameState.explosion_requested.connect(spawn_explosion)
 	GameState.money_combined.connect(spawn_money_combine_fx)
@@ -96,11 +99,17 @@ func spawn_player() -> void:
 	creatures_root.add_child(player)
 	player.setup(data)
 
+## Land plane (east of the river) + the sunken Mississippi, Mud Island, the
+## M Bridge, region ground tints and road strips. Land stays at y=0 everywhere
+## (movement/collision untouched); the "elevation" is the river sitting ~0.45
+## below the bluff with a visible bank wall.
 func _build_ground() -> void:
+	var land_w := (GameConfig.MAP_W - MemphisLayout.RIVER_W) * GameConfig.TILE_SIZE
+	var map_h := GameConfig.MAP_H * GameConfig.TILE_SIZE
 	var plane := PlaneMesh.new()
-	plane.size = Vector2(GameConfig.MAP_W * GameConfig.TILE_SIZE, GameConfig.MAP_H * GameConfig.TILE_SIZE)
+	plane.size = Vector2(land_w, map_h)
 	ground.mesh = plane
-	ground.position = Vector3(GameConfig.MAP_W * 0.5, 0, GameConfig.MAP_H * 0.5)
+	ground.position = Vector3(MemphisLayout.RIVER_W + land_w * 0.5, 0, map_h * 0.5)
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = Color(0.36, 0.54, 0.32)
 	mat.roughness = 0.95
@@ -114,6 +123,249 @@ func _build_ground() -> void:
 	col.shape = shape
 	body.add_child(col)
 	ground.add_child(body)
+
+	_build_river()
+	_build_mud_island()
+	_build_bridge()
+	_build_region_tints()
+	_build_roads()
+
+func _quad_mat(color: Color) -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.roughness = 1.0
+	return mat
+
+## A flat colored quad covering a tile rect at a given height (region tints,
+## road strips). Heights are spaced so overlapping layers never z-fight.
+func _add_ground_quad(rect: Rect2i, color: Color, y: float, parent: Node3D, label: String) -> void:
+	var quad := MeshInstance3D.new()
+	quad.name = label
+	var plane := PlaneMesh.new()
+	plane.size = Vector2(rect.size.x * GameConfig.TILE_SIZE, rect.size.y * GameConfig.TILE_SIZE)
+	quad.mesh = plane
+	quad.material_override = _quad_mat(color)
+	quad.position = Vector3(
+		(rect.position.x + rect.size.x * 0.5) * GameConfig.TILE_SIZE,
+		y,
+		(rect.position.y + rect.size.y * 0.5) * GameConfig.TILE_SIZE
+	)
+	parent.add_child(quad)
+
+func _build_river() -> void:
+	var root := Node3D.new()
+	root.name = "River"
+	add_child(root)
+	var map_h := GameConfig.MAP_H * GameConfig.TILE_SIZE
+	var river_w := MemphisLayout.RIVER_W * GameConfig.TILE_SIZE
+
+	var water := MeshInstance3D.new()
+	water.name = "Water"
+	var plane := PlaneMesh.new()
+	plane.size = Vector2(river_w, map_h)
+	water.mesh = plane
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.23, 0.36, 0.48)
+	mat.roughness = 0.25
+	mat.metallic = 0.1
+	water.material_override = mat
+	water.position = Vector3(river_w * 0.5, -0.45, map_h * 0.5)
+	root.add_child(water)
+
+	# Taps on the water still raycast to a ground point (path ends at the bank).
+	var body := StaticBody3D.new()
+	var col := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = Vector3(river_w, 0.1, map_h)
+	col.shape = shape
+	body.add_child(col)
+	water.add_child(body)
+
+	# Bluff wall along the east bank.
+	var bank := MeshInstance3D.new()
+	bank.name = "Bluff"
+	var wall := BoxMesh.new()
+	wall.size = Vector3(0.3, 0.6, map_h)
+	bank.mesh = wall
+	bank.material_override = _quad_mat(Color(0.45, 0.38, 0.26))
+	bank.position = Vector3(MemphisLayout.RIVER_W * GameConfig.TILE_SIZE - 0.1, -0.3, map_h * 0.5)
+	root.add_child(bank)
+
+func _build_mud_island() -> void:
+	var rect := MemphisLayout.MUD_ISLAND_RECT
+	var island := MeshInstance3D.new()
+	island.name = "MudIsland"
+	var box := BoxMesh.new()
+	# Top at y=0 (walkable height), sides visible above the sunken water.
+	box.size = Vector3(rect.size.x * GameConfig.TILE_SIZE, 0.6, rect.size.y * GameConfig.TILE_SIZE)
+	island.mesh = box
+	island.material_override = _quad_mat(Color(0.34, 0.58, 0.36))
+	island.position = Vector3(
+		(rect.position.x + rect.size.x * 0.5) * GameConfig.TILE_SIZE,
+		-0.3,
+		(rect.position.y + rect.size.y * 0.5) * GameConfig.TILE_SIZE
+	)
+	add_child(island)
+	var body := StaticBody3D.new()
+	var col := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = box.size
+	col.shape = shape
+	body.add_child(col)
+	island.add_child(body)
+
+## The Hernando de Soto "M" Bridge: deck at walkable height over the sunken
+## river, rails, piers, and two arch prisms that read as the M.
+func _build_bridge() -> void:
+	var root := Node3D.new()
+	root.name = "Bridge"
+	add_child(root)
+	var rect := MemphisLayout.BRIDGE_RECT
+	var cx := (rect.position.x + rect.size.x * 0.5) * GameConfig.TILE_SIZE
+	var cz := (rect.position.y + rect.size.y * 0.5) * GameConfig.TILE_SIZE
+	var deck_w := rect.size.x * GameConfig.TILE_SIZE
+	var deck_d := rect.size.y * GameConfig.TILE_SIZE
+
+	var deck := MeshInstance3D.new()
+	deck.name = "Deck"
+	var deck_mesh := BoxMesh.new()
+	deck_mesh.size = Vector3(deck_w, 0.2, deck_d)
+	deck.mesh = deck_mesh
+	deck.material_override = _quad_mat(Color(0.35, 0.36, 0.38))
+	deck.position = Vector3(cx, -0.08, cz)
+	root.add_child(deck)
+	var body := StaticBody3D.new()
+	var col := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = deck_mesh.size
+	col.shape = shape
+	body.add_child(col)
+	deck.add_child(body)
+
+	var rail_mat := _quad_mat(Color(0.55, 0.56, 0.6))
+	for dz in [-deck_d * 0.5 + 0.1, deck_d * 0.5 - 0.1]:
+		var rail := MeshInstance3D.new()
+		var rail_mesh := BoxMesh.new()
+		rail_mesh.size = Vector3(deck_w, 0.22, 0.12)
+		rail.mesh = rail_mesh
+		rail.material_override = rail_mat
+		rail.position = Vector3(cx, 0.13, cz + dz)
+		root.add_child(rail)
+
+	var pier_mat := _quad_mat(Color(0.5, 0.5, 0.52))
+	for px in [3.0, 8.0, 13.0]:
+		var pier := MeshInstance3D.new()
+		var pier_mesh := BoxMesh.new()
+		pier_mesh.size = Vector3(0.5, 0.5, deck_d - 0.6)
+		pier.mesh = pier_mesh
+		pier.material_override = pier_mat
+		pier.position = Vector3(px, -0.35, cz)
+		root.add_child(pier)
+
+	# The two arches of the "M".
+	var arch_mat := _quad_mat(Color(0.88, 0.9, 0.94))
+	for ax in [4.2, 11.6]:
+		var arch := MeshInstance3D.new()
+		var prism := PrismMesh.new()
+		prism.size = Vector3(6.4, 1.5, 0.18)
+		arch.mesh = prism
+		arch.material_override = arch_mat
+		arch.position = Vector3(ax, 0.77, cz)
+		root.add_child(arch)
+
+	# Center divider + painted name on the deck.
+	var stripe := MeshInstance3D.new()
+	var stripe_mesh := PlaneMesh.new()
+	stripe_mesh.size = Vector2(deck_w, 0.14)
+	stripe.mesh = stripe_mesh
+	stripe.material_override = _quad_mat(Color(0.82, 0.72, 0.24))
+	stripe.position = Vector3(cx, 0.03, cz)
+	root.add_child(stripe)
+	var lbl := Label3D.new()
+	lbl.text = "HERNANDO DE SOTO BR"
+	lbl.font_size = 48
+	lbl.pixel_size = 0.01
+	lbl.modulate = Color(0.95, 0.95, 0.9, 0.9)
+	lbl.outline_size = 6
+	lbl.rotation_degrees = Vector3(-90, 0, 0)
+	lbl.position = Vector3(cx, 0.05, cz)
+	root.add_child(lbl)
+
+func _build_region_tints() -> void:
+	var root := Node3D.new()
+	root.name = "RegionTints"
+	add_child(root)
+	# Earlier regions in the list win label-wise, so draw them ON TOP (higher y)
+	# where rects overlap.
+	var idx := 0
+	for r in MemphisLayout.REGIONS:
+		if not r.has("tint"):
+			idx += 1
+			continue
+		var y := 0.030 - float(idx) * 0.001
+		_add_ground_quad(r["rect"] as Rect2i, r["tint"] as Color, y, root, str(r["name"]).replace(" ", ""))
+		idx += 1
+
+## Roads: asphalt quad + yellow center divider (two lanes) + flat painted
+## street-name labels. Heights are staggered (interstate < street, horizontal <
+## vertical) so crossing quads never z-fight at intersections.
+func _build_roads() -> void:
+	var root := Node3D.new()
+	root.name = "Roads"
+	add_child(root)
+	for r in MemphisLayout.ROADS:
+		var kind := str(r["kind"])
+		if kind == "bridge":
+			continue # built as a real deck in _build_bridge()
+		var rect: Rect2i = r["rect"]
+		var horizontal := rect.size.x >= rect.size.y
+		var color := Color(0.22, 0.22, 0.24) if kind == "interstate" else Color(0.31, 0.31, 0.33)
+		var y: float
+		if kind == "interstate":
+			y = 0.036 if horizontal else 0.038
+		else:
+			y = 0.044 if horizontal else 0.046
+		var label := str(r["name"]).replace(" ", "")
+		_add_ground_quad(rect, color, y, root, label)
+		_add_road_divider(rect, horizontal, y + 0.004, root)
+		_add_road_labels(rect, horizontal, str(r["name"]), root)
+
+## Thin yellow center stripe splitting the 2-tile road into two lanes.
+func _add_road_divider(rect: Rect2i, horizontal: bool, y: float, parent: Node3D) -> void:
+	var stripe := MeshInstance3D.new()
+	stripe.name = "Divider"
+	var plane := PlaneMesh.new()
+	var len_tiles := rect.size.x if horizontal else rect.size.y
+	var length := len_tiles * GameConfig.TILE_SIZE
+	plane.size = Vector2(length, 0.14) if horizontal else Vector2(0.14, length)
+	stripe.mesh = plane
+	stripe.material_override = _quad_mat(Color(0.82, 0.72, 0.24))
+	stripe.position = Vector3(
+		(rect.position.x + rect.size.x * 0.5) * GameConfig.TILE_SIZE,
+		y,
+		(rect.position.y + rect.size.y * 0.5) * GameConfig.TILE_SIZE
+	)
+	parent.add_child(stripe)
+
+## Street names painted flat on the asphalt, repeated along long roads.
+func _add_road_labels(rect: Rect2i, horizontal: bool, road_name: String, parent: Node3D) -> void:
+	var len_tiles := rect.size.x if horizontal else rect.size.y
+	var count := maxi(1, int(len_tiles / 26.0))
+	for i in count:
+		var along := rect.position.x if horizontal else rect.position.y
+		along += int((float(i) + 0.5) * float(len_tiles) / float(count))
+		var lbl := Label3D.new()
+		lbl.text = road_name.to_upper()
+		lbl.font_size = 64
+		lbl.pixel_size = 0.01
+		lbl.modulate = Color(0.95, 0.95, 0.9, 0.9)
+		lbl.outline_size = 6
+		# Lie flat on the road, text running along the road's axis.
+		lbl.rotation_degrees = Vector3(-90, 0, 0) if horizontal else Vector3(-90, 90, 0)
+		var cx := (along + 0.0) * GameConfig.TILE_SIZE if horizontal else (rect.position.x + rect.size.x * 0.5) * GameConfig.TILE_SIZE
+		var cz := (rect.position.y + rect.size.y * 0.5) * GameConfig.TILE_SIZE if horizontal else (along + 0.0) * GameConfig.TILE_SIZE
+		lbl.position = Vector3(cx, 0.065, cz)
+		parent.add_child(lbl)
 
 func _ensure_buildings_root() -> void:
 	_buildings_root = get_node_or_null("Buildings") as Node3D
@@ -134,15 +386,21 @@ func _ensure_objects_root() -> void:
 ## Decorative forest trees are solid (nav routes around them via blocked_tiles)
 ## and count as "tree" for the kill matrix (a car that reaches one wrecks).
 func _build_trees() -> void:
-	for pos in GameConfig.TREE_POSITIONS:
+	for pos in MemphisLayout.tree_tiles():
 		var wp := GameConfig.tile_to_world(Vector2(pos))
 		_spawn_world_object("tree_decor", Vector3(wp.x, 0, wp.z), trees_root)
 
-## Houses are solid and lethal to vehicles that crash into them.
+## Houses are solid and lethal to vehicles that crash into them. Downtown gets
+## towers instead, plus the Pyramid landmark at the north end.
 func _build_buildings() -> void:
-	for pos in GameConfig.BUILDING_POSITIONS:
+	for pos in MemphisLayout.house_tiles():
 		var wp := GameConfig.tile_to_world(Vector2(pos))
 		_spawn_world_object("building", Vector3(wp.x, 0, wp.z), _buildings_root)
+	for pos in MemphisLayout.tower_tiles():
+		var wp := GameConfig.tile_to_world(Vector2(pos))
+		_spawn_world_object("tower", Vector3(wp.x, 0, wp.z), _buildings_root)
+	var pyr := GameConfig.tile_to_world(Vector2(MemphisLayout.PYRAMID_TILE))
+	_spawn_world_object("pyramid", Vector3(pyr.x, 0, pyr.z), _buildings_root)
 
 ## Interactive/shapeshiftable objects (landfill starter junk + road traps).
 ## These are the CLIENT-CONFIG fallback set: they render immediately (offline or
@@ -165,7 +423,7 @@ func _build_landfill() -> void:
 	tint.mesh = plane
 	tint.position = Vector3(
 		(rect.position.x + rect.size.x * 0.5) * GameConfig.TILE_SIZE,
-		0.02,
+		0.05, # above the region tint layers (0.018-0.030)
 		(rect.position.y + rect.size.y * 0.5) * GameConfig.TILE_SIZE
 	)
 	var mat := StandardMaterial3D.new()
@@ -185,6 +443,10 @@ func _object_cfg(key: String) -> Dictionary:
 			return {"kind": "tree", "form_key": "", "visual": "tree", "radius": 0.5, "display_name": "Tree"}
 		"building":
 			return {"kind": "building", "form_key": "", "visual": "building", "radius": 0.9, "display_name": "House"}
+		"tower":
+			return {"kind": "building", "form_key": "", "visual": "tower", "radius": 0.85, "display_name": "Tower"}
+		"pyramid":
+			return {"kind": "building", "form_key": "", "visual": "pyramid", "radius": 1.1, "display_name": "The Pyramid"}
 		"altima":
 			return {"kind": "prop", "form_key": FormDefs.ALTIMA, "visual": "altima", "radius": 0.55, "display_name": "Rusty Altima"}
 		"magnolia":
@@ -423,9 +685,55 @@ func _in_smoke(world_pos: Vector3) -> bool:
 			return true
 	return false
 
+func _process(delta: float) -> void:
+	_update_occlusion_fades(delta)
+	_update_smoke_clouds()
+
+## Fade any tall solid (building/tower/tree/pyramid) that sits between the
+## camera and the local player so the player is never hidden behind it.
+## Cheap segment test in XZ + a height check, throttled to 10Hz.
+var _occ_accum := 0.0
+
+func _update_occlusion_fades(delta: float) -> void:
+	_occ_accum += delta
+	if _occ_accum < 0.1:
+		return
+	_occ_accum = 0.0
+	var player := GameState.player_creature
+	var cam := get_viewport().get_camera_3d() if is_inside_tree() else null
+	var have_ray: bool = player != null and is_instance_valid(player) and cam != null
+	var a := Vector2.ZERO
+	var ab := Vector2.ZERO
+	var ab_len2 := 0.0
+	var cam_y := 0.0
+	var player_y := 0.0
+	if have_ray:
+		a = Vector2(cam.global_position.x, cam.global_position.z)
+		var b := Vector2(player.position.x, player.position.z)
+		ab = b - a
+		ab_len2 = ab.length_squared()
+		cam_y = cam.global_position.y
+		player_y = player.position.y + 0.4
+	for obj in GameState.world_objects:
+		if not is_instance_valid(obj):
+			continue
+		if obj.kind != "building" and obj.kind != "tree":
+			continue
+		var fade := false
+		if have_ray and ab_len2 > 0.01:
+			var o := Vector2(obj.position.x, obj.position.z)
+			var t := clampf((o - a).dot(ab) / ab_len2, 0.0, 1.0)
+			# Ignore hits basically at the player/camera; only true in-betweens.
+			if t > 0.05 and t < 0.97:
+				var closest := a + ab * t
+				if closest.distance_to(o) < obj.radius + 0.45:
+					var ray_h := lerpf(cam_y, player_y, t)
+					fade = ray_h < obj.occlusion_height()
+		obj.set_occlusion_faded(fade)
+
 ## Expire finished clouds and apply concealment: remote players and loose money
 ## inside any cloud are invisible (the local player always sees themself).
-func _process(_delta: float) -> void:
+func _update_smoke_clouds() -> void:
 	if _smoke_clouds.is_empty():
 		return
 	var now := Time.get_ticks_msec()
@@ -578,8 +886,7 @@ func _scatter_money(world_pos: Vector3, scatter_radius: float) -> void:
 		var dist := randf_range(1.5, 3.0)
 		var cur_tile := Vector2(GameConfig.world_to_tile(obj.position))
 		var new_tile := cur_tile + away * dist + Vector2(randf_range(-0.6, 0.6), randf_range(-0.6, 0.6))
-		new_tile.x = clampf(new_tile.x, 1.0, GameConfig.MAP_W - 2.0)
-		new_tile.y = clampf(new_tile.y, 1.0, GameConfig.MAP_H - 2.0)
+		new_tile = GameConfig.safe_drop_tile(new_tile) # never fling money into the river
 		var new_pos := GameConfig.tile_to_world(new_tile)
 		obj.respawn_at(new_pos)
 		obj.spawn_world_pos = new_pos
@@ -603,7 +910,7 @@ func spawn_blood_splat(world_pos: Vector3) -> void:
 	puddle.top_radius = 0.3
 	puddle.bottom_radius = 0.3
 	puddle.height = 0.02
-	splat.add_child(_flat_blob(puddle, mat, Vector3(0, 0.035, 0)))
+	splat.add_child(_flat_blob(puddle, mat, Vector3(0, 0.062, 0)))
 	# Scattered droplets around it.
 	for i in 5:
 		var drop := CylinderMesh.new()
@@ -613,7 +920,7 @@ func spawn_blood_splat(world_pos: Vector3) -> void:
 		drop.height = 0.02
 		var ang := randf() * TAU
 		var d := randf_range(0.25, 0.55)
-		splat.add_child(_flat_blob(drop, mat, Vector3(cos(ang) * d, 0.03, sin(ang) * d)))
+		splat.add_child(_flat_blob(drop, mat, Vector3(cos(ang) * d, 0.058, sin(ang) * d)))
 	var tween := create_tween()
 	tween.tween_interval(4.0)                                # stay vivid for a beat
 	tween.tween_property(mat, "albedo_color:a", 0.0, 4.0)   # then fade out
@@ -693,7 +1000,7 @@ func sync_remote_creatures(rows: Array) -> void:
 
 func show_click_marker(world_pos: Vector3) -> void:
 	click_marker.visible = true
-	click_marker.position = world_pos + Vector3(0, 0.05, 0)
+	click_marker.position = world_pos + Vector3(0, 0.09, 0)
 	var tween := create_tween()
 	tween.tween_property(click_marker, "scale", Vector3(1.2, 1.2, 1.2), 0.25)
 	tween.tween_callback(func(): click_marker.visible = false)

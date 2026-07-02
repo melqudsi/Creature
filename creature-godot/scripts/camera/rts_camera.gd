@@ -5,7 +5,7 @@ extends Camera3D
 @export var edge_pan_speed := 12.0
 @export var edge_margin := 18
 @export var zoom_min := 8.0
-@export var zoom_max := 40.0
+@export var zoom_max := 55.0 # Memphis map is 5x the old one; allow a wider overview
 @export var zoom_step := 1.0
 @export var pinch_zoom_sensitivity := 1.0
 

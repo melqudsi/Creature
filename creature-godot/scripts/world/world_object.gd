@@ -93,3 +93,45 @@ func respawn_at(pos: Vector3) -> void:
 	visible = true
 	carried_by = ""
 	_refresh_owner_label()
+
+# ---------------------------------------------------------------------------
+# Occlusion fade: when this object sits between the camera and the player, the
+# world fades it to ~30% alpha so the player stays visible behind buildings.
+# ---------------------------------------------------------------------------
+
+var _occlusion_faded := false
+
+## Approximate visual height, used to test whether the camera->player sight
+## line actually passes through this object (tall towers occlude from far away,
+## small props never do).
+func occlusion_height() -> float:
+	match visual:
+		"tower":
+			return 3.6
+		"pyramid":
+			return 2.5
+		"building":
+			return 1.4
+		"tree", "magnolia":
+			return 2.0
+		_:
+			return 0.9
+
+func set_occlusion_faded(faded: bool) -> void:
+	if faded == _occlusion_faded:
+		return
+	_occlusion_faded = faded
+	_apply_fade(self, faded)
+
+func _apply_fade(node: Node, faded: bool) -> void:
+	for ch in node.get_children():
+		if ch is MeshInstance3D:
+			var mi := ch as MeshInstance3D
+			var mat := mi.material_override as StandardMaterial3D
+			if mat:
+				mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA if faded else BaseMaterial3D.TRANSPARENCY_DISABLED
+				mat.albedo_color.a = 0.3 if faded else 1.0
+			# Drop the shadow too, or the see-through spot stays dark.
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF if faded \
+				else GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		_apply_fade(ch, faded)

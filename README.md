@@ -17,7 +17,7 @@ The Phase-1 fun loop from the PDF is built in the Godot client:
 - **Kill/collision matrix** — Altima squishes aliens; tree/pothole/building/propane wreck an Altima; propane explodes (bright, visible blast + light) with a lethal radius. Death shows a funny line and respawns you at the dump. **Kills are CLIENT-LOCAL:** each client only ever decides whether *its own* player dies (remote blast damage is not synced in Slice 1).
 - **World-object shared state (Supabase)** — interactive objects live in a shared `public.world_objects` table so all clients agree on them. Becoming an object marks it `possessed` (hidden as a standalone prop for everyone → no duplicate); popping out releases it `idle` at your current spot so it **persists for everyone, even across disconnect**. The client **degrades gracefully** if the table doesn't exist yet (falls back to client-local placement, logs a notice).
 - **Form sync** — `creatures.form` column syncs each player's current form so others see your Altima/tree/etc.
-- **Region label** — bottom-left HUD label shows the current region (**"The Dump"** in the landfill, **"Memphis"** elsewhere); extend `GameConfig.region_for_tile()` for new regions.
+- **Region label** — bottom-left HUD label shows the current region (sub-zones like **"The Dump"** win, then the Memphis regions from `MemphisLayout.REGIONS` — Downtown, Midtown, Mud Island, etc.); extend `GameConfig.region_for_tile()` / `MemphisLayout` for new regions.
 - **Toasts** — shapeshift/death/status messages appear as a **top banner** (out of the way).
 
 ### Required Supabase migrations
@@ -78,6 +78,24 @@ Step 6 of the PDF (the last Phase-1 system) plus the Step-5 leftover. Money now 
 - **Explosion money scatter (Step 5 gap)** — explosions now fling nearby loose money 1.5–3 tiles outward to synced positions. Scattered, never destroyed (design rule).
 
 No new Supabase migration needed — the smoker and smoke clouds reuse `world_objects` as-is; existing worlds top-up-seed the smoker automatically on first poll.
+
+---
+
+## Slice 4 — Memphis map (current)
+
+The world is now a simplified, walkable-scale Memphis: **160×112 tiles** (~2:40 east-west on foot at 1 tile/sec). All layout data lives in [`scripts/world/memphis_layout.gd`](creature-godot/scripts/world/memphis_layout.gd) (`MemphisLayout`):
+
+- **Regions** (first-match rects, drive the HUD label + ground tints): Downtown, North Memphis, Midtown, East Memphis, South Memphis, Bartlett, Cordova, Germantown, Collierville, Mud Island, Mississippi River, Hernando de Soto Bridge.
+- **Roads** (visual strips, walkable, divide the regions): I-40 (dead-ends at the east map edge), the I-240 loop, 385, Poplar, Union, Walnut Grove, Summer Ave, Stage Rd, Front St, Riverside Dr, Elvis Presley Blvd, Winchester Rd, Germantown Rd, Houston Levee Rd. Every road is **two lanes** with a yellow center divider and **street names painted flat on the asphalt** (repeated along long roads).
+- **NPC traffic** — ambient Altimas (26) and MATA buses (5) drive both lanes of every road (right-hand traffic, u-turns at dead ends, including over the M Bridge). **Client-local** like kills: each client simulates its own traffic; only whether *your* player gets run over matters. A moving NPC kills exactly what a moving player-driven vehicle would (`FormDefs.resolve_player_death`) — crossing the street is now genuinely dangerous. See [`scripts/world/npc_traffic.gd`](creature-godot/scripts/world/npc_traffic.gd).
+- **Occlusion fade** — any building/tower/tree/pyramid sitting between the camera and your player fades to ~30% alpha (shadow dropped too) so you're never hidden behind Downtown towers. Cheap XZ segment + height test at 10Hz in `world_map.gd::_update_occlusion_fades()`.
+- **The river & elevation** — the Mississippi runs down the west edge as a **sunken water plane** (~0.45 below land, with a bluff bank wall); land stays flat at y=0 so movement/collision is untouched. Water tiles are blocked (pathfinding routes to the bank; `GameConfig.safe_drop_tile()` keeps dropped/scattered money out of the water).
+- **Hernando de Soto "M" Bridge** — walkable deck over the river at Downtown's north end with the two white arches; **dead-ends at the west map edge**. It also passes over **Mud Island** (a park peninsula in the river), which is how you walk onto the island.
+- **Old world = South Memphis** — the original 32×24 map (Dump, BBQ Corner, Bus Stop, all seeded objects, trees, houses) is embedded intact at `GameConfig.OLD_WORLD_OFFSET` (tile +20,+80). Legacy saved creature positions are auto-remapped on session restore (`db_row_to_player_data`, local player only, flushed back on the next save/heartbeat).
+- **Scatter** — per-region houses/trees (plus Downtown towers, the Pyramid landmark, and an Overton Park tree cluster) are generated from a **fixed seed** (`MemphisLayout.SCATTER_SEED`) so every client builds the identical world — blocked tiles must agree across players.
+- **Perf** — `GameState.blocked_tiles` became a Dictionary (water alone is ~1,600 tiles; the old Array would make A* crawl). Worst-case cross-map path ≈ 220ms once per click; typical clicks are ≤ 1ms.
+
+**Post-deploy, one-time:** old `world_objects` rows hold old-map coordinates. Log in as `MOE` → admin panel → **Reset ALL World Objects** to wipe + re-seed them at the South Memphis positions. (Already done for the current shared DB.)
 
 ---
 
@@ -167,7 +185,7 @@ Constants in web `_arc/js/game.js` (archived) and Godot `scripts/config.gd` (`Ga
 
 | Rule | Value |
 |------|-------|
-| Map | 32×24 tiles, 16 trees, 6 buildings |
+| Map | 160×112 tiles (Memphis layout; ~2:40 walk east-west at 1 tile/sec) |
 | Move speed | 1 tile/sec (Godot); web also has stamina rules |
 | Name | Max 10 chars |
 

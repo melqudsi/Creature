@@ -706,9 +706,7 @@ func pop_out() -> void:
 	if not is_player or is_dead or is_alien_form():
 		return
 	_stop_movement()
-	var drop_tile := grid_pos + Vector2(0.9, 0.0)
-	drop_tile.x = clampf(drop_tile.x, 1.0, GameConfig.MAP_W - 2.0)
-	drop_tile.y = clampf(drop_tile.y, 1.0, GameConfig.MAP_H - 2.0)
+	var drop_tile := GameConfig.safe_drop_tile(grid_pos + Vector2(0.9, 0.0))
 	if _active_object and is_instance_valid(_active_object):
 		# Drop the object just beside us at our CURRENT location and leave it
 		# there. In shared mode this writes the new position + idle state to the
@@ -804,9 +802,7 @@ func _count_world_stacks() -> int:
 ## Spawn a fresh stack on a tile right beside the smoker (synced when online).
 func _generate_money_stack() -> void:
 	var offs: Array[Vector2] = [Vector2(1, 0), Vector2(-1, 0), Vector2(0, 1), Vector2(0, -1), Vector2(1, 1), Vector2(-1, 1)]
-	var tile: Vector2 = grid_pos + offs[randi() % offs.size()]
-	tile.x = clampf(tile.x, 1.0, GameConfig.MAP_W - 2.0)
-	tile.y = clampf(tile.y, 1.0, GameConfig.MAP_H - 2.0)
+	var tile: Vector2 = GameConfig.safe_drop_tile(grid_pos + offs[randi() % offs.size()])
 	GameState.show_toast("BBQ sold — fresh money stack!")
 	var new_id := ""
 	if NetworkService.is_online():
@@ -928,9 +924,7 @@ func drop_all() -> void:
 		if obj == null or not is_instance_valid(obj):
 			i += 1
 			continue
-		var drop_tile := base_tile + _drop_offset(i)
-		drop_tile.x = clampf(drop_tile.x, 1.0, GameConfig.MAP_W - 2.0)
-		drop_tile.y = clampf(drop_tile.y, 1.0, GameConfig.MAP_H - 2.0)
+		var drop_tile := GameConfig.safe_drop_tile(base_tile + _drop_offset(i))
 		i += 1
 		var wp := GameConfig.tile_to_world(drop_tile)
 		# Claim: hauling a bag/vault you don't own into the landfill steals it.
@@ -968,9 +962,7 @@ func _drop_carried_entries(entries: Array, base_tile: Vector2) -> void:
 		if obj == null or not is_instance_valid(obj):
 			i += 1
 			continue
-		var drop_tile := base_tile + _drop_offset(i)
-		drop_tile.x = clampf(drop_tile.x, 1.0, GameConfig.MAP_W - 2.0)
-		drop_tile.y = clampf(drop_tile.y, 1.0, GameConfig.MAP_H - 2.0)
+		var drop_tile := GameConfig.safe_drop_tile(base_tile + _drop_offset(i))
 		i += 1
 		var wp := GameConfig.tile_to_world(drop_tile)
 		obj.carried_by = ""
@@ -1117,9 +1109,7 @@ func _drop_carried_on_death() -> void:
 		if obj == null or not is_instance_valid(obj):
 			i += 1
 			continue
-		var drop_tile := grid_pos + _drop_offset(i)
-		drop_tile.x = clampf(drop_tile.x, 1.0, GameConfig.MAP_W - 2.0)
-		drop_tile.y = clampf(drop_tile.y, 1.0, GameConfig.MAP_H - 2.0)
+		var drop_tile := GameConfig.safe_drop_tile(grid_pos + _drop_offset(i))
 		i += 1
 		var wp := GameConfig.tile_to_world(drop_tile)
 		obj.carried_by = ""

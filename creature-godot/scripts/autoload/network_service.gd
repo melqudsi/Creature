@@ -673,6 +673,17 @@ func db_row_to_player_data(row: Dictionary, for_player: bool = true) -> Dictiona
 	_note_row_columns(row)
 	var color := GameConfig.color_from_hex(str(row.get("color", "")))
 	var form := str(row.get("form", "alien"))
+	var x := float(row.get("x", GameConfig.LANDFILL_CENTER.x))
+	var y := float(row.get("y", GameConfig.LANDFILL_CENTER.y))
+	# Legacy-map migration: positions saved on the pre-Memphis 32x24 map restore
+	# into the old world's new home inside South Memphis. Local player only —
+	# the position is flushed back on spawn/heartbeat, so it self-heals in the
+	# DB and remotes are never shown remapped coordinates their own client
+	# doesn't agree with. (Rare false positive: someone parked in far-west
+	# North Memphis gets one teleport south; acceptable for the prototype.)
+	if for_player and x < 32.0 and y < 24.0:
+		x += float(GameConfig.OLD_WORLD_OFFSET.x)
+		y += float(GameConfig.OLD_WORLD_OFFSET.y)
 	return {
 		"id": str(row.get("id", "")),
 		"user_id": str(row.get("user_id", "")),
@@ -680,8 +691,8 @@ func db_row_to_player_data(row: Dictionary, for_player: bool = true) -> Dictiona
 		"color": color,
 		"appearance": "worm",
 		"form": form,
-		"x": clampf(float(row.get("x", GameConfig.MAP_W / 2)), 0.0, GameConfig.MAP_W - 1.0),
-		"y": clampf(float(row.get("y", GameConfig.MAP_H / 2)), 0.0, GameConfig.MAP_H - 1.0),
+		"x": clampf(x, 0.0, GameConfig.MAP_W - 1.0),
+		"y": clampf(y, 0.0, GameConfig.MAP_H - 1.0),
 		"size_level": int(row.get("size_level", 1)),
 		"is_player": for_player,
 		"is_remote": not for_player,

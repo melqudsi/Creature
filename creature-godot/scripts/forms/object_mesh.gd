@@ -37,6 +37,10 @@ static func build(visual: String, tint: Color = Color(0.6, 0.6, 0.6)) -> Node3D:
 			return _build_cone()
 		"building":
 			return _build_building()
+		"tower":
+			return _build_tower()
+		"pyramid":
+			return _build_pyramid()
 		_:
 			return _build_trash()
 
@@ -158,6 +162,42 @@ static func _build_building() -> Node3D:
 	door_mesh.size = Vector3(0.28, 0.45, 0.04)
 	root.add_child(_mesh_node(door_mesh, _mat(Color(0.23, 0.13, 0.07)), Vector3(0, 0.225, -0.65)))
 	root.rotation.y = [0.0, PI * 0.5, PI, PI * 1.5][randi() % 4]
+	return root
+
+## Downtown office tower: tall box with window bands, randomized height/shade.
+static func _build_tower() -> Node3D:
+	var root := Node3D.new()
+	var h := randf_range(2.2, 3.6)
+	var body := BoxMesh.new()
+	body.size = Vector3(1.35, h, 1.15)
+	var shade := Color.from_hsv(randf_range(0.55, 0.62), 0.12, randf_range(0.55, 0.75))
+	root.add_child(_mesh_node(body, _mat(shade, 0.6, 0.1), Vector3(0, h * 0.5, 0)))
+	var band_mat := _mat(Color(0.16, 0.22, 0.3), 0.25, 0.2)
+	var y := 0.5
+	while y < h - 0.3:
+		var band := BoxMesh.new()
+		band.size = Vector3(1.4, 0.12, 1.2)
+		root.add_child(_mesh_node(band, band_mat, Vector3(0, y, 0)))
+		y += 0.55
+	var roof := BoxMesh.new()
+	roof.size = Vector3(0.5, 0.25, 0.5)
+	root.add_child(_mesh_node(roof, _mat(Color(0.25, 0.27, 0.3), 0.7), Vector3(0.2, h + 0.12, 0.1)))
+	return root
+
+## The Memphis Pyramid: a shiny 4-sided pyramid (cylinder with 4 radial segs).
+static func _build_pyramid() -> Node3D:
+	var root := Node3D.new()
+	var pyr := CylinderMesh.new()
+	pyr.top_radius = 0.0
+	pyr.bottom_radius = 1.5
+	pyr.height = 2.3
+	pyr.radial_segments = 4
+	var node := _mesh_node(pyr, _mat(Color(0.75, 0.78, 0.82), 0.25, 0.75), Vector3(0, 1.15, 0))
+	node.rotation.y = PI * 0.25
+	root.add_child(node)
+	var base := BoxMesh.new()
+	base.size = Vector3(2.3, 0.15, 2.3)
+	root.add_child(_mesh_node(base, _mat(Color(0.4, 0.42, 0.45), 0.8), Vector3(0, 0.075, 0)))
 	return root
 
 static func _build_mata_bus() -> Node3D:

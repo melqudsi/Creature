@@ -15,10 +15,10 @@ static func clamp_tile(tile: Vector2i) -> Vector2i:
 		clampi(tile.y, 0, GameConfig.MAP_H - 1)
 	)
 
-static func is_blocked(tile: Vector2i, blocked_tiles: Array[Vector2i], unit_tiles: Dictionary) -> bool:
+static func is_blocked(tile: Vector2i, blocked_tiles: Dictionary, unit_tiles: Dictionary) -> bool:
 	if not in_bounds(tile):
 		return true
-	if tile in blocked_tiles:
+	if blocked_tiles.has(tile):
 		return true
 	if unit_tiles.has(tile):
 		return true
@@ -30,7 +30,7 @@ static func distance(a: Vector2, b: Vector2) -> float:
 static func find_path(
 	from: Vector2,
 	target: Vector2,
-	blocked_tiles: Array[Vector2i],
+	blocked_tiles: Dictionary,
 	unit_tiles: Dictionary
 ) -> Array[Vector2]:
 	var start := Vector2i(int(round(from.x)), int(round(from.y)))
@@ -87,7 +87,7 @@ static func find_path(
 static func nearest_walkable(
 	goal: Vector2i,
 	start: Vector2i,
-	blocked_tiles: Array[Vector2i],
+	blocked_tiles: Dictionary,
 	unit_tiles: Dictionary
 ) -> Vector2i:
 	if not is_blocked(goal, blocked_tiles, unit_tiles):
@@ -120,7 +120,7 @@ static func nearest_walkable(
 static func simplify_path(
 	from: Vector2,
 	path: Array[Vector2],
-	blocked_tiles: Array[Vector2i],
+	blocked_tiles: Dictionary,
 	unit_tiles: Dictionary
 ) -> Array[Vector2]:
 	if path.is_empty():
@@ -146,7 +146,7 @@ static func simplify_path(
 static func has_clear_path(
 	from: Vector2i,
 	to: Vector2i,
-	blocked_tiles: Array[Vector2i],
+	blocked_tiles: Dictionary,
 	unit_tiles: Dictionary
 ) -> bool:
 	if from == to:
@@ -211,7 +211,7 @@ static func _pop_lowest(open: Array[Vector2i], f_score: Dictionary) -> Vector2i:
 static func step_toward(
 	from: Vector2,
 	target: Vector2,
-	blocked_tiles: Array[Vector2i],
+	blocked_tiles: Dictionary,
 	unit_tiles: Dictionary
 ) -> Vector2i:
 	var path := find_path(from, target, blocked_tiles, unit_tiles)
