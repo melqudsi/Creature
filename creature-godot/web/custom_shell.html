@@ -272,7 +272,7 @@ window.CreatureNet = (function () {
 		</div>
 
 		<!-- Build stamp: keep the string in sync with GameConfig.BUILD_ID. -->
-		<div id="build-stamp">build 2026-07-02e</div>
+		<div id="build-stamp">build 2026-07-02f</div>
 
 		<script src="$GODOT_URL"></script>
 		<script>
@@ -301,6 +301,33 @@ const GODOT_THREADS_ENABLED = $GODOT_THREADS_ENABLED;
 		});
 	} catch (_e) { /* engine falls back to native innerWidth/innerHeight */ }
 })();
+
+// A physical rotate + rotate-back is what "heals" the remaining standalone
+// launch quirk: WebKit's UI-process touch mapping can be offset at launch even
+// though layout, rendering, and every DOM geometry API look correct (taps land
+// above where you touch). Nothing in JS can *detect* that state, so instead we
+// force the same viewport rebuild a rotation performs: re-commit the viewport
+// meta tag and do a 1px scroll dance.
+function recalcStandaloneViewport() {
+	const standalone = window.navigator.standalone === true
+		|| (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+	if (!standalone) return;
+	try {
+		const meta = document.querySelector('meta[name="viewport"]');
+		if (meta) {
+			const original = meta.getAttribute('content');
+			// Must actually change for WebKit to reprocess it; restored next frame.
+			meta.setAttribute('content', original + ', shrink-to-fit=no');
+			requestAnimationFrame(() => {
+				try { meta.setAttribute('content', original); } catch (_e) {}
+			});
+		}
+		window.scrollTo(0, 1);
+		requestAnimationFrame(() => {
+			try { window.scrollTo(0, 0); } catch (_e) {}
+		});
+	} catch (_e) {}
+}
 
 function isDevServer() {
 	const params = new URLSearchParams(location.search);
@@ -423,6 +450,11 @@ async function prepareCachesForDev() {
 			setupServiceWorkerAutoUpdate();
 			setupMobileFullscreen();
 			setupViewportResizeKicks();
+			// Heal the launch-time touch-mapping offset without needing a physical
+			// rotate + rotate-back: once shortly after start (engine already sized),
+			// again later in case iOS settled late, and on the very first touch.
+			[250, 1200, 2500].forEach((t) => setTimeout(recalcStandaloneViewport, t));
+			window.addEventListener('touchstart', () => recalcStandaloneViewport(), { once: true, passive: true });
 		}, displayFailureNotice);
 	}
 })();
