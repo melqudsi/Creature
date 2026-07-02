@@ -223,6 +223,7 @@ Godot **4.7+**, Forward+. **Boot flow:** `main.gd` → `await NetworkService.boo
 | Uppercase name rule (dedupes case-variant profiles) | Done |
 | Admin panel (MOE-only): configurable pain test + profile deletion + logs | Done |
 | PWA portrait + landscape (no forced landscape lock) | Done |
+| Responsive display: 720×720 base + `stretch/aspect="expand"` (short side = 720 design px, no letterboxing; camera flips to `KEEP_WIDTH` in portrait) | Done |
 | Creature appearance customization | **Bypassed** |
 | Health / stamina (Godot) | **Removed** |
 | Fight / eat / persistent AI | **Removed** |
@@ -348,7 +349,7 @@ Or from the editor:
 
 ### Build stamp + PWA cache-busting
 
-- `GameConfig.BUILD_ID` (currently **`build 2026-07-02a`**) is shown bottom-right in the web shell and on the onboarding screen so users can confirm they loaded a fresh build. **Bump this string on every new build you ship** (and match the `#build-stamp` literal in `creature-godot/web/custom_shell.html`) whenever you re-export the web build.
+- `GameConfig.BUILD_ID` (currently **`build 2026-07-02b`**) is shown bottom-right in the web shell and on the onboarding screen so users can confirm they loaded a fresh build. **Bump this string on every new build you ship** (and match the `#build-stamp` literal in `creature-godot/web/custom_shell.html`) whenever you re-export the web build.
 - Godot's default service worker is cache-first and never `skipWaiting()`s, which caused the recurring "old cached build keeps loading" bug. `custom_shell.html` now runs `setupServiceWorkerAutoUpdate()`: on reload it calls `registration.update()`, and on `updatefound` posts `'update'` to the new worker → `controllerchange` triggers a one-time reload. It is skipped on the dev-server path (which already unregisters SWs).
 
 | Export setting | Value | Why |

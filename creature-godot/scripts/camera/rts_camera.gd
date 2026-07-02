@@ -143,6 +143,7 @@ func _camera_offset() -> Vector3:
 	return Vector3(sy * cp, sp, cy * cp) * _desired_distance
 
 func _process(delta: float) -> void:
+	_update_aspect_mode()
 	if follow_target and is_instance_valid(follow_target):
 		var wp := GameConfig.tile_to_world(follow_target.grid_pos)
 		_focus = _focus.lerp(Vector3(wp.x, 0, wp.z), delta * follow_smooth)
@@ -179,6 +180,18 @@ func _process(delta: float) -> void:
 
 	_clamp_focus()
 	_update_position(false)
+
+func _update_aspect_mode() -> void:
+	# In portrait, apply the FOV to the (narrow) width instead of the height so
+	# the horizontal view stays as wide as landscape and the extra screen length
+	# shows more of the map vertically. Prevents a cramped strip in portrait.
+	var vp := get_viewport()
+	if vp == null:
+		return
+	var size := vp.get_visible_rect().size
+	var want := Camera3D.KEEP_WIDTH if size.x < size.y else Camera3D.KEEP_HEIGHT
+	if keep_aspect != want:
+		keep_aspect = want
 
 func _clamp_focus() -> void:
 	var half_w := GameConfig.MAP_W * GameConfig.TILE_SIZE * 0.5

@@ -216,6 +216,12 @@ Buildings use a box body, flat red roof slab, chimney, and door. Avoid using the
 - Shell: [`web/custom_shell.html`](web/custom_shell.html) — **no** `screen.orientation.lock('landscape')`, **no** fullscreen retry on `orientationchange` (causes flashing when returning to portrait)
 - After manifest changes: remove and re-add to home screen on iOS
 
+### Responsive display (portrait + landscape + any desktop shape)
+
+- `project.godot` display settings: base viewport **720×720** with `stretch/mode="canvas_items"` and `stretch/aspect="expand"`. The *short* side of any window always maps to 720 design units and the long side expands — no letterboxing, and UI keeps a consistent physical size in portrait, landscape, and ultrawide. (`window_width_override`/`window_height_override` keep the editor run window at 1280×720.)
+- All HUD/onboarding layouts must fit within a 720px-wide strip (centered panels ≤ ~640px wide) so portrait never clips them; the spawn panel is 480px wide.
+- `rts_camera.gd` `_update_aspect_mode()` switches the camera to `KEEP_WIDTH` when the viewport is taller than wide, so portrait keeps the same horizontal view as landscape and gains vertical view instead of cramping.
+
 ## Key files
 
 | File | Role |
@@ -255,7 +261,7 @@ Dev mode on `:8443` / `:8080` clears service worker cache (no incognito needed).
 
 **Build freshness / cache-busting:**
 
-- Bump `GameConfig.BUILD_ID` (currently `build 2026-07-02a`) and the matching `#build-stamp` string in `custom_shell.html` on each shipped build (every time you re-export the web build). It renders bottom-right in the shell and on the onboarding screen so users can confirm a fresh load.
+- Bump `GameConfig.BUILD_ID` (currently `build 2026-07-02b`) and the matching `#build-stamp` string in `custom_shell.html` on each shipped build (every time you re-export the web build). It renders bottom-right in the shell and on the onboarding screen so users can confirm a fresh load.
 - `custom_shell.html` runs `setupServiceWorkerAutoUpdate()` to force-activate a newer service worker on reload (Godot's default SW is cache-first and never `skipWaiting()`s). Skipped on the dev-server path.
 - **Do not grep `index.pck`** to judge freshness — GDScript compiles to `.gdc` bytecode, so string literals aren't plain-text there. Check `CACHE_VERSION` in the repo-root `index.service.worker.js` and file timestamps instead.
 - **GitHub Pages requires `variant/thread_support=false`** in `export_presets.cfg` — Pages can't send COOP/COEP headers, so a threaded build errors with "SharedArrayBuffer missing" in production (local dev servers send the headers, hiding the bug). Deploy = export → commit root export files → push `main`.
