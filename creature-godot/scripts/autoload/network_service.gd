@@ -239,6 +239,15 @@ func _build_world_object_seed() -> Array:
 		var tile: Vector2 = entry["tile"]
 		out.append({"type": str(entry["key"]), "x": tile.x, "y": tile.y, "state": "idle"})
 	out.append_array(_slice5_seed_rows())
+	out.append_array(_slice6_seed_rows())
+	return out
+
+## Slice 6 rows: parked Altimas + carts in the Kroger lots.
+func _slice6_seed_rows() -> Array:
+	var out: Array = []
+	for entry in GameConfig.slice6_seed_objects():
+		var tile: Vector2 = entry["tile"]
+		out.append({"type": str(entry["key"]), "x": tile.x, "y": tile.y, "state": "idle"})
 	return out
 
 ## Slice 5 rows (road potholes, Midtown/Downtown BBQ trailers). Entries flagged
@@ -261,8 +270,8 @@ func _slice5_seed_rows() -> Array:
 func _maybe_seed_slice2_objects(rows: Array) -> void:
 	if _slice2_seed_attempted or not _world_objects_available:
 		return
-	var found := _note_seed_types(rows, {"money": false, "bus": false, "smoker": false, "slice5": false})
-	if found.money and found.bus and found.smoker and found.slice5:
+	var found := _note_seed_types(rows, {"money": false, "bus": false, "smoker": false, "slice5": false, "slice6": false})
+	if found.money and found.bus and found.smoker and found.slice5 and found.slice6:
 		_slice2_seed_attempted = true
 		return
 	_slice2_seed_attempted = true
@@ -286,11 +295,13 @@ func _maybe_seed_slice2_objects(rows: Array) -> void:
 		payload.append({"type": str(entry["key"]), "x": tile.x, "y": tile.y, "state": "idle"})
 	if not found.slice5:
 		payload.append_array(_slice5_seed_rows())
+	if not found.slice6:
+		payload.append_array(_slice6_seed_rows())
 	if payload.is_empty():
 		return
 	var created := await seed_world_objects(payload)
 	if not created.is_empty():
-		_log("Top-up seeded %d world objects (money/bus/smoker/slice5)" % created.size())
+		_log("Top-up seeded %d world objects (money/bus/smoker/slice5/slice6)" % created.size())
 
 func _note_seed_types(rows: Array, found: Dictionary) -> Dictionary:
 	for row in rows:
@@ -307,6 +318,10 @@ func _note_seed_types(rows: Array, found: Dictionary) -> Dictionary:
 			# (Midtown/Downtown trailers) means the slice-5 seed already ran.
 			if float(row.get("y", 999.0)) < 60.0:
 				found.slice5 = true
+		elif t == "cart":
+			# Slice 6 marker: a cart outside the old world = Kroger lots seeded.
+			if float(row.get("y", 999.0)) < 70.0:
+				found.slice6 = true
 	return found
 
 func _note_world_row_columns(row: Dictionary) -> void:
@@ -697,15 +712,10 @@ func db_row_to_player_data(row: Dictionary, for_player: bool = true) -> Dictiona
 	var form := str(row.get("form", "alien"))
 	var x := float(row.get("x", GameConfig.LANDFILL_CENTER.x))
 	var y := float(row.get("y", GameConfig.LANDFILL_CENTER.y))
-	# Legacy-map migration: positions saved on the pre-Memphis 32x24 map restore
-	# into the old world's new home inside South Memphis. Local player only —
-	# the position is flushed back on spawn/heartbeat, so it self-heals in the
-	# DB and remotes are never shown remapped coordinates their own client
-	# doesn't agree with. (Rare false positive: someone parked in far-west
-	# North Memphis gets one teleport south; acceptable for the prototype.)
-	if for_player and x < 32.0 and y < 24.0:
-		x += float(GameConfig.OLD_WORLD_OFFSET.x)
-		y += float(GameConfig.OLD_WORLD_OFFSET.y)
+	# (The legacy 32x24-map position remap that used to live here is gone: it
+	# false-positived on the whole north-Downtown/Pyramid/Mud Island corner,
+	# teleporting anyone parked there to South Memphis on reload. Old-map saves
+	# migrated days ago and self-healed via the spawn/heartbeat flush.)
 	return {
 		"id": str(row.get("id", "")),
 		"user_id": str(row.get("user_id", "")),

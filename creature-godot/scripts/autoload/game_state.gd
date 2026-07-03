@@ -20,6 +20,10 @@ signal blood_splat_requested(world_pos: Vector3)
 ## player can see what killed them during the respawn countdown.
 signal death_zoom_requested(world_pos: Vector3)
 
+## An abduction is playing nearby: the camera should pull back so the sky beam
+## and ship (which sit far above the normal close-zoom frame) are visible.
+signal abduction_zoom_requested(duration_sec: float)
+
 var creatures: Dictionary = {} # id -> Creature
 var player_creature: Creature = null
 var player_data: Dictionary = {}

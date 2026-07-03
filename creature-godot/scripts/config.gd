@@ -24,7 +24,7 @@ const DEFAULT_CREATURE_NAME := "Creature"
 
 ## Visible build stamp so a loaded build can be identified at a glance.
 ## Keep this in sync with the build-stamp string in web/custom_shell.html.
-const BUILD_ID := "build 2026-07-03a"
+const BUILD_ID := "build 2026-07-03c"
 
 ## Landfill Dump: the spawn/respawn zone (now inside South Memphis — old-world
 ## coords + OLD_WORLD_OFFSET). All new players and respawns appear here.
@@ -150,6 +150,18 @@ static func slice5_seed_objects() -> Array:
 		{"key": "smoker", "tile": Vector2(24, 31), "free": true},
 		{"key": "smoker", "tile": Vector2(28, 42), "free": true},
 	]
+
+## Slice 6: every Kroger gets a lived-in parking lot — two parked Altimas and
+## two stray shopping carts. World coordinates (lot sits just south of the box).
+static func slice6_seed_objects() -> Array:
+	var out: Array = []
+	for site in MemphisLayout.KROGER_SITES:
+		var s := Vector2(site)
+		out.append({"key": "altima", "tile": s + Vector2(-1, 1)})
+		out.append({"key": "altima", "tile": s + Vector2(2, 1)})
+		out.append({"key": "cart", "tile": s + Vector2(0, 2)})
+		out.append({"key": "cart", "tile": s + Vector2(3, 1)})
+	return out
 
 ## Starter money piles (Slice 2) — merged into shared seed on first poll / upgrade.
 static func money_seed_objects() -> Array:

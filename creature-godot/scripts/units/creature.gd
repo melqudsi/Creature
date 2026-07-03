@@ -72,6 +72,8 @@ var _last_prompt_name := ""
 # Altima speed-burst special.
 var _burst_t := 0.0
 var _burst_cd := 0.0
+# Pyramid abduction cooldown (Slice 6).
+var _abduct_cd := 0.0
 # BBQ Smoker (Slice 3): smoke-cloud cooldown + parked money-generation timer.
 var _smoke_cd := 0.0
 var _smoker_gen_t := 0.0
@@ -400,6 +402,8 @@ func _process(delta: float) -> void:
 		_burst_cd = maxf(0.0, _burst_cd - delta)
 	if _smoke_cd > 0.0:
 		_smoke_cd = maxf(0.0, _smoke_cd - delta)
+	if _abduct_cd > 0.0:
+		_abduct_cd = maxf(0.0, _abduct_cd - delta)
 
 	if is_moving:
 		_advance_along_path(delta)
@@ -427,6 +431,11 @@ func _update_transform(snap: bool, delta: float) -> void:
 
 func set_move_target(target: Vector2) -> void:
 	if is_asleep:
+		return
+	# The Pyramid does not move.
+	if FormDefs.speed_mult(form_key) <= 0.0:
+		if is_player:
+			GameState.show_toast("The Pyramid does not move")
 		return
 	_move_target = target
 	if is_player:
@@ -646,6 +655,12 @@ func _prune_carried() -> void:
 func _world_xz() -> Vector2:
 	return Vector2(position.x, position.z)
 
+func _pyramid_claimed() -> bool:
+	for c in GameState.creatures.values():
+		if c != null and is_instance_valid(c) and not c.is_dead and c.form_key == FormDefs.PYRAMID:
+			return true
+	return false
+
 ## Per-frame player scan: find the nearest shapeshift target (for the "Become"
 ## prompt), advance an in-progress shapeshift, and resolve client-local kills.
 func _update_player_interactions(delta: float) -> void:
@@ -665,6 +680,9 @@ func _scan_shapeshift_target() -> void:
 		var best_d := INTERACT_RADIUS
 		for obj in GameState.world_objects:
 			if not is_instance_valid(obj) or obj.consumed or not obj.is_shapeshiftable():
+				continue
+			# Only one Pyramid pilot at a time.
+			if obj.form_key == FormDefs.PYRAMID and _pyramid_claimed():
 				continue
 			var d := my.distance_to(Vector2(obj.position.x, obj.position.z))
 			if d <= best_d:
@@ -738,10 +756,49 @@ func _complete_shapeshift() -> void:
 	# duplicate). No-op for client-local fallback objects (empty object_id).
 	if not obj.object_id.is_empty():
 		NetworkService.possess_world_object(obj.object_id, NetworkService.get_user_id())
+	elif obj.type_key == "tree_decor":
+		# Scenery tree claim: it enters the shared object world (possessed by
+		# us), and every client hides + unblocks the original scenery tree.
+		_register_claimed_tree(obj)
+	if obj.form_key == FormDefs.PYRAMID:
+		# You ARE the Pyramid now. Stand exactly where it stands.
+		position = obj.spawn_world_pos
+		grid_pos = Vector2(GameConfig.world_to_tile(position))
 	apply_form(obj.form_key)
 	# Whatever the new form can't legally hold falls to the ground here.
 	_revalidate_carried_for_form()
-	GameState.show_toast("You became a %s" % FormDefs.display(form_key))
+	if form_key == FormDefs.PYRAMID:
+		GameState.show_toast("You became The Pyramid")
+	else:
+		GameState.show_toast("You became a %s" % FormDefs.display(form_key))
+
+## A claimed scenery tree becomes a shared "tree" row (possessed by us) whose
+## owner_name carries the home tile — other clients use it to hide + unblock
+## the original scenery tree. From then on the tree lives as a normal shared
+## object (walk it somewhere and pop out: it stays there for everyone).
+func _register_claimed_tree(obj: WorldObject) -> void:
+	var home := Vector2i(obj.spawn_tile)
+	var wm := GameState.world_map
+	if wm and is_instance_valid(wm) and wm.has_method("retire_scenery_tree"):
+		wm.retire_scenery_tree(home)
+	obj.type_key = "tree"
+	if not NetworkService.is_online():
+		return
+	var created: Dictionary = await NetworkService.create_world_object({
+		"type": "tree", "x": obj.spawn_tile.x, "y": obj.spawn_tile.y,
+		"state": "possessed", "possessed_by": NetworkService.get_user_id(),
+		"owner_name": "home:%d,%d" % [home.x, home.y],
+	})
+	var new_id := str(created.get("id", ""))
+	if new_id.is_empty() or not is_instance_valid(obj):
+		return
+	obj.object_id = new_id
+	if wm and is_instance_valid(wm) and wm.has_method("track_shared_object"):
+		wm.track_shared_object(obj)
+	# Popped out (or died) before the create landed? Release the row now.
+	if _active_object != obj:
+		var t := Vector2(GameConfig.world_to_tile(obj.position))
+		NetworkService.release_world_object(new_id, t.x, t.y)
 
 ## Claiming a stopped NPC vehicle: the local NPC despawns and a SHARED world
 ## object is born in its place, already possessed by us — so it persists (and
@@ -812,16 +869,27 @@ func pop_out() -> void:
 	if not is_player or is_dead or is_alien_form():
 		return
 	_stop_movement()
+	var was_pyramid := form_key == FormDefs.PYRAMID
 	var drop_tile := GameConfig.safe_drop_tile(grid_pos + Vector2(0.9, 0.0))
 	if _active_object and is_instance_valid(_active_object):
-		# Drop the object just beside us at our CURRENT location and leave it
-		# there. In shared mode this writes the new position + idle state to the
-		# server, so it persists for everyone (and survives our disconnect).
-		_active_object.respawn_at(GameConfig.tile_to_world(drop_tile))
-		if not _active_object.object_id.is_empty():
-			_note_local_authority(_active_object.object_id)
-			NetworkService.release_world_object(_active_object.object_id, drop_tile.x, drop_tile.y)
+		if was_pyramid:
+			# The Pyramid stays exactly where it has always stood; the alien
+			# steps off to a free neighboring tile instead.
+			_active_object.respawn_at(_active_object.spawn_world_pos)
+		else:
+			# Drop the object just beside us at our CURRENT location and leave it
+			# there. In shared mode this writes the new position + idle state to
+			# the server, so it persists for everyone (survives our disconnect).
+			_active_object.respawn_at(GameConfig.tile_to_world(drop_tile))
+			if not _active_object.object_id.is_empty():
+				_note_local_authority(_active_object.object_id)
+				NetworkService.release_world_object(_active_object.object_id, drop_tile.x, drop_tile.y)
 	_active_object = null
+	if was_pyramid:
+		# Step out of the (blocked) pyramid tile onto open ground.
+		var out_tile := GameState.free_drop_tile(grid_pos + Vector2(1.2, 0.6))
+		position = GameConfig.tile_to_world(out_tile)
+		grid_pos = out_tile
 	# Carried loot stays with the vehicle we popped out of — the alien walks
 	# away empty-handed (a cart's stacks stay AT the cart, not on the alien).
 	if not _carried.is_empty():
@@ -846,6 +914,40 @@ func use_special() -> void:
 			_deploy_smoke_cloud()
 	elif form_key == FormDefs.PROPANE:
 		_detonate_propane()
+	elif form_key == FormDefs.PYRAMID:
+		if _abduct_cd > 0.0:
+			GameState.show_toast("The Pyramid recharges (%ds)" % int(ceil(_abduct_cd)))
+		else:
+			_trigger_abduction()
+
+const ABDUCTION_COOLDOWN_SEC := 45.0
+
+## The Pyramid's alien-glyph special: beam to the sky, ship swoops in, and
+## everything near the Pyramid (NPCs and players) gets abducted. Synced to all
+## clients via a transient "abduction" world_objects row (smoke-cloud pattern).
+func _trigger_abduction() -> void:
+	_abduct_cd = ABDUCTION_COOLDOWN_SEC
+	var tile := grid_pos
+	var wm := GameState.world_map
+	# Play the FX locally FIRST (instant feedback) — the shared row only exists
+	# so other clients replay it, so it can trail behind.
+	if wm and is_instance_valid(wm) and wm.has_method("register_abduction"):
+		wm.register_abduction("", tile)
+	if not NetworkService.is_online():
+		return
+	var created: Dictionary = await NetworkService.create_world_object({
+		"type": "abduction", "x": tile.x, "y": tile.y,
+		"state": "possessed", "possessed_by": NetworkService.get_user_id(),
+	})
+	var id := str(created.get("id", ""))
+	if id.is_empty():
+		return
+	# We already played it — never replay our own row off the poll.
+	if wm and is_instance_valid(wm) and wm.has_method("note_abduction_seen"):
+		wm.note_abduction_seen(id)
+	await get_tree().create_timer(10.0).timeout
+	_note_deleted(id)
+	NetworkService.delete_world_object(id)
 
 ## Manual propane detonation: the blast scatters/demotes nearby money and, per
 ## the design rule, the tank's pilot goes with it. The worn tank returns to its

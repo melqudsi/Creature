@@ -98,6 +98,65 @@ const OVERTON_PARK_TREES: Array[Vector2i] = [
 	Vector2i(52, 23), Vector2i(55, 23), Vector2i(57, 22),
 ]
 
+# ---------------------------------------------------------------------------
+# Landmarks (Slice 6): U of M, Shelby Farms, the Zoo, the Airport + FedEx hub,
+# Krogers, Tom Lee Park. Positions approximate the real layout.
+# ---------------------------------------------------------------------------
+
+const UOFM_RECT := Rect2i(56, 37, 7, 5)          # south of Poplar, east Midtown
+const UOFM_BUILDINGS: Array[Vector2i] = [
+	Vector2i(58, 38), Vector2i(61, 38), Vector2i(59, 40),
+]
+const ZOO_RECT := Rect2i(47, 19, 5, 4)           # Overton Park, north Midtown
+const SHELBY_RECT := Rect2i(96, 26, 13, 9)       # off Walnut Grove
+const SHELBY_LAKE_CENTER := Vector2(102.5, 30.5)
+const SHELBY_LAKE_RADIUS := 2.6
+const AIRPORT_RECT := Rect2i(58, 82, 15, 10)     # east of EP Blvd, South Memphis
+const AIRPORT_TERMINAL := Vector2i(61, 84)
+const FEDEX_HUB := Vector2i(68, 84)
+const AIRPORT_RUNWAY := Rect2i(59, 90, 13, 1)
+const TOM_LEE_RECT := Rect2i(17, 42, 3, 9)       # riverfront below Downtown
+const TOM_LEE_TREES: Array[Vector2i] = [
+	Vector2i(17, 44), Vector2i(18, 47), Vector2i(17, 50),
+]
+## Kroger sites: Midtown, East Memphis, Germantown. Store box + parking lot
+## east of it (parked Altimas + carts are seeded there — see slice6 seeds).
+const KROGER_SITES: Array[Vector2i] = [
+	Vector2i(44, 50), Vector2i(85, 42), Vector2i(122, 58),
+]
+
+## Landmark footprints: pre-seeded scatter (houses/trees/towers) inside these
+## rects is dropped post-generation. Filtering AFTER generation (instead of
+## rejecting during sampling) keeps the RNG draw sequence — and therefore every
+## OTHER scatter position — identical to pre-landmark builds.
+static func landmark_clear_rects() -> Array:
+	var rects: Array = [UOFM_RECT, ZOO_RECT, SHELBY_RECT, AIRPORT_RECT, TOM_LEE_RECT]
+	for site in KROGER_SITES:
+		rects.append(Rect2i(site - Vector2i(1, 1), Vector2i(6, 4)))
+	return rects
+
+## Solid (blocked) landmark structures: campus halls, terminal, FedEx, Krogers.
+static func landmark_solid_tiles() -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	out.append_array(UOFM_BUILDINGS)
+	for d in [Vector2i(0, 0), Vector2i(1, 0)]:
+		out.append(AIRPORT_TERMINAL + d)
+		out.append(FEDEX_HUB + d)
+		for site in KROGER_SITES:
+			out.append(site + d)
+	return out
+
+static func lake_tiles() -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	var r := int(ceil(SHELBY_LAKE_RADIUS))
+	var c := Vector2i(int(SHELBY_LAKE_CENTER.x), int(SHELBY_LAKE_CENTER.y))
+	for dy in range(-r, r + 1):
+		for dx in range(-r, r + 1):
+			var t := c + Vector2i(dx, dy)
+			if Vector2(t) .distance_to(SHELBY_LAKE_CENTER - Vector2(0.5, 0.5)) <= SHELBY_LAKE_RADIUS:
+				out.append(t)
+	return out
+
 const SCATTER_SEED := 19010 # fixed on purpose — see class docstring
 
 static var _scatter_cache: Dictionary = {}
@@ -132,6 +191,7 @@ static func tree_tiles() -> Array[Vector2i]:
 		for p in GameConfig.OLD_WORLD_TREES:
 			_tree_cache.append(p + GameConfig.OLD_WORLD_OFFSET)
 		_tree_cache.append_array(_scatter()["trees"] as Array[Vector2i])
+		_tree_cache.append_array(TOM_LEE_TREES)
 	return _tree_cache
 
 ## Cached: is_near_building() walks this list every frame (smoker economy).
@@ -162,6 +222,10 @@ static func blocked_tiles() -> Dictionary:
 		blocked[t] = true
 	for t in tower_tiles():
 		blocked[t] = true
+	for t in landmark_solid_tiles():
+		blocked[t] = true
+	for t in lake_tiles():
+		blocked[t] = true
 	blocked[PYRAMID_TILE] = true
 	_blocked_cache = blocked
 	return blocked
@@ -185,8 +249,26 @@ static func _scatter() -> Dictionary:
 		_fill(rng, rect, int(spec.get("houses", 0)), houses, used)
 		_fill(rng, rect, int(spec.get("trees", 0)), trees, used)
 		_fill(rng, rect, int(spec.get("towers", 0)), towers, used)
-	_scatter_cache = {"trees": trees, "houses": houses, "towers": towers}
+	# Landmarks claim their footprints AFTER generation (see landmark_clear_rects).
+	var clear := landmark_clear_rects()
+	_scatter_cache = {
+		"trees": _outside_rects(trees, clear),
+		"houses": _outside_rects(houses, clear),
+		"towers": _outside_rects(towers, clear),
+	}
 	return _scatter_cache
+
+static func _outside_rects(tiles: Array[Vector2i], rects: Array) -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	for t in tiles:
+		var inside := false
+		for r in rects:
+			if (r as Rect2i).has_point(t):
+				inside = true
+				break
+		if not inside:
+			out.append(t)
+	return out
 
 static func _fill(rng: RandomNumberGenerator, rect: Rect2i, count: int, out: Array[Vector2i], used: Dictionary) -> void:
 	var placed := 0

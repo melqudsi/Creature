@@ -149,6 +149,10 @@ func _on_form_changed(form_key: String) -> void:
 		FormDefs.PROPANE:
 			special_button.visible = true
 			special_button.text = "Detonate"
+		FormDefs.PYRAMID:
+			# Illegible alien glyphs — what does it do? Press it and find out.
+			special_button.visible = true
+			special_button.text = "ΞΘΨΔ"
 		_:
 			special_button.visible = false
 	if not alien:

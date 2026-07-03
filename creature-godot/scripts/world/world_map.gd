@@ -38,6 +38,14 @@ var _smoke_clouds: Dictionary = {}
 ## Kill-feed rows already toasted (never repeat a broadcast on later polls).
 var _kill_events_seen: Dictionary = {}
 
+## Slice 6: scenery trees by tile (claimable via shapeshift), retired home
+## tiles already processed, the Pyramid landmark node, and abduction events
+## already played.
+var _scenery_trees: Dictionary = {}   # Vector2i -> WorldObject
+var _tree_homes_done: Dictionary = {} # row id -> true
+var _pyramid_obj: WorldObject = null
+var _abductions_seen: Dictionary = {}
+
 func note_local_authority(object_id: String, secs: float = 6.0) -> void:
 	if object_id.is_empty():
 		return
@@ -67,6 +75,7 @@ func _ready() -> void:
 	_build_landfill()
 	_build_trees()
 	_build_buildings()
+	_build_landmarks()
 	_build_interactive_objects()
 	var traffic := NpcTraffic.new()
 	traffic.name = "Traffic"
@@ -453,10 +462,21 @@ func _ensure_objects_root() -> void:
 
 ## Decorative forest trees are solid (nav routes around them via blocked_tiles)
 ## and count as "tree" for the kill matrix (a car that reaches one wrecks).
+## Slice 6: they're also claimable — shapeshifting into one converts it into a
+## shared "tree" world object (see Creature._register_claimed_tree).
 func _build_trees() -> void:
 	for pos in MemphisLayout.tree_tiles():
 		var wp := GameConfig.tile_to_world(Vector2(pos))
-		_spawn_world_object("tree_decor", Vector3(wp.x, 0, wp.z), trees_root)
+		var obj := _spawn_world_object("tree_decor", Vector3(wp.x, 0, wp.z), trees_root)
+		_scenery_trees[pos] = obj
+
+## A scenery tree that became a shared object (someone shapeshifted into it):
+## hide the original everywhere and unblock its tile.
+func retire_scenery_tree(tile: Vector2i) -> void:
+	GameState.blocked_tiles.erase(tile)
+	var obj: WorldObject = _scenery_trees.get(tile)
+	if obj and is_instance_valid(obj) and not obj.consumed:
+		obj.consume()
 
 ## Houses are solid and lethal to vehicles that crash into them. Downtown gets
 ## towers instead, plus the Pyramid landmark at the north end.
@@ -468,7 +488,104 @@ func _build_buildings() -> void:
 		var wp := GameConfig.tile_to_world(Vector2(pos))
 		_spawn_world_object("tower", Vector3(wp.x, 0, wp.z), _buildings_root)
 	var pyr := GameConfig.tile_to_world(Vector2(MemphisLayout.PYRAMID_TILE))
-	_spawn_world_object("pyramid", Vector3(pyr.x, 0, pyr.z), _buildings_root)
+	_pyramid_obj = _spawn_world_object("pyramid", Vector3(pyr.x, 0, pyr.z), _buildings_root)
+
+# ---------------------------------------------------------------------------
+# Landmarks (Slice 6): U of M, Shelby Farms, the Zoo, Airport + FedEx, Krogers,
+# Tom Lee Park. Ground quads + flat labels + big-box structures.
+# ---------------------------------------------------------------------------
+
+func _build_landmarks() -> void:
+	var root := Node3D.new()
+	root.name = "Landmarks"
+	add_child(root)
+	# University of Memphis: campus lawn + brick halls.
+	_add_ground_quad(MemphisLayout.UOFM_RECT, Color(0.36, 0.5, 0.3), 0.032, root, "UofM")
+	_add_landmark_label("UNIVERSITY OF MEMPHIS", Vector2(59.5, 41.5), root)
+	for t in MemphisLayout.UOFM_BUILDINGS:
+		var wp := GameConfig.tile_to_world(Vector2(t))
+		_spawn_world_object("building", Vector3(wp.x, 0, wp.z), _buildings_root)
+	# Shelby Farms: park green, one lake, walking trail ring around it.
+	_add_ground_quad(MemphisLayout.SHELBY_RECT, Color(0.34, 0.56, 0.3), 0.032, root, "ShelbyFarms")
+	_add_landmark_label("SHELBY FARMS", Vector2(102.5, 34.2), root)
+	var lakec := MemphisLayout.SHELBY_LAKE_CENTER
+	var lake_wp := Vector3(lakec.x * GameConfig.TILE_SIZE, 0.04, lakec.y * GameConfig.TILE_SIZE)
+	var lake := MeshInstance3D.new()
+	var lake_mesh := CylinderMesh.new()
+	lake_mesh.top_radius = MemphisLayout.SHELBY_LAKE_RADIUS * GameConfig.TILE_SIZE
+	lake_mesh.bottom_radius = lake_mesh.top_radius
+	lake_mesh.height = 0.02
+	lake.mesh = lake_mesh
+	lake.material_override = _quad_mat(Color(0.16, 0.36, 0.55))
+	lake.position = lake_wp
+	root.add_child(lake)
+	var trail := MeshInstance3D.new()
+	var trail_mesh := TorusMesh.new()
+	trail_mesh.inner_radius = lake_mesh.top_radius + 0.15
+	trail_mesh.outer_radius = lake_mesh.top_radius + 0.5
+	trail.mesh = trail_mesh
+	trail.material_override = _quad_mat(Color(0.62, 0.54, 0.4))
+	trail.scale = Vector3(1, 0.02, 1)
+	trail.position = Vector3(lake_wp.x, 0.036, lake_wp.z)
+	root.add_child(trail)
+	# Memphis Zoo: pen in Overton Park with a couple of "animals".
+	_add_ground_quad(MemphisLayout.ZOO_RECT, Color(0.45, 0.42, 0.3), 0.032, root, "Zoo")
+	_add_landmark_label("MEMPHIS ZOO", Vector2(49.5, 22.2), root)
+	var eleph := MeshInstance3D.new()
+	var eleph_mesh := SphereMesh.new()
+	eleph_mesh.radius = 0.38
+	eleph_mesh.height = 0.6
+	eleph.mesh = eleph_mesh
+	eleph.material_override = _quad_mat(Color(0.55, 0.55, 0.58))
+	eleph.position = Vector3(48.5, 0.3, 20.2)
+	root.add_child(eleph)
+	var hippo := MeshInstance3D.new()
+	var hippo_mesh := CapsuleMesh.new()
+	hippo_mesh.radius = 0.24
+	hippo_mesh.height = 0.8
+	hippo.mesh = hippo_mesh
+	hippo.material_override = _quad_mat(Color(0.5, 0.4, 0.45))
+	hippo.rotation_degrees = Vector3(90, 30, 0)
+	hippo.position = Vector3(50.6, 0.2, 21.0)
+	root.add_child(hippo)
+	# Memphis International Airport + FedEx hub: apron, runway, terminal, hub.
+	_add_ground_quad(MemphisLayout.AIRPORT_RECT, Color(0.5, 0.5, 0.52), 0.032, root, "Airport")
+	_add_ground_quad(MemphisLayout.AIRPORT_RUNWAY, Color(0.2, 0.2, 0.22), 0.04, root, "Runway")
+	_add_landmark_label("MEMPHIS INTL AIRPORT", Vector2(65.5, 88.0), root)
+	_add_landmark_label("FEDEX HUB", Vector2(69.0, 86.2), root)
+	var term_wp := GameConfig.tile_to_world(Vector2(MemphisLayout.AIRPORT_TERMINAL))
+	_spawn_world_object("terminal", Vector3(term_wp.x, 0, term_wp.z), _buildings_root)
+	var fedex_wp := GameConfig.tile_to_world(Vector2(MemphisLayout.FEDEX_HUB))
+	_spawn_world_object("fedex", Vector3(fedex_wp.x, 0, fedex_wp.z), _buildings_root)
+	# Runway centerline dashes.
+	for i in 6:
+		var dash := MeshInstance3D.new()
+		var dp := PlaneMesh.new()
+		dp.size = Vector2(1.2, 0.1)
+		dash.mesh = dp
+		dash.material_override = _quad_mat(Color(0.9, 0.9, 0.9))
+		dash.position = Vector3((60.0 + i * 2.2), 0.046, 90.5)
+		root.add_child(dash)
+	# Tom Lee Park: riverfront green below Downtown.
+	_add_ground_quad(MemphisLayout.TOM_LEE_RECT, Color(0.32, 0.55, 0.3), 0.032, root, "TomLee")
+	_add_landmark_label("TOM LEE PARK", Vector2(18.5, 46.5), root)
+	# Krogers: brand box + parking lot pad (parked Altimas/carts are seeded rows).
+	for site in MemphisLayout.KROGER_SITES:
+		var wp := GameConfig.tile_to_world(Vector2(site))
+		_spawn_world_object("kroger", Vector3(wp.x, 0, wp.z), _buildings_root)
+		_add_ground_quad(Rect2i(site + Vector2i(-1, 1), Vector2i(5, 2)), Color(0.42, 0.42, 0.44), 0.032, root, "KrogerLot")
+		_add_landmark_label("KROGER", Vector2(float(site.x) + 1.0, float(site.y) + 2.6), root)
+
+func _add_landmark_label(text: String, tile: Vector2, parent: Node3D) -> void:
+	var lbl := Label3D.new()
+	lbl.text = text
+	lbl.font_size = 56
+	lbl.pixel_size = 0.011
+	lbl.modulate = Color(1.0, 0.97, 0.85, 0.95)
+	lbl.outline_size = 8
+	lbl.rotation_degrees = Vector3(-90, 0, 0)
+	lbl.position = Vector3(tile.x * GameConfig.TILE_SIZE, 0.07, tile.y * GameConfig.TILE_SIZE)
+	parent.add_child(lbl)
 
 ## Interactive/shapeshiftable objects (landfill starter junk + road traps).
 ## These are the CLIENT-CONFIG fallback set: they render immediately (offline or
@@ -508,13 +625,23 @@ func _build_landfill() -> void:
 func _object_cfg(key: String) -> Dictionary:
 	match key:
 		"tree_decor":
-			return {"kind": "tree", "form_key": "", "visual": "tree", "radius": 0.5, "display_name": "Tree"}
+			# Claimable scenery: Becoming one converts it into a shared "tree" row.
+			return {"kind": "tree", "form_key": FormDefs.TREE, "visual": "tree", "radius": 0.5, "display_name": "Tree"}
+		"tree":
+			# A formerly-scenery tree that entered the shared object world.
+			return {"kind": "tree", "form_key": FormDefs.TREE, "visual": "tree", "radius": 0.5, "display_name": "Tree"}
 		"building":
 			return {"kind": "building", "form_key": "", "visual": "building", "radius": 0.9, "display_name": "House"}
 		"tower":
 			return {"kind": "building", "form_key": "", "visual": "tower", "radius": 0.85, "display_name": "Tower"}
 		"pyramid":
-			return {"kind": "building", "form_key": "", "visual": "pyramid", "radius": 1.1, "display_name": "The Pyramid"}
+			return {"kind": "building", "form_key": FormDefs.PYRAMID, "visual": "pyramid", "radius": 1.1, "display_name": "The Pyramid"}
+		"kroger":
+			return {"kind": "building", "form_key": "", "visual": "bigbox", "radius": 1.2, "display_name": "Kroger", "tint": Color(0.12, 0.3, 0.62)}
+		"fedex":
+			return {"kind": "building", "form_key": "", "visual": "bigbox", "radius": 1.2, "display_name": "FedEx Hub", "tint": Color(0.3, 0.12, 0.5)}
+		"terminal":
+			return {"kind": "building", "form_key": "", "visual": "bigbox", "radius": 1.2, "display_name": "Airport Terminal", "tint": Color(0.35, 0.4, 0.45)}
 		"altima":
 			return {"kind": "prop", "form_key": FormDefs.ALTIMA, "visual": "altima", "radius": 0.55, "display_name": "Rusty Altima"}
 		"magnolia":
@@ -626,6 +753,26 @@ func sync_world_objects(rows: Array) -> void:
 				note_deleted(id)
 				NetworkService.delete_world_object(id)
 			continue
+		# Pyramid abductions: transient FX rows. Play the beam/ship once, kill
+		# our own player if they're in the beam (client-local kill rule), and
+		# GC stale rows whose caster never cleaned up.
+		if type_key == "abduction":
+			if not _abductions_seen.has(id):
+				_abductions_seen[id] = true
+				_run_abduction(tile, str(row.get("possessed_by", "")) == my_uid)
+			if _row_age_sec(row) > 15.0:
+				note_deleted(id)
+				NetworkService.delete_world_object(id)
+			continue
+		# A claimed scenery tree entered the shared world: hide the original
+		# scenery tree at its home tile (encoded in owner_name) for everyone.
+		if type_key == "tree" and not _tree_homes_done.has(id):
+			var home := _row_owner_name(row)
+			if home.begins_with("home:"):
+				_tree_homes_done[id] = true
+				var parts := home.substr(5).split(",")
+				if parts.size() == 2:
+					retire_scenery_tree(Vector2i(int(parts[0]), int(parts[1])))
 		var state := str(row.get("state", "idle"))
 		var possessed_by := str(row.get("possessed_by", ""))
 		var possessed := state == "possessed" and not possessed_by.is_empty()
@@ -719,6 +866,107 @@ func sync_world_objects(rows: Array) -> void:
 # ---------------------------------------------------------------------------
 
 ## Register a smoke cloud (local deploy or seen via poll) and build its visual.
+# ---------------------------------------------------------------------------
+# Pyramid abduction (Slice 6): beam + ship FX, synced via transient rows.
+# ---------------------------------------------------------------------------
+
+const ABDUCTION_RADIUS_TILES := 6.0
+const ABDUCTION_FX_SEC := 8.0
+
+## Caster-side entry: play the FX locally right away and remember the row id so
+## the next poll doesn't replay it.
+func register_abduction(id: String, tile: Vector2) -> void:
+	if not id.is_empty():
+		_abductions_seen[id] = true
+	_run_abduction(tile, true)
+
+## Caster calls this once the shared row id is known (FX already played).
+func note_abduction_seen(id: String) -> void:
+	if not id.is_empty():
+		_abductions_seen[id] = true
+
+## Play the beam/ship and resolve consequences: nearby NPC vehicles get taken,
+## and OUR player (if in the beam, not the pyramid itself) gets abducted.
+func _run_abduction(tile: Vector2, i_am_caster: bool) -> void:
+	var wpos := GameConfig.tile_to_world(tile)
+	_spawn_abduction_fx(wpos)
+	# If the show is anywhere near our screen, pull the camera back so the beam
+	# and saucer (high above the close-zoom frame) are actually visible.
+	var me := GameState.player_creature
+	if me and is_instance_valid(me):
+		var d := Vector2(me.position.x, me.position.z).distance_to(Vector2(wpos.x, wpos.z))
+		if d < 24.0 * GameConfig.TILE_SIZE:
+			GameState.abduction_zoom_requested.emit(ABDUCTION_FX_SEC)
+	var traffic := GameState.npc_traffic
+	if traffic != null and is_instance_valid(traffic) and traffic.has_method("abduct_near"):
+		traffic.abduct_near(wpos, ABDUCTION_RADIUS_TILES)
+	if i_am_caster:
+		return
+	var player := GameState.player_creature
+	if player == null or not is_instance_valid(player) or player.is_dead or player.is_spawning:
+		return
+	if player.form_key == FormDefs.PYRAMID:
+		return # pyramids don't abduct pyramids
+	var d := Vector2(player.position.x, player.position.z).distance_to(Vector2(wpos.x, wpos.z))
+	if d <= ABDUCTION_RADIUS_TILES * GameConfig.TILE_SIZE:
+		player.apply_death(FormDefs.DEATH_ABDUCTED, false)
+
+## The beam: a glowing column from the pyramid apex; the ship: a saucer that
+## drops in above it, hovers while the beam runs, then zips away.
+func _spawn_abduction_fx(world_pos: Vector3) -> void:
+	var root := Node3D.new()
+	root.position = Vector3(world_pos.x, 0, world_pos.z)
+	add_child(root)
+	var beam_mat := StandardMaterial3D.new()
+	beam_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	beam_mat.albedo_color = Color(0.5, 1.0, 0.7, 0.45)
+	beam_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	var beam := MeshInstance3D.new()
+	var beam_mesh := CylinderMesh.new()
+	# Tall column reaching into the sky: at default zoom anything hovering just
+	# above the apex is off the top of the frame, so the beam has to be big to
+	# read on screen.
+	beam_mesh.top_radius = 1.4
+	beam_mesh.bottom_radius = 0.5
+	beam_mesh.height = 9.0
+	beam.mesh = beam_mesh
+	beam.material_override = beam_mat
+	beam.position = Vector3(0, 2.3 + 4.5, 0)
+	beam.scale = Vector3(0.05, 1.0, 0.05)
+	root.add_child(beam)
+	var ship := Node3D.new()
+	var hull := MeshInstance3D.new()
+	var hull_mesh := CylinderMesh.new()
+	hull_mesh.top_radius = 0.9
+	hull_mesh.bottom_radius = 1.6
+	hull_mesh.height = 0.5
+	hull.mesh = hull_mesh
+	hull.material_override = _quad_mat(Color(0.4, 0.44, 0.5))
+	ship.add_child(hull)
+	var dome := MeshInstance3D.new()
+	var dome_mesh := SphereMesh.new()
+	dome_mesh.radius = 0.6
+	dome_mesh.height = 0.8
+	dome.mesh = dome_mesh
+	var dome_mat := StandardMaterial3D.new()
+	dome_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	dome_mat.albedo_color = Color(0.55, 0.95, 0.75, 0.8)
+	dome_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	dome.material_override = dome_mat
+	dome.position = Vector3(0, 0.35, 0)
+	ship.add_child(dome)
+	ship.position = Vector3(0, 14.0, 0)
+	root.add_child(ship)
+	var tw := root.create_tween()
+	# Ship swoops in low over the apex (a big looming saucer — heights above
+	# ~5.5 are out of frame at default zoom), beam blooms, hold, then leaves.
+	tw.tween_property(ship, "position:y", 5.0, 0.7).set_ease(Tween.EASE_OUT)
+	tw.tween_property(beam, "scale", Vector3(1, 1, 1), 0.4).set_ease(Tween.EASE_OUT)
+	tw.tween_interval(ABDUCTION_FX_SEC - 2.1)
+	tw.tween_property(beam, "scale", Vector3(0.05, 1.0, 0.05), 0.4).set_ease(Tween.EASE_IN)
+	tw.tween_property(ship, "position:y", 30.0, 0.6).set_ease(Tween.EASE_IN)
+	tw.tween_callback(root.queue_free)
+
 func register_smoke_cloud(id: String, world_pos: Vector3, duration: float) -> void:
 	var key := id if not id.is_empty() else "local_%d" % Time.get_ticks_msec()
 	if _smoke_clouds.has(key):
@@ -771,6 +1019,19 @@ func _in_smoke(world_pos: Vector3) -> bool:
 func _process(delta: float) -> void:
 	_update_occlusion_fades(delta)
 	_update_smoke_clouds()
+	_update_pyramid_visibility()
+
+## While ANY creature is shapeshifted into the Pyramid, the scenery pyramid
+## hides (the creature's synced form stands in for it — no duplicate).
+func _update_pyramid_visibility() -> void:
+	if _pyramid_obj == null or not is_instance_valid(_pyramid_obj) or _pyramid_obj.consumed:
+		return
+	var claimed := false
+	for c in GameState.creatures.values():
+		if c != null and is_instance_valid(c) and not c.is_dead and c.form_key == FormDefs.PYRAMID:
+			claimed = true
+			break
+	_pyramid_obj.visible = not claimed
 
 ## Fade any tall solid (building/tower/tree/pyramid) that sits between the
 ## camera and the local player so the player is never hidden behind it.

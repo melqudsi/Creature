@@ -51,6 +51,16 @@ Money generation + smoke cover (PDF Step 6) and explosion money scatter (Step 5 
 - **Explosion scatter** — `WorldMap._scatter_money()` runs on the client that spawned the explosion (no PATCH race): idle money within ~1.6x blast radius is flung 1.5–3 tiles away and PATCHed (`drop_money_object` + local-authority grace).
 - **HUD** — the Special button is now per-form: "Speed Burst" (Altima) / "Smoke Cloud" (smoker).
 
+## Slice 6 — Trees, landmarks & The Pyramid (current)
+
+Phase 3 of the feature batch: tree shapeshifting, Memphis landmarks, and the Pyramid's abduction special.
+
+- **Tree shapeshift** — decorative scenery trees (`tree_decor`) are claimable. Becoming one creates a shared `tree` row whose `owner_name` carries the home tile (`home:x,y`); every client then hides the scenery original and unblocks its tile (`WorldMap.retire_scenery_tree()`). From then on the tree is a normal shared object — walk it somewhere and pop out, it stays there for everyone.
+- **Landmarks** (`memphis_layout.gd`) — U of M campus (quad + halls), Shelby Farms (lake + walking trail off Walnut Grove), Memphis Zoo (Overton Park pen + animals), Memphis Intl Airport + FedEx hub (terminals, runway), Tom Lee Park (riverfront lawn + trees), and three Krogers (brand box + parking pad). Landmark footprints filter pre-seeded scatter *after* generation so the RNG draw sequence (and every other scatter position) stays identical to pre-landmark builds.
+- **Kroger lots** — each Kroger gets two parked Altimas + two stray shopping carts as shared seed rows (`GameConfig.slice6_seed_objects()`). Top-up detection: a cart outside the old-world rect marks the slice-6 seed as already run.
+- **The Pyramid** — hand-placed at Downtown's north end, shapeshiftable (`FormDefs.PYRAMID`, speed 0 — it does not move). Its special button shows alien glyphs (`ΞΘΨΔ`). Pressing it fires an abduction: a sky beam + saucer FX at the pyramid, nearby NPC vehicles get beamed up, and any player in the radius (except the pyramid itself) dies. Synced to all clients via a transient `abduction` row (smoke-cloud pattern; replay-guarded by `_abductions_seen`). 45s cooldown.
+- **Abduction camera** — the beam/ship live 5–11 units above the apex, far above the default close-zoom frame, so `abduction_zoom_requested` pulls the camera back to distance 24 for the show and eases back after (`rts_camera.gd`). Without this the whole FX plays off the top of the screen (that cost a debugging session — check the camera frustum *first* when "invisible" FX logs fine).
+
 **Sync-robustness layer (added after playtest — read before touching sync):**
 
 - `world_map.gd` keeps `_local_authority` (ids we just changed → stale server rows ignored ~6s) and `_tombstones` (ids we deleted → never resurrected by an in-flight poll, ~15s). Creature code registers these via `_note_local_authority()` / `_note_deleted()` on every pickup/drop/combine.

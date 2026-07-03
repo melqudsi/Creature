@@ -11,6 +11,8 @@ const PROPANE := "propane_tank"
 const SHOPPING_CART := "shopping_cart"
 const MATA_BUS := "mata_bus"
 const BBQ_SMOKER := "bbq_smoker"
+const TREE := "tree"
+const PYRAMID := "pyramid"
 
 const DEFAULT_FORM := ALIEN
 
@@ -28,6 +30,9 @@ const FORMS := {
 	SHOPPING_CART: {"display": "Shopping Cart", "speed": 1.6, "radius": 0.42, "kind": "cart", "visual": "cart"},
 	MATA_BUS: {"display": "MATA Bus", "speed": 1.3, "radius": 0.75, "kind": "mata_bus", "visual": "mata_bus"},
 	BBQ_SMOKER: {"display": "BBQ Smoker", "speed": 0.9, "radius": 0.5, "kind": "smoker", "visual": "smoker"},
+	TREE: {"display": "Tree", "speed": 0.5, "radius": 0.5, "kind": "tree", "visual": "tree"},
+	# The Pyramid does not move. The Pyramid abducts.
+	PYRAMID: {"display": "The Pyramid", "speed": 0.0, "radius": 1.1, "kind": "building", "visual": "pyramid"},
 }
 
 const DEATH_ALTIMA := "You got Altima'd."
@@ -38,6 +43,7 @@ const DEATH_PROPANE := "Propane had other plans."
 const DEATH_HOUSE := "You crashed into a house."
 const DEATH_BUS := "MATA said move."
 const DEATH_SELF_DETONATE := "You detonated. On purpose. Respect."
+const DEATH_ABDUCTED := "You got abducted. Enjoy the mothership."
 
 static func is_valid(key: String) -> bool:
 	return FORMS.has(key)

@@ -42,6 +42,7 @@ func _ready() -> void:
 	_desired_distance = zoom_min
 	_edge_pan_enabled = not DisplayServer.is_touchscreen_available()
 	GameState.death_zoom_requested.connect(_on_death_zoom)
+	GameState.abduction_zoom_requested.connect(_on_abduction_zoom)
 	_update_position(true)
 
 ## On the local player's death, pull the camera in on the corpse so the respawn
@@ -52,6 +53,20 @@ func _on_death_zoom(_world_pos: Vector3) -> void:
 	var tw := create_tween()
 	tw.tween_property(self, "_desired_distance", 13.0, 0.4) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+
+## During an abduction the beam tops out ~9 units up and the saucer hovers ~5
+## above the apex — at close zoom that's entirely above the frame. Pull back
+## for the show, then ease back to where the player was.
+func _on_abduction_zoom(duration_sec: float) -> void:
+	if _desired_distance >= 22.0:
+		return
+	var prev := _desired_distance
+	var tw := create_tween()
+	tw.tween_property(self, "_desired_distance", 24.0, 0.6) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw.tween_interval(maxf(duration_sec - 1.6, 0.5))
+	tw.tween_property(self, "_desired_distance", prev, 1.0) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 
 func bind_world_map(world_map: Node) -> void:
 	_world_map = world_map

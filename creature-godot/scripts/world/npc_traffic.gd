@@ -222,3 +222,25 @@ func claim_vehicle(v: Dictionary) -> void:
 	if is_instance_valid(node):
 		node.queue_free()
 	_spawn_vehicle(bool(v["is_bus"]))
+
+## Pyramid abduction: vehicles near the beam get taken. Each rises into the sky
+## (tween) and a replacement spawns elsewhere so traffic density holds.
+func abduct_near(world_pos: Vector3, radius_tiles: float) -> void:
+	var center := Vector2(world_pos.x, world_pos.z)
+	var r := radius_tiles * GameConfig.TILE_SIZE
+	for v in _vehicles.duplicate():
+		var node: Node3D = v["node"]
+		if not is_instance_valid(node):
+			continue
+		if center.distance_to(Vector2(node.position.x, node.position.z)) > r:
+			continue
+		var idx := _vehicles.find(v)
+		if idx >= 0:
+			_vehicles.remove_at(idx)
+		var tw := node.create_tween()
+		tw.set_parallel(true)
+		tw.tween_property(node, "position:y", 9.0, 2.2).set_ease(Tween.EASE_IN)
+		tw.tween_property(node, "rotation:y", node.rotation.y + TAU * 1.5, 2.2)
+		tw.tween_property(node, "scale", Vector3(0.1, 0.1, 0.1), 2.2).set_ease(Tween.EASE_IN)
+		tw.chain().tween_callback(node.queue_free)
+		_spawn_vehicle(bool(v["is_bus"]))

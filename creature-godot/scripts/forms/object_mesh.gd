@@ -41,6 +41,8 @@ static func build(visual: String, tint: Color = Color(0.6, 0.6, 0.6)) -> Node3D:
 			return _build_tower()
 		"pyramid":
 			return _build_pyramid()
+		"bigbox":
+			return _build_bigbox(tint)
 		_:
 			return _build_trash()
 
@@ -198,6 +200,21 @@ static func _build_pyramid() -> Node3D:
 	var base := BoxMesh.new()
 	base.size = Vector3(2.3, 0.15, 2.3)
 	root.add_child(_mesh_node(base, _mat(Color(0.4, 0.42, 0.45), 0.8), Vector3(0, 0.075, 0)))
+	return root
+
+## Big-box store/warehouse (Kroger, FedEx hub, airport terminal): wide flat
+## slab with a colored sign band across the front. `tint` = brand color.
+static func _build_bigbox(tint: Color) -> Node3D:
+	var root := Node3D.new()
+	var slab := BoxMesh.new()
+	slab.size = Vector3(2.6, 1.0, 1.5)
+	root.add_child(_mesh_node(slab, _mat(Color(0.78, 0.76, 0.72), 0.9), Vector3(0.5, 0.5, 0)))
+	var band := BoxMesh.new()
+	band.size = Vector3(2.7, 0.28, 1.56)
+	root.add_child(_mesh_node(band, _mat(tint, 0.55, 0.1), Vector3(0.5, 0.86, 0)))
+	var door := BoxMesh.new()
+	door.size = Vector3(0.7, 0.55, 0.05)
+	root.add_child(_mesh_node(door, _mat(Color(0.2, 0.26, 0.3), 0.3, 0.3), Vector3(0.5, 0.28, 0.76)))
 	return root
 
 static func _build_mata_bus() -> Node3D:
