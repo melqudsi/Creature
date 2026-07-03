@@ -31,8 +31,9 @@ Run in the Supabase SQL Editor (Dashboard → SQL → New query):
 | [`supabase/migration-forms.sql`](supabase/migration-forms.sql) | Adds `creatures.form` (form sync) | **applied** |
 | [`supabase/migration-world-objects.sql`](supabase/migration-world-objects.sql) | Adds `public.world_objects` (shared/persistent interactive objects) | **applied** |
 | [`supabase/migration-money.sql`](supabase/migration-money.sql) | Adds `world_objects.owner_name` (Slice 2 money labels) | **RUN for owner labels** |
+| [`supabase/migration-pattern-lock.sql`](supabase/migration-pattern-lock.sql) | Adds `creatures.pattern_hash` (Slice 7 pattern-lock login/register) | **RUN for pattern auth** |
 
-Until `migration-world-objects.sql` is run, interactive objects stay client-local (no cross-player sync / persistence), but the game still works.
+Until `migration-world-objects.sql` is run, interactive objects stay client-local (no cross-player sync / persistence), but the game still works. Without `migration-pattern-lock.sql`, login/register still works but pattern verification is skipped gracefully (client detects missing column).
 
 ---
 
@@ -110,7 +111,7 @@ Game-feel batch from the July feature list (Phase 1 of 4 — see the todo phases
 - **Propane detonate** — possessing a propane tank turns the special button into **Detonate**: kills the player ("You detonated. On purpose. Respect.") and triggers the normal chain-reaction explosion. Propane players also die when a vehicle rams them (propane added to `explosion_kills`).
 - **Explosion money demotion** — combined money near a blast splits down one tier (vault → 2 bags, bag → 2 stacks; bags keep the owner) and the pieces fling outward to free tiles; loose stacks just scatter (`world_map.gd::_demote_money/_fling_money`).
 - **Movement feel** — ease-in/ease-out on start/stop (`_move_ease`), prop speed bump (pothole 0.45, magnolia 0.5, propane 0.8, smoker 0.9, bus 1.3, cart 1.6), Altima burst 2.2x, and vehicles get **+35% on roads** (`ROAD_SPEED_MULT`).
-- **Pinch-zoom tap fix** — taps are decided on touch *release*: any gesture that ever had 2+ fingers, moved past the drag threshold, or ended within 350ms of a pinch is not a move command; emulated mouse clicks after real touches are dropped.
+- **Pinch-zoom tap fix** — legacy release-gating removed; mobile now issues move on finger down with emulated-mouse dedupe (see Slice 7).
 
 **Phase 2 — traffic & streets** (build 2026-07-03a):
 
@@ -119,6 +120,34 @@ Game-feel batch from the July feature list (Phase 1 of 4 — see the todo phases
 - **Road cleanup** — Union now connects to Walnut Grove via a short **E Parkway** link (they meet in the real world); **Front St moved 4 tiles east of Riverside** so sidewalks + a building row fit between them; the center divider is now **dashed per-tile and skips intersection tiles** (no more yellow lines crossing each other) plus a gap under each painted street name (readability).
 - **Sidewalks** — light concrete strips along both edges of every street (not interstates), drawn under the asphalt layer so crossings pave over them. Future human-NPC turf.
 - **Lamar Ave** — 3-segment staircase (diagonal in real life) from Union down to Winchester, seeded with 10 potholes; ~9 more potholes scattered on Poplar/Union/Summer/Winchester/EP Blvd. 4 BBQ trailers seeded: 2 Midtown, 2 Downtown. Existing worlds top-up automatically (slice-5 marker: any smoker north of the old world).
+
+---
+
+## Slice 6 — Trees, landmarks & The Pyramid (current)
+
+Phase 3 of the feature batch (`build 2026-07-03c`):
+
+- **Tree shapeshift** — scenery trees (`tree_decor`) are claimable. Becoming one creates a shared `tree` row whose `owner_name` carries the home tile (`home:x,y`); every client hides the scenery original and unblocks its tile (`WorldMap.retire_scenery_tree()`).
+- **Landmarks** (`memphis_layout.gd`) — U of M, Shelby Farms, Memphis Zoo, Airport + FedEx hub, Tom Lee Park, three Krogers (brand big-box + parking). Landmark footprints reserve clearance so scatter doesn't overlap them.
+- **Kroger lots** — parked Altimas + shopping carts as shared seed rows; slice-6 top-up marker detects already-seeded worlds.
+- **The Pyramid** — shapeshiftable landmark (`FormDefs.PYRAMID`, speed 0). Special = alien-glyphs abduction (sky beam + saucer FX, NPC beam-up, nearby player kill), synced via transient `abduction` rows. Abduction camera pulls back so the FX is in frame.
+
+---
+
+## Slice 7 — Pattern lock, safe houses, polish (current)
+
+Phase 4 + mobile input fixes (`build 2026-07-03i`):
+
+- **Pattern-lock onboarding** — Login / Register flow with an Android-style 3×3 swipe pad ([`pattern_pad.gd`](creature-godot/scripts/ui/pattern_pad.gd)). Pattern stored as `sha256("creature:<NAME>:<dot-sequence>")` in `creatures.pattern_hash` ([`migration-pattern-lock.sql`](supabase/migration-pattern-lock.sql)). `NetworkService.register_profile()` / `login_profile()` replace the old name-only claim path. Friendly lock, not real security — still rides the temporary name-claim RLS policy.
+- **Safe houses** — shapeshift into a house (`FormDefs.HOUSE`); **Claim** / **Unclaim** via the special button roots you in place until unclaimed. Claimed houses tracked per owner in `world_map.gd` (`safe_house_for()`).
+- **Steal** — HUD **Steal** button when near a remote player hauling loot (`creature.gd::_steal_target()`); snatches one carried tier.
+- **Respawn choice** — safe-house owners pick **Safe House** vs **The Dump** after the death countdown (`respawn_choice_requested` → HUD buttons).
+- **Exit + idle logout** — top-right **X** logs out to onboarding (clears session, reloads). **admin** (MOE only) sits to its left. **40-minute idle** auto-logout (`main.gd::IDLE_LOGOUT_SEC`, any pointer/camera/move input resets the clock).
+- **Pyramid** — larger squat mesh, wider base, moved off roads with a 7×7 clearance pad (`PYRAMID_TILE`, `PYRAMID_PAD` in `memphis_layout.gd`).
+- **Vehicle wreck FX** — non-explosion vehicle deaths scatter body chunks + wheels that fade (`spawn_vehicle_wreck()`).
+- **Big-box shimmer fix** — Kroger/airport sign band raised off the roof slab (no z-fight when camera pans).
+- **Tap-to-move vs Supabase** — movement is **fully local and immediate**; position PATCHes run on a fixed **1.5s timer** (`NetworkService._autosave_player_position()`), plus flush on path complete / respawn / exit. Rapid retargeting never waits on network.
+- **Mobile tap-to-move** — move fires on **finger down** (solo touch); emulated-mouse taps use the same viewport coords (no `get_screen_transform()` — that was shifting taps upward on mobile). Orphaned mouse-only taps on coarse-pointer devices still issue moves.
 
 ---
 
@@ -296,8 +325,8 @@ Implemented in [`scripts/autoload/network_service.gd`](creature-godot/scripts/au
 1. **Anonymous auth** — refresh token in `user://supabase_session.json` (editor) or `localStorage` key `creature_supabase_session` (web via `CreatureNet` in `custom_shell.html`)
 2. **Load session profile** — `GET /rest/v1/creatures?user_id=eq.<uuid>`; existing sessions skip onboarding
 3. **Onboarding** — if no profile exists, `creature_create.gd` asks for name + color
-4. **Create or claim** — `NetworkService.register_or_claim_profile()` creates a new row, or claims an existing typed name by updating its `user_id` to the current anonymous session. Names are stored and looked up in **UPPERCASE**: both `register_or_claim_profile()` and `fetch_creature_by_name()` uppercase the stored value and the `eq` lookup, so case-variant duplicates can't be created and returning users match regardless of typed case
-5. **Save position** — debounced `PATCH` on `{x, y}` while moving; flush on path complete / exit
+4. **Create or login** — `NetworkService.register_profile()` (new name + pattern) or `login_profile()` (existing name + pattern) claims the row for the current anonymous session. Names are stored and looked up in **UPPERCASE**; pattern hash in `creatures.pattern_hash` when [`migration-pattern-lock.sql`](supabase/migration-pattern-lock.sql) is applied
+5. **Save position** — local `grid_pos` updates every frame while moving; Supabase `PATCH {x,y}` on a **1.5s timer** (`_autosave_player_position`) plus immediate flush on path complete, respawn, and logout (tap-to-move is never blocked by saves)
 
 **DB note:** new rows use `appearance: "cute"` in Postgres (schema constraint); client always renders **worm**. Optional: run [`supabase/migration-godot-session.sql`](supabase/migration-godot-session.sql) to allow `worm` in DB.
 
@@ -392,7 +421,7 @@ Or from the editor:
 
 ### Build stamp + PWA cache-busting
 
-- `GameConfig.BUILD_ID` (currently **`build 2026-07-02b`**) is shown bottom-right in the web shell and on the onboarding screen so users can confirm they loaded a fresh build. **Bump this string on every new build you ship** (and match the `#build-stamp` literal in `creature-godot/web/custom_shell.html`) whenever you re-export the web build.
+- `GameConfig.BUILD_ID` (currently **`build 2026-07-03i`**) is shown bottom-right in the web shell and on the onboarding screen so users can confirm they loaded a fresh build. **Bump this string on every new build you ship** (and match the `#build-stamp` literal in `creature-godot/web/custom_shell.html`) whenever you re-export the web build.
 - Godot's default service worker is cache-first and never `skipWaiting()`s, which caused the recurring "old cached build keeps loading" bug. `custom_shell.html` now runs `setupServiceWorkerAutoUpdate()`: on reload it calls `registration.update()`, and on `updatefound` posts `'update'` to the new worker → `controllerchange` triggers a one-time reload. It is skipped on the dev-server path (which already unregisters SWs).
 
 | Export setting | Value | Why |
@@ -506,6 +535,8 @@ Use `class_name Creature` and typed references. Generic `Node3D` + `grid_pos` ca
 - [x] Player names forced UPPERCASE (submit + live typing + stored/lookup uppercased) — dedupes case-variant profiles and matches returning users regardless of typed case
 - [x] Name field caret fixes — desktop caret to end on refocus; mobile virtual keyboard opens with caret at END of existing text (fixed mobile-only prepend-only bug)
 - [x] Admin button visible/openable only for the player named `MOE`
+- [x] Slice 6 — tree shapeshift, Memphis landmarks, Pyramid abduction special
+- [x] Slice 7 — pattern-lock login/register, safe houses, steal, respawn choice, exit/idle logout, pyramid resize, vehicle wreck FX, decoupled position sync, mobile tap-to-move fixes (`build 2026-07-03i`)
 
 ---
 
@@ -574,8 +605,9 @@ Use `class_name Creature` and typed references. Generic `Node3D` + `grid_pos` ca
 
 | Input | Action |
 |-------|--------|
-| Tap / click ground | Move |
-| **admin** (top-right, `MOE` only) | Pain test controls + profile deletion |
+| Tap / click ground | Move (immediate retarget; mobile = finger down) |
+| **X** (top-right) | Log out → onboarding |
+| **admin** (left of X, `MOE` only) | Pain test, profile deletion, logs |
 | Pinch / mouse wheel | Zoom |
 | WASD / screen edge | Pan camera |
 

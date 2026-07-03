@@ -60,6 +60,7 @@ Phase 3 of the feature batch: tree shapeshifting, Memphis landmarks, and the Pyr
 - **Kroger lots** — each Kroger gets two parked Altimas + two stray shopping carts as shared seed rows (`GameConfig.slice6_seed_objects()`). Top-up detection: a cart outside the old-world rect marks the slice-6 seed as already run.
 - **The Pyramid** — hand-placed at Downtown's north end, shapeshiftable (`FormDefs.PYRAMID`, speed 0 — it does not move). Its special button shows alien glyphs (`ΞΘΨΔ`). Pressing it fires an abduction: a sky beam + saucer FX at the pyramid, nearby NPC vehicles get beamed up, and any player in the radius (except the pyramid itself) dies. Synced to all clients via a transient `abduction` row (smoke-cloud pattern; replay-guarded by `_abductions_seen`). 45s cooldown.
 - **Abduction camera** — the beam/ship live 5–11 units above the apex, far above the default close-zoom frame, so `abduction_zoom_requested` pulls the camera back to distance 24 for the show and eases back after (`rts_camera.gd`). Without this the whole FX plays off the top of the screen (that cost a debugging session — check the camera frustum *first* when "invisible" FX logs fine).
+- **Pyramid placement (Slice 7)** — enlarged squat mesh, wider base, relocated to tile (27,24) with a 7×7 clearance pad off roads (`PYRAMID_PAD` in `memphis_layout.gd`).
 
 **Sync-robustness layer (added after playtest — read before touching sync):**
 
@@ -67,6 +68,20 @@ Phase 3 of the feature batch: tree shapeshifting, Memphis landmarks, and the Pyr
 - `network_service.gd` web-bridge requests are **keyed by request id** — never revert to a single shared pending flag; overlapping fetches used to cross responses and silently drop PATCHes.
 - `sync_world_objects()` **self-repairs** rows that claim the local player carries/possesses something it doesn't (PATCHes them idle), and **re-adopts** a possessed object on session restore (`Creature.adopt_possessed_object()`) so reloading while shapeshifted doesn't duplicate the prop.
 - Money carried by an absent (disconnected) player renders idle instead of staying invisible.
+
+## Slice 7 — Pattern lock, safe houses, polish (current)
+
+Phase 4 + mobile input fixes (`build 2026-07-03i`). See the root [`README.md`](../README.md#slice-7--pattern-lock-safe-houses-polish-current) for the full overview.
+
+- **Pattern-lock onboarding** — [`pattern_pad.gd`](scripts/ui/pattern_pad.gd) (3×3 swipe pad) + Login/Register tabs in [`creature_create.gd`](scripts/ui/creature_create.gd). `NetworkService.register_profile()` / `login_profile()` + `pattern_hash_for()`; requires [`../supabase/migration-pattern-lock.sql`](../supabase/migration-pattern-lock.sql) for server-side hash storage (graceful without it).
+- **Safe houses** — `FormDefs.HOUSE`; claim/unclaim via special button; rooted while claimed (`creature.gd` + `world_object.gd::safe_owner`). `world_map.gd` tracks `safe_house_for(owner)`.
+- **Steal** — HUD **Steal** button when near a carrier (`can_steal_now()` / `_steal_target()`).
+- **Respawn choice** — safe-house owners pick safe house vs dump after death countdown (`respawn_choice_requested` → `sc2_hud.gd`).
+- **Exit + idle logout** — **X** top-right (`logout_to_onboarding()` in `main.gd`); **admin** left of X; 40-minute idle auto-logout (`IDLE_LOGOUT_SEC`).
+- **Vehicle wreck FX** — `spawn_vehicle_wreck()` on vehicle death (non-explosion).
+- **Big-box shimmer** — sign band raised in `object_mesh.gd::_build_bigbox()` (no roof z-fight).
+- **Position sync decoupled from taps** — `creature.gd` updates local `grid_pos` immediately; `NetworkService._autosave_player_position()` PATCHes every 1.5s (+ flush on arrival/respawn/exit). Movement never waits on network.
+- **Mobile tap-to-move** — `rts_camera.gd` issues move on solo **finger down**; touch coords go straight to `project_ray_origin` (do **not** apply `get_screen_transform().affine_inverse()` — caused upward offset on mobile). Emulated mouse on coarse-pointer devices: 50ms same-position dedupe only; orphaned mouse-only taps still move.
 
 ## Requirements
 
@@ -97,8 +112,9 @@ Boot is silent on success (no save/restore toasts). Offline boot toasts **"Could
 
 | Input | Action |
 |-------|--------|
-| Tap / click ground | Move creature |
-| **admin** (top-right, `MOE` only) | Pain test controls, profile deletion, logs, clear-session/reload |
+| Tap / click ground | Move creature (immediate retarget; mobile = finger down) |
+| **X** (top-right) | Log out → onboarding |
+| **admin** (left of X, `MOE` only) | Pain test, profile deletion, logs, clear-session/reload |
 | Pinch / mouse wheel | Zoom camera (starts fully zoomed in) |
 | WASD / screen edge | Pan camera |
 
@@ -130,8 +146,8 @@ Boot is silent on success (no save/restore toasts). Offline boot toasts **"Could
 | Auth | Anonymous sign-in or refresh; session persisted |
 | Load | `GET /rest/v1/creatures?user_id=eq.<uuid>` |
 | Onboarding | If no row exists for the session, ask for name + color |
-| Create / claim | Insert a new row, or claim an existing typed name by changing its `user_id`. Names are stored/looked up in **UPPERCASE** (`register_or_claim_profile()` + `fetch_creature_by_name()` uppercase both the stored value and the `eq` query), so case-variant duplicates can't be created and returning users match regardless of typed case. Both paths force `GameState.player_data["color"]` to the chosen color (not the DB round-trip) so the in-game creature shows the picked color; `claim_creature()` also PATCHes the color |
-| Save | Debounced `PATCH {x, y}` on move; flush when path completes |
+| Create / login | `register_profile()` (new) or `login_profile()` (returning) with pattern hash; names **UPPERCASE**; color forced locally on success |
+| Save | Local position every frame; Supabase `PATCH {x,y}` every 1.5s (`_autosave_player_position`) + flush on path complete / respawn / logout |
 | Poll | `GET /rest/v1/creatures?select=*` every 1.5s → `world_map.sync_remote_creatures()` |
 
 **Session storage:**
@@ -174,15 +190,18 @@ Test: two editor instances, or editor + phone on `https://<wifi-ip>:8443`. The a
 
 ## Onboarding / spawn screen
 
-[`scripts/ui/creature_create.gd`](scripts/ui/creature_create.gd) + [`scenes/ui/creature_create.tscn`](scenes/ui/creature_create.tscn), run before spawning when no profile exists:
+[`scripts/ui/creature_create.gd`](scripts/ui/creature_create.gd) + [`scenes/ui/creature_create.tscn`](scenes/ui/creature_create.tscn) + [`scripts/ui/pattern_pad.gd`](scripts/ui/pattern_pad.gd), run before spawning when no profile exists:
 
-- **No 3D creature preview** — replaced by a color palette. Swatches are 52px `Button`s in a `GridContainer`, styled by `_apply_swatch_style()`; the selected swatch gets a bright cyan (`#00e5ff`) border. `GameConfig.CREATURE_COLORS` is an expanded palette led by dark gray, which is also the default selection.
-- **Uppercase names:** input is live-uppercased while typing (`_on_name_text_changed()`), and `_on_summon()` uppercases + trims before calling `NetworkService.register_or_claim_profile()`.
-- **Caret handling:** desktop caret jumps to the end on refocus (`_place_caret_end()`); the mobile virtual keyboard is opened via `DisplayServer.virtual_keyboard_show()` with `cursor_start`/`cursor_end` = text length so it lands at the END of existing text (fixes the mobile-only prepend-only bug where it opened at index 0). Use `KEYBOARD_TYPE_DEFAULT`, not `VIRTUAL_KEYBOARD_TYPE_DEFAULT` (Godot 4.7 compile error).
+- **Login / Register** tabs — returning players draw their pattern on the 3×3 pad; new players register name + color + pattern. `NetworkService.login_profile()` / `register_profile()` verify/store `pattern_hash` when the column exists.
+- **No 3D creature preview** — color palette swatches (`GameConfig.CREATURE_COLORS`, default dark gray).
+- **Uppercase names** — live-uppercased while typing; stored/looked up uppercase.
+- **Caret / mobile keyboard** — `DisplayServer.virtual_keyboard_show()` with caret at end of text on focus (mobile prepend bug fix).
+
+Run [`../supabase/migration-pattern-lock.sql`](../supabase/migration-pattern-lock.sql) in Supabase for pattern persistence. Without it the client still boots but skips hash writes.
 
 ## Admin gating
 
-The top-right **admin** button (`sc2_hud.gd`) is only shown when the player's uppercased name is `MOE` (`_is_admin_player()`); `_refresh_stats()` hides it for everyone else and `_toggle_admin_panel()` refuses to open for non-MOE sessions.
+The **admin** button (`sc2_hud.gd`, left of the **X** exit button) is only shown when the player's uppercased name is `MOE` (`_is_admin_player()`). The top-right **X** exits to onboarding for all players (`main.gd::logout_to_onboarding()`).
 
 ## Worm mesh
 
@@ -274,18 +293,19 @@ Dev mode on `:8443` / `:8080` clears service worker cache (no incognito needed).
 
 **Build freshness / cache-busting:**
 
-- Bump `GameConfig.BUILD_ID` (currently `build 2026-07-02b`) and the matching `#build-stamp` string in `custom_shell.html` on each shipped build (every time you re-export the web build). It renders bottom-right in the shell and on the onboarding screen so users can confirm a fresh load.
+- Bump `GameConfig.BUILD_ID` (currently `build 2026-07-03i`) and the matching `#build-stamp` string in `custom_shell.html` on each shipped build (every time you re-export the web build). It renders bottom-right in the shell and on the onboarding screen so users can confirm a fresh load.
 - `custom_shell.html` runs `setupServiceWorkerAutoUpdate()` to force-activate a newer service worker on reload (Godot's default SW is cache-first and never `skipWaiting()`s). Skipped on the dev-server path.
 - **Do not grep `index.pck`** to judge freshness — GDScript compiles to `.gdc` bytecode, so string literals aren't plain-text there. Check `CACHE_VERSION` in the repo-root `index.service.worker.js` and file timestamps instead.
 - **GitHub Pages requires `variant/thread_support=false`** in `export_presets.cfg` — Pages can't send COOP/COEP headers, so a threaded build errors with "SharedArrayBuffer missing" in production (local dev servers send the headers, hiding the bug). Deploy = export → commit root export files → push `main`.
 
 ## Agent handoff — next tasks
 
-1. Replace temporary name-claim login with passkeys/password phrases
-2. Remote player names on HUD / minimap
-3. Re-enable appearance customization for pivot game
-4. Fight/eat ported to Godot (if pivot needs them)
-5. Worm polish, new gameplay systems for pivot direction
+1. Run [`../supabase/migration-pattern-lock.sql`](../supabase/migration-pattern-lock.sql) in Supabase if not already applied
+2. Replace temporary name-claim login with passkeys/password phrases (real auth)
+3. Remote player names on HUD / minimap
+4. Re-enable appearance customization for pivot game
+5. Fight/eat ported to Godot (if pivot needs them)
+6. Worm polish, new gameplay systems for pivot direction
 
 Docs: [`docs/godot-porting-notes.md`](docs/godot-porting-notes.md), [`../docs/supabase-multiplayer-guide.md`](../docs/supabase-multiplayer-guide.md)
 
