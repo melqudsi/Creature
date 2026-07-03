@@ -107,7 +107,7 @@ func logout_to_onboarding(reason: String = "") -> void:
 func _logout_to_onboarding(reason: String = "") -> void:
 	if not reason.is_empty():
 		GameState.show_toast(reason)
-	NetworkService.clear_saved_session()
+	NetworkService.exit_to_onboarding()
 	_world_started = false
 	get_tree().reload_current_scene()
 

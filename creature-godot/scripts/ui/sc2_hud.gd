@@ -12,8 +12,11 @@ extends Control
 @onready var drop_button: Button = $ActionBar/DropButton
 @onready var steal_button: Button = $ActionBar/StealButton
 @onready var region_label: Label = $RegionLabel
+@onready var move_hint: Label = $MoveHint
+@onready var top_bar: Panel = $TopBar
 
 var _last_region := ""
+var _move_hint_deadline := 0
 ## Slice 7: respawn-destination choice (safe house vs The Dump), built in code.
 var _respawn_panel: VBoxContainer
 
@@ -24,6 +27,7 @@ var _worm_spin: SpinBox
 var _object_spin: SpinBox
 var _profiles_list: VBoxContainer
 var _logs_text: TextEdit
+var _test_mode_toggle: CheckButton
 
 func _ready() -> void:
 	theme = preload("res://assets/themes/sc2_theme.tres")
@@ -44,6 +48,7 @@ func _ready() -> void:
 	_build_respawn_choice()
 	if region_label:
 		region_label.text = ""
+		region_label.add_theme_font_size_override("font_size", 22)
 	call_deferred("_refresh_stats")
 	# Inset the whole HUD away from iPhone notch/rounded corners/home bar in
 	# installed-PWA mode. Insets change on rotation (size_changed) and can
@@ -92,7 +97,17 @@ func _process(_delta: float) -> void:
 	if region != _last_region:
 		_last_region = region
 		region_label.text = region
+	_update_move_hint(c)
 	_update_money_buttons(c)
+
+func _update_move_hint(c: Creature) -> void:
+	if not move_hint or not move_hint.visible:
+		return
+	if c and c.is_moving:
+		if _move_hint_deadline == 0:
+			_move_hint_deadline = Time.get_ticks_msec() + 4000
+	if _move_hint_deadline > 0 and Time.get_ticks_msec() >= _move_hint_deadline:
+		move_hint.visible = false
 
 ## Show "Pick Up <thing>" when eligible money is in reach and "Drop"/"Combine"
 ## while carrying. Kept cheap: only touches the buttons when state changes.
@@ -316,11 +331,17 @@ func _build_admin_panel() -> void:
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	root.add_child(title)
 
-	var worm_row := _make_spin_row("Worms", 0, 100, 20)
+	_test_mode_toggle = CheckButton.new()
+	_test_mode_toggle.text = "Test mode (tap to teleport)"
+	_test_mode_toggle.button_pressed = GameState.admin_test_mode
+	_test_mode_toggle.toggled.connect(_on_test_mode_toggled)
+	root.add_child(_test_mode_toggle)
+
+	var worm_row := _make_spin_row("Worms", 0, 100, 100)
 	root.add_child(worm_row)
 	_worm_spin = worm_row.get_node("Spin") as SpinBox
 
-	var object_row := _make_spin_row("Objects", 0, 250, 50)
+	var object_row := _make_spin_row("Objects", 0, 250, 250)
 	root.add_child(object_row)
 	_object_spin = object_row.get_node("Spin") as SpinBox
 
@@ -338,7 +359,7 @@ func _build_admin_panel() -> void:
 	remove_money_btn.pressed.connect(_on_remove_all_money_pressed)
 	money_row.add_child(remove_money_btn)
 	var spawn_stacks_btn := Button.new()
-	spawn_stacks_btn.text = "spawn 5 stacks"
+	spawn_stacks_btn.text = "spawn 20 stacks"
 	spawn_stacks_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	spawn_stacks_btn.pressed.connect(_on_spawn_stacks_pressed)
 	money_row.add_child(spawn_stacks_btn)
@@ -425,8 +446,17 @@ func _on_spawn_stacks_pressed() -> void:
 	if not NetworkService.is_online():
 		GameState.show_toast("Offline — can't spawn shared money")
 		return
-	var created: Array = await NetworkService.admin_spawn_money_stacks(5)
+	var created: Array = await NetworkService.admin_spawn_money_stacks(20)
 	GameState.show_toast("Spawned %d money stacks" % created.size())
+
+func _on_test_mode_toggled(enabled: bool) -> void:
+	if not _is_admin_player():
+		GameState.admin_test_mode = false
+		if _test_mode_toggle:
+			_test_mode_toggle.button_pressed = false
+		return
+	GameState.admin_test_mode = enabled
+	GameState.show_toast("Test mode: tap to teleport" if enabled else "Test mode off")
 
 func _on_reset_objects_pressed() -> void:
 	if not NetworkService.is_online():
@@ -510,6 +540,13 @@ func _refresh_stats() -> void:
 		admin_button.visible = false
 		return
 	name_label.text = c.creature_name
+	if top_bar and name_label:
+		var fs := name_label.get_theme_font_size("font_size")
+		var font := name_label.get_theme_font("font")
+		if font:
+			var text_w := font.get_string_size(
+				name_label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+			top_bar.offset_right = top_bar.offset_left + clampf(text_w + 24.0, 120.0, 180.0)
 	admin_button.visible = _is_admin_player()
 	if not admin_button.visible and _admin_panel and _admin_panel.visible:
 		_admin_panel.visible = false

@@ -73,7 +73,7 @@ The 1.5s poll + in-flight REST writes race each other; these mechanisms keep cli
 - **Absent carriers** — money `carried` by a user with no live creature renders idle (not invisible).
 - **Remote vehicles** — interpolation speed and the teleport-snap threshold scale with form speed (`apply_remote_state` / `_process_remote`), so a 3x-speed Altima neither lags behind its server position nor "teleports" every poll; `_resolve_contacts()` only lets a **moving** vehicle kill.
 - **Seeding** — first-boot seed + Slice 2 top-up both re-check after a random delay so two clients booting together don't double-seed.
-- **Admin recovery (MOE)** — remove all money / spawn stacks / **reset ALL world objects** (full table wipe + re-seed) in the admin panel.
+- **Admin recovery (MOE)** — remove all money / spawn 20 stacks / **reset ALL world objects**; **test mode** (tap-to-teleport via `GameState.admin_test_mode`).
 - **Online-only creature poll** (`network_service.gd`) — the poll filters `last_active >= now − PRESENCE_WINDOW_SEC` (150s) and selects only rendered columns, so per-poll egress stays flat as stale profiles pile up. Offline profiles no longer render as ghost creatures; objects possessed by them fall to the absent-controller rule (render idle). A 60s **presence heartbeat** (`_touch_presence`) keeps idle-but-connected players inside the window. The admin profile list uses `fetch_all_creatures(false)` (unfiltered). First fetch stays `select=*` until optional columns (`form`) are probed — explicitly naming a missing column would fail the whole query on an un-migrated DB.
 - **JWT expiry** (`network_service.gd`) — access tokens die after ~1h; the client refreshes proactively every `JWT_REFRESH_INTERVAL_SEC` (40 min) and every REST call funnels through `_rest_request_raw`, which refreshes-and-retries once on `HTTP 401` (deduped across concurrent callers via `_refresh_in_flight` / `_last_refresh_unix`).
 
@@ -100,10 +100,11 @@ All gameplay constants live in [`scripts/config.gd`](../scripts/config.gd) (`Gam
 
 1. Load `user://supabase_session.json` (refresh token + user id)
 2. Refresh session via `POST /auth/v1/token?grant_type=refresh_token`, or anonymous `POST /auth/v1/signup`
-3. `GET /rest/v1/creatures?user_id=eq.<uuid>` — restore profile + last `x`, `y`
+3. `GET /rest/v1/creatures?user_id=eq.<uuid>` — if a row exists, store it in `_resume_profile` for **Continue as [name]** (do not auto-enter the world)
 4. If no profile exists, onboarding asks for name + color; successful auth with no row must leave `GameState.player_data` empty
-5. `register_profile()` / `login_profile()` (Slice 7) insert or claim a row with pattern verification. Names are stored/matched in **UPPERCASE**. Pattern hash in `creatures.pattern_hash` when the migration is applied. Color forced locally on success.
-6. Debounced `PATCH` on movement (~1.5s + flush on path complete)
+5. `register_profile()` / `login_profile()` (Slice 7) insert or claim a row with pattern verification. `_pattern_hash_column_available` is probed from any fetched row; login rejects when a stored hash mismatches. Names are stored/matched in **UPPERCASE**. Pattern hash in `creatures.pattern_hash` when the migration is applied. Color forced locally on success.
+6. **X** / idle exit: `exit_to_onboarding()` clears in-world state but keeps the Supabase session (`clear_saved_session()` is admin-only).
+7. Debounced `PATCH` on movement (~1.5s + flush on path complete)
 
 Same publishable key as [`js/config.example.js`](../../js/config.example.js). See [`docs/supabase-multiplayer-guide.md`](../../docs/supabase-multiplayer-guide.md).
 
@@ -200,7 +201,7 @@ The export lands in the **repo root** (GitHub Pages serves from `main` root; the
 - **iOS installed-PWA quirks:** (1) stale window size at launch shifts the canvas down until a rotation — fixed by `position: fixed` body + `setupViewportResizeKicks()` in `custom_shell.html` (synthetic `resize` events after start / orientationchange / visualViewport resize / pageshow); (2) notch + rounded corners + home bar clip edge HUD — `CreatureNet.getSafeAreaJson()` reads `env(safe-area-inset-*)` CSS vars and `sc2_hud.gd::_apply_safe_area()` insets the HUD root (css px → design units via ×720/min(vw,vh)). Neither issue reproduces in plain mobile Safari.
 - **Export gotchas:** Godot may revert `export_presets.cfg` (`ensure_cross_origin_isolation_headers` back to true, `orientation` off 0, `thread_support` back to true) and re-serialize `project.godot` (dropping a default line). Verify/restore both to keep the git diff clean.
 - **Build freshness:** GDScript compiles to `.gdc` bytecode, so string literals are **not** plain-text searchable in `index.pck` — don't grep the `.pck` to check whether a build is fresh; use `CACHE_VERSION` in the repo-root `index.service.worker.js` + file timestamps.
-- **PWA cache-busting:** `custom_shell.html`'s `setupServiceWorkerAutoUpdate()` force-activates a newer service worker on reload (Godot's default SW is cache-first / never `skipWaiting()`s). Bump `GameConfig.BUILD_ID` (currently `build 2026-07-03i`; + the `#build-stamp` string in `custom_shell.html`) each shipped build / re-export; it renders bottom-right in the shell and on the onboarding screen so users can confirm freshness.
+- **PWA cache-busting:** `custom_shell.html`'s `setupServiceWorkerAutoUpdate()` force-activates a newer service worker on reload (Godot's default SW is cache-first / never `skipWaiting()`s). Bump `GameConfig.BUILD_ID` (currently `build 2026-07-04c`; + the `#build-stamp` string in `custom_shell.html`) each shipped build / re-export; it renders bottom-right in the shell and on the onboarding screen so users can confirm freshness. Mobile **Tap to start** banner removed (`setupCanvasFocus()` only).
 - **Git on Google Drive:** `git checkout`/`merge` across many files can fail with phantom "File exists" errors (Drive FS lag). Workaround: update refs without touching the tree (`git branch -f main <sha>` + push), or retry `checkout -f` until clean.
 
 ## Known gaps vs web

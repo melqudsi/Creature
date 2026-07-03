@@ -65,7 +65,7 @@ html {
 }
 
 #status {
-	background-color: #242424;
+	background-color: #0a1424;
 	display: flex;
 	flex-direction: column;
 	justify-content: center;
@@ -115,54 +115,6 @@ html {
 	padding: 1rem;
 	text-align: center;
 	z-index: 1;
-}
-
-#fs-prompt {
-	position: fixed;
-	left: 0;
-	right: 0;
-	bottom: 0;
-	z-index: 100000;
-	display: none;
-	flex-direction: column;
-	align-items: center;
-	justify-content: center;
-	gap: 0.5rem;
-	padding: 0.75rem 1rem;
-	padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
-	background: rgba(10, 22, 40, 0.92);
-	text-align: center;
-	font-family: system-ui, sans-serif;
-}
-
-#fs-prompt.visible {
-	display: flex;
-}
-
-#fs-btn {
-	font-size: 1rem;
-	padding: 0.75rem 1.4rem;
-	border: 2px solid #00e5ff;
-	background: #0a1628;
-	color: #00e5ff;
-	border-radius: 4px;
-	cursor: pointer;
-	touch-action: manipulation;
-	-webkit-tap-highlight-color: transparent;
-}
-
-#fs-hint {
-	max-width: 20rem;
-	font-size: 0.85rem;
-	line-height: 1.5;
-	color: #b0bec5;
-	margin: 0;
-}
-
-#pwa-hint {
-	font-size: 0.75rem;
-	color: #78909c;
-	max-width: 22rem;
 }
 
 #build-stamp {
@@ -268,18 +220,12 @@ window.CreatureNet = (function () {
 			<div id="status-notice"></div>
 		</div>
 
-		<div id="fs-prompt" aria-hidden="true">
-			<button type="button" id="fs-btn">Tap to start</button>
-			<p id="fs-hint">For true fullscreen on iPhone, use Share → Add to Home Screen.</p>
-			<p id="pwa-hint">In browser, this banner dismisses on tap so you can play.</p>
-		</div>
-
 		<!-- Build stamp: keep the string in sync with GameConfig.BUILD_ID. -->
-		<div id="build-stamp">build 2026-07-03i</div>
+		<div id="build-stamp">build 2026-07-04d</div>
 
 		<script src="index.js"></script>
 		<script>
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":false,"executable":"index","experimentalVK":true,"fileSizes":{"index.pck":266684,"index.wasm":39509339},"focusCanvas":false,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"index.service.worker.js"};
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":false,"executable":"index","experimentalVK":true,"fileSizes":{"index.pck":271300,"index.wasm":39509339},"focusCanvas":false,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"index.service.worker.js"};
 const GODOT_THREADS_ENABLED = false;
 
 // iOS installed-PWA (standalone) launches can report a STALE window.innerWidth /
@@ -451,7 +397,7 @@ async function prepareCachesForDev() {
 		}).then(() => {
 			setStatusMode('hidden');
 			setupServiceWorkerAutoUpdate();
-			setupMobileFullscreen();
+			setupCanvasFocus();
 			setupViewportResizeKicks();
 			// Heal the launch-time touch-mapping offset without needing a physical
 			// rotate + rotate-back: once shortly after start (engine already sized),
@@ -573,95 +519,9 @@ function setupServiceWorkerAutoUpdate() {
 	});
 }
 
-(function setupMobileFullscreen() {
-	const prompt = document.getElementById('fs-prompt');
-	const btn = document.getElementById('fs-btn');
+(function setupCanvasFocus() {
 	const canvas = document.getElementById('canvas');
-	let userActivated = false;
-	let dismissed = false;
-
-	const isStandalone = window.matchMedia('(display-mode: fullscreen)').matches
-		|| window.matchMedia('(display-mode: standalone)').matches
-		|| window.navigator.standalone === true;
-
-	const isMobile = window.matchMedia('(pointer: coarse)').matches
-		|| window.matchMedia('(max-width: 900px)').matches;
-
-	function isFullscreen() {
-		return !!(document.fullscreenElement || document.webkitFullscreenElement);
-	}
-
-	function focusCanvas() {
-		try {
-			canvas.setAttribute('tabindex', '0');
-			canvas.focus({ preventScroll: true });
-		} catch (_e) {}
-	}
-
-	function dismissPrompt() {
-		dismissed = true;
-		prompt.classList.remove('visible');
-		prompt.setAttribute('aria-hidden', 'true');
-		focusCanvas();
-	}
-
-	async function enterFullscreen() {
-		userActivated = true;
-		dismissPrompt();
-
-		const targets = [canvas, document.documentElement];
-		for (const target of targets) {
-			try {
-				if (isFullscreen()) {
-					break;
-				}
-				if (target.requestFullscreen) {
-					await target.requestFullscreen({ navigationUI: 'hide' });
-					break;
-				}
-				if (target.webkitRequestFullscreen) {
-					target.webkitRequestFullscreen();
-					break;
-				}
-			} catch (err) {
-				console.warn('Fullscreen request failed:', err);
-			}
-		}
-	}
-
-	function maybeShowPrompt() {
-		if (dismissed || !isMobile || isStandalone || isFullscreen()) {
-			prompt.classList.remove('visible');
-			return;
-		}
-		prompt.classList.add('visible');
-		prompt.setAttribute('aria-hidden', 'false');
-	}
-
-	function onStartTap(e) {
-		e.preventDefault();
-		e.stopPropagation();
-		enterFullscreen();
-	}
-
-	btn.addEventListener('click', onStartTap);
-	btn.addEventListener('touchend', onStartTap, { passive: false });
-
-	document.addEventListener('fullscreenchange', () => {
-		if (isFullscreen()) {
-			dismissPrompt();
-		} else if (isMobile && !isStandalone && !dismissed) {
-			prompt.classList.add('visible');
-			prompt.setAttribute('aria-hidden', 'false');
-		}
-	});
-
-	if (isStandalone) {
-		dismissPrompt();
-	} else {
-		maybeShowPrompt();
-	}
-
+	if (!canvas) return;
 	canvas.addEventListener('touchstart', () => {
 		try {
 			canvas.setAttribute('tabindex', '0');

@@ -121,6 +121,12 @@ const TOM_LEE_RECT := Rect2i(17, 42, 3, 9)       # riverfront below Downtown
 const TOM_LEE_TREES: Array[Vector2i] = [
 	Vector2i(17, 44), Vector2i(18, 47), Vector2i(17, 50),
 ]
+## Hand-placed trees around Shelby Farms park (lake tiles stay clear).
+const SHELBY_TREES: Array[Vector2i] = [
+	Vector2i(97, 27), Vector2i(99, 27), Vector2i(106, 27), Vector2i(108, 28),
+	Vector2i(96, 29), Vector2i(96, 32), Vector2i(108, 30), Vector2i(108, 33),
+	Vector2i(97, 33), Vector2i(100, 33), Vector2i(105, 33), Vector2i(107, 33),
+]
 ## Kroger sites: Midtown, East Memphis, Germantown. Store box + parking lot
 ## east of it (parked Altimas + carts are seeded there — see slice6 seeds).
 const KROGER_SITES: Array[Vector2i] = [
@@ -194,6 +200,7 @@ static func tree_tiles() -> Array[Vector2i]:
 			_tree_cache.append(p + GameConfig.OLD_WORLD_OFFSET)
 		_tree_cache.append_array(_scatter()["trees"] as Array[Vector2i])
 		_tree_cache.append_array(TOM_LEE_TREES)
+		_tree_cache.append_array(SHELBY_TREES)
 	return _tree_cache
 
 ## Cached: is_near_building() walks this list every frame (smoker economy).

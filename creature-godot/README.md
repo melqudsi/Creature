@@ -38,7 +38,7 @@ Physical **money** (Money Stack / Money Bag / Vault) + two **transport forms** (
 - **Form-change carry rules** — popping out drops ALL carried loot at the vehicle (`pop_out()` → `_drop_carried_entries()`); becoming a form re-validates and drops what the new form can't hold (`_revalidate_carried_for_form()`).
 - **New kill matrix** — `FormDefs.resolve_player_death()` adds `bus`/`cart` kinds with **killer-specific death lines** (`DEATH_BUS` "MATA said move." vs `DEATH_HOUSE` etc.). A stopped vehicle (prop or player) never kills — `_resolve_contacts()` requires the remote vehicle to be moving; parked Altima/bus props use kind `"prop"`. `ignores_units()` keeps vehicles reckless in pathfinding.
 - **HUD** — `sc2_hud.gd` adds **Pick Up** / **Drop** buttons (in `consumes_pointer_at()` so taps don't leak to the map).
-- **Admin tools (MOE)** — remove all money / spawn 5 stacks / **reset ALL world objects** (wipe + re-seed the shared table; the recovery button for stuck or duplicated objects).
+- **Admin tools (MOE)** — remove all money / spawn 20 stacks / **reset ALL world objects**; **test mode** toggle (tap-to-teleport); pain-test defaults max worms (100) + objects (250).
 - **Graceful degradation** — money works without `migration-money.sql` (only persistent owner labels need it); `NetworkService` detects the `owner_name` column from any fetched row and top-up-seeds the Slice 2 money/bus objects once for pre-Slice-2 worlds (with a random-delay re-check so two booting clients don't double-seed).
 
 ## Slice 3 — BBQ Smoker economy (current)
@@ -58,7 +58,7 @@ Phase 3 of the feature batch: tree shapeshifting, Memphis landmarks, and the Pyr
 - **Tree shapeshift** — decorative scenery trees (`tree_decor`) are claimable. Becoming one creates a shared `tree` row whose `owner_name` carries the home tile (`home:x,y`); every client then hides the scenery original and unblocks its tile (`WorldMap.retire_scenery_tree()`). From then on the tree is a normal shared object — walk it somewhere and pop out, it stays there for everyone.
 - **Landmarks** (`memphis_layout.gd`) — U of M campus (quad + halls), Shelby Farms (lake + walking trail off Walnut Grove), Memphis Zoo (Overton Park pen + animals), Memphis Intl Airport + FedEx hub (terminals, runway), Tom Lee Park (riverfront lawn + trees), and three Krogers (brand box + parking pad). Landmark footprints filter pre-seeded scatter *after* generation so the RNG draw sequence (and every other scatter position) stays identical to pre-landmark builds.
 - **Kroger lots** — each Kroger gets two parked Altimas + two stray shopping carts as shared seed rows (`GameConfig.slice6_seed_objects()`). Top-up detection: a cart outside the old-world rect marks the slice-6 seed as already run.
-- **The Pyramid** — hand-placed at Downtown's north end, shapeshiftable (`FormDefs.PYRAMID`, speed 0 — it does not move). Its special button shows alien glyphs (`ΞΘΨΔ`). Pressing it fires an abduction: a sky beam + saucer FX at the pyramid, nearby NPC vehicles get beamed up, and any player in the radius (except the pyramid itself) dies. Synced to all clients via a transient `abduction` row (smoke-cloud pattern; replay-guarded by `_abductions_seen`). 45s cooldown.
+- **The Pyramid** — hand-placed at Downtown's north end, shapeshiftable (`FormDefs.PYRAMID`, speed 0 — it does not move or rotate). Its special button shows alien glyphs (`ΞΘΨΔ`). Pressing it fires an abduction: a sky beam + saucer FX at the pyramid, nearby NPC vehicles get beamed up, and any player in the radius (except the pyramid itself) dies. Synced to all clients via a transient `abduction` row (smoke-cloud pattern; replay-guarded by `_abductions_seen`). 45s cooldown.
 - **Abduction camera** — the beam/ship live 5–11 units above the apex, far above the default close-zoom frame, so `abduction_zoom_requested` pulls the camera back to distance 24 for the show and eases back after (`rts_camera.gd`). Without this the whole FX plays off the top of the screen (that cost a debugging session — check the camera frustum *first* when "invisible" FX logs fine).
 - **Pyramid placement (Slice 7)** — enlarged squat mesh, wider base, relocated to tile (27,24) with a 7×7 clearance pad off roads (`PYRAMID_PAD` in `memphis_layout.gd`).
 
@@ -71,13 +71,14 @@ Phase 3 of the feature batch: tree shapeshifting, Memphis landmarks, and the Pyr
 
 ## Slice 7 — Pattern lock, safe houses, polish (current)
 
-Phase 4 + mobile input fixes (`build 2026-07-03i`). See the root [`README.md`](../README.md#slice-7--pattern-lock-safe-houses-polish-current) for the full overview.
+Phase 4 + mobile polish (`build 2026-07-04c`). See the root [`README.md`](../README.md#slice-7--pattern-lock-safe-houses-polish-current) for the full overview.
 
-- **Pattern-lock onboarding** — [`pattern_pad.gd`](scripts/ui/pattern_pad.gd) (3×3 swipe pad) + Login/Register tabs in [`creature_create.gd`](scripts/ui/creature_create.gd). `NetworkService.register_profile()` / `login_profile()` + `pattern_hash_for()`; requires [`../supabase/migration-pattern-lock.sql`](../supabase/migration-pattern-lock.sql) for server-side hash storage (graceful without it).
+- **Pattern-lock onboarding** — [`pattern_pad.gd`](scripts/ui/pattern_pad.gd) (3×3 swipe pad) + Login/Register tabs in [`creature_create.gd`](scripts/ui/creature_create.gd). `NetworkService.register_profile()` / `login_profile()` + `pattern_hash_for()`; requires [`../supabase/migration-pattern-lock.sql`](../supabase/migration-pattern-lock.sql). `_pattern_hash_column_available` is probed from fetched rows; login rejects mismatches when a hash is stored; register verifies the hash round-trips.
+- **Continue as [name]** — `boot()` stores the session's creature in `_resume_profile` (does not auto-enter the world). Onboarding shows **Continue as …** when a row exists for the saved auth session. **X** / idle exit call `exit_to_onboarding()` (session preserved); `clear_saved_session()` is admin-only.
 - **Safe houses** — `FormDefs.HOUSE`; claim/unclaim via special button; rooted while claimed (`creature.gd` + `world_object.gd::safe_owner`). `world_map.gd` tracks `safe_house_for(owner)`.
 - **Steal** — HUD **Steal** button when near a carrier (`can_steal_now()` / `_steal_target()`).
 - **Respawn choice** — safe-house owners pick safe house vs dump after death countdown (`respawn_choice_requested` → `sc2_hud.gd`).
-- **Exit + idle logout** — **X** top-right (`logout_to_onboarding()` in `main.gd`); **admin** left of X; 40-minute idle auto-logout (`IDLE_LOGOUT_SEC`).
+- **Exit + idle logout** — **X** top-right (`logout_to_onboarding()` → `exit_to_onboarding()`, session kept); **admin** left of X; 40-minute idle auto-logout (`IDLE_LOGOUT_SEC`, also preserves session).
 - **Vehicle wreck FX** — `spawn_vehicle_wreck()` on vehicle death (non-explosion).
 - **Big-box shimmer** — sign band raised in `object_mesh.gd::_build_bigbox()` (no roof z-fight).
 - **Position sync decoupled from taps** — `creature.gd` updates local `grid_pos` immediately; `NetworkService._autosave_player_position()` PATCHes every 1.5s (+ flush on arrival/respawn/exit). Movement never waits on network.
@@ -172,7 +173,7 @@ Godot re-export may flip these — verify after each export.
 
 **DB appearance:** inserts use `"cute"` (schema constraint); client renders worm. Optional SQL: [`../supabase/migration-godot-session.sql`](../supabase/migration-godot-session.sql).
 
-If auth succeeds but no row exists for the session, `NetworkService.boot()` leaves `GameState.player_data` empty so `main.gd` shows onboarding. Do not recreate the previous behavior that filled `default_player_data()` on successful no-row boot.
+If auth succeeds but no row exists for the session, `NetworkService.boot()` leaves `GameState.player_data` empty so `main.gd` shows onboarding. If a row exists, `_resume_profile` is filled and onboarding shows **Continue as [name]** (player must tap Continue or log in manually).
 
 **Temporary profile migration (applied):** name-claim login and admin profile deletion require [`../supabase/migration-temp-profile-admin.sql`](../supabase/migration-temp-profile-admin.sql) (policies `creatures_temp_claim_by_name` + `creatures_temp_admin_delete`). It has been applied to the current Supabase project. It is intentionally permissive and **temporary** — must be replaced by passkeys/password phrases before shipping. Without it, delete and name-claim silently do nothing. Admin delete requests returned rows, then re-fetches if Supabase returns an empty body; it only reports success when the deleted row is returned or the re-fetch confirms the row is gone.
 
@@ -192,7 +193,8 @@ Test: two editor instances, or editor + phone on `https://<wifi-ip>:8443`. The a
 
 [`scripts/ui/creature_create.gd`](scripts/ui/creature_create.gd) + [`scenes/ui/creature_create.tscn`](scenes/ui/creature_create.tscn) + [`scripts/ui/pattern_pad.gd`](scripts/ui/pattern_pad.gd), run before spawning when no profile exists:
 
-- **Login / Register** tabs — returning players draw their pattern on the 3×3 pad; new players register name + color + pattern. `NetworkService.login_profile()` / `register_profile()` verify/store `pattern_hash` when the column exists.
+- **Login / Register** tabs — returning players swipe their pattern on the 3×3 pad; new players register name + color + pattern (4+ dots). `login_profile()` rejects wrong patterns when `pattern_hash` is stored.
+- **Continue as [name]** — shown above Log In when the saved auth session already has a creature row.
 - **No 3D creature preview** — color palette swatches (`GameConfig.CREATURE_COLORS`, default dark gray).
 - **Uppercase names** — live-uppercased while typing; stored/looked up uppercase.
 - **Caret / mobile keyboard** — `DisplayServer.virtual_keyboard_show()` with caret at end of text on focus (mobile prepend bug fix).
@@ -242,7 +244,7 @@ Buildings use a box body, flat red roof slab, chimney, and door. Avoid using the
 ## PWA / mobile orientation
 
 - Manifest: [`web/manifest.webmanifest`](web/manifest.webmanifest) — `orientation: any`
-- Shell: [`web/custom_shell.html`](web/custom_shell.html) — **no** `screen.orientation.lock('landscape')`, **no** fullscreen retry on `orientationchange` (causes flashing when returning to portrait)
+- Shell: [`web/custom_shell.html`](web/custom_shell.html) — **no** `screen.orientation.lock('landscape')`, **no** fullscreen retry on `orientationchange` (causes flashing when returning to portrait), **no** mobile "Tap to start" bottom banner (`setupCanvasFocus()` only). Boot splash image: `loading_splash1.png` via Project Settings → Boot Splash (exported as `index.png` on web).
 - After manifest changes: remove and re-add to home screen on iOS
 
 ### Responsive display (portrait + landscape + any desktop shape)
@@ -273,12 +275,15 @@ Buildings use a box body, flat red roof slab, chimney, and door. Avoid using the
 
 > **Dev environment:** the repo is on a **Google Drive virtual filesystem**; the in-repo `Godot_v4.7/` folder is an unmaterialized stub. Use the real editor at `C:\godot47\Godot_v4.7-stable_win64.exe` (console: `...win64_console.exe`).
 
-CLI export — run an import/compile pass, then export:
+CLI export — run an import/compile pass, then export (or use `export-web.ps1`, which also copies `loading_splash1.png` → `index.png`):
 
 ```powershell
-& "C:\godot47\Godot_v4.7-stable_win64.exe" --headless --path "F:\GdriveFS\My Drive\_DEV\Game\Creature_game\creature-godot" --import
-& "C:\godot47\Godot_v4.7-stable_win64.exe" --headless --path "F:\GdriveFS\My Drive\_DEV\Game\Creature_game\creature-godot" --export-release "Web" "../index.html"
+& "C:\godot47\Godot_v4.7-stable_win64_console.exe" --headless --path "F:\GdriveFS\My Drive\_DEV\Game\Creature_game\creature-godot" --import
+& "C:\godot47\Godot_v4.7-stable_win64_console.exe" --headless --path "F:\GdriveFS\My Drive\_DEV\Game\Creature_game\creature-godot" --export-release "Web" "../index.html"
+# or: cd creature-godot; .\export-web.ps1
 ```
+
+**Boot splash:** `loading_splash1.png` at the project root (`project.godot` → Application → Boot Splash). Close any app locking that file (Godot's PNG tab, image viewer) before export.
 
 **The export lands in the REPO ROOT** (GitHub Pages serves from `main` root). Push `main` to deploy.
 
@@ -293,7 +298,7 @@ Dev mode on `:8443` / `:8080` clears service worker cache (no incognito needed).
 
 **Build freshness / cache-busting:**
 
-- Bump `GameConfig.BUILD_ID` (currently `build 2026-07-03i`) and the matching `#build-stamp` string in `custom_shell.html` on each shipped build (every time you re-export the web build). It renders bottom-right in the shell and on the onboarding screen so users can confirm a fresh load.
+- Bump `GameConfig.BUILD_ID` (currently `build 2026-07-04c`) and the matching `#build-stamp` string in `custom_shell.html` on each shipped build (every time you re-export the web build). It renders bottom-right in the shell and on the onboarding screen so users can confirm a fresh load.
 - `custom_shell.html` runs `setupServiceWorkerAutoUpdate()` to force-activate a newer service worker on reload (Godot's default SW is cache-first and never `skipWaiting()`s). Skipped on the dev-server path.
 - **Do not grep `index.pck`** to judge freshness — GDScript compiles to `.gdc` bytecode, so string literals aren't plain-text there. Check `CACHE_VERSION` in the repo-root `index.service.worker.js` and file timestamps instead.
 - **GitHub Pages requires `variant/thread_support=false`** in `export_presets.cfg` — Pages can't send COOP/COEP headers, so a threaded build errors with "SharedArrayBuffer missing" in production (local dev servers send the headers, hiding the bug). Deploy = export → commit root export files → push `main`.

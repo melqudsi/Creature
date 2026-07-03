@@ -282,7 +282,10 @@ func _handle_ground_click(screen_pos: Vector2) -> void:
 		return
 
 	var tile := Vector2(hit.x / GameConfig.TILE_SIZE, hit.z / GameConfig.TILE_SIZE)
-	follow_target.set_move_target(tile)
+	if GameState.admin_test_mode and follow_target.has_method("admin_teleport_to"):
+		follow_target.admin_teleport_to(tile)
+	else:
+		follow_target.set_move_target(tile)
 	GameState.note_player_input()
 	if _world_map and _world_map.has_method("show_click_marker"):
 		_world_map.show_click_marker(Vector3(hit.x, 0, hit.z))

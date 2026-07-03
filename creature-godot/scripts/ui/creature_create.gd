@@ -29,9 +29,16 @@ var _mode := "choose"
 ## Dark gray is the default selected color on open.
 var _color := GameConfig.DEFAULT_CREATURE_COLOR
 var _swatches: Array[Button] = []
+var _continue_btn: Button
 
 func _ready() -> void:
 	theme = preload("res://assets/themes/sc2_theme.tres")
+	_continue_btn = Button.new()
+	_continue_btn.custom_minimum_size = Vector2(220, 56)
+	_continue_btn.visible = false
+	_continue_btn.pressed.connect(_on_continue_pressed)
+	mode_row.add_child(_continue_btn)
+	mode_row.move_child(_continue_btn, 0)
 	login_mode_btn.pressed.connect(func(): _set_mode("login"))
 	register_mode_btn.pressed.connect(func(): _set_mode("register"))
 	back_btn.pressed.connect(func(): _set_mode("choose"))
@@ -61,10 +68,11 @@ func _set_mode(mode: String) -> void:
 		"choose":
 			title_label.text = "CREATURE"
 			_set_status("Log in, or register a new creature.")
+			_refresh_continue_button()
 		"register":
 			title_label.text = "REGISTER"
-			pattern_label.text = "CHOOSE A 4 DOT PATTERN"
-			pattern_note.text = "You'll enter this pattern to log in — remember it"
+			pattern_label.text = "CHOOSE A PATTERN (4+ DOTS)"
+			pattern_note.text = "Swipe across the dots to connect them — you'll enter this pattern to log in"
 			action_btn.text = "REGISTER"
 			_set_status("")
 			_position_pattern_block(true)
@@ -72,11 +80,31 @@ func _set_mode(mode: String) -> void:
 		"login":
 			title_label.text = "LOG IN"
 			pattern_label.text = "DRAW YOUR PATTERN"
-			pattern_note.text = ""
+			pattern_note.text = "Swipe across the dots to connect them"
 			action_btn.text = "LOG IN"
 			_set_status("")
 			_position_pattern_block(false)
 			call_deferred("_focus_name_field")
+	if mode != "choose" and _continue_btn:
+		_continue_btn.visible = false
+
+func _refresh_continue_button() -> void:
+	if not _continue_btn:
+		return
+	var resume := NetworkService.get_resume_profile()
+	_continue_btn.visible = not resume.is_empty() and _mode == "choose"
+	if _continue_btn.visible:
+		_continue_btn.text = "Continue as %s" % resume.get("name", "Creature")
+
+func _on_continue_pressed() -> void:
+	_continue_btn.disabled = true
+	var profile := NetworkService.continue_resume_profile()
+	if profile.is_empty():
+		_set_status("Could not resume session")
+		_continue_btn.disabled = false
+		return
+	_set_status("Welcome back, %s" % profile.get("name", "Creature"))
+	profile_ready.emit()
 
 ## Login has no color picker, so lift the pattern block into that empty space
 ## (keeps the panel from feeling bottom-heavy with a big hole in the middle).
@@ -94,7 +122,7 @@ func _position_pattern_block(with_colors: bool) -> void:
 
 func _on_pattern_changed(_pattern: String) -> void:
 	if pattern_pad.dot_count() > 0 and pattern_pad.dot_count() < MIN_PATTERN_DOTS:
-		_set_status("Pattern needs at least %d dots" % MIN_PATTERN_DOTS)
+		_set_status("Swipe at least %d dots (currently %d)" % [MIN_PATTERN_DOTS, pattern_pad.dot_count()])
 	else:
 		_set_status("")
 
@@ -105,7 +133,7 @@ func _on_action() -> void:
 		_set_status("Name required")
 		return
 	if pattern_pad.dot_count() < MIN_PATTERN_DOTS:
-		_set_status("Draw a pattern with at least %d dots" % MIN_PATTERN_DOTS)
+		_set_status("Swipe a pattern with at least %d dots" % MIN_PATTERN_DOTS)
 		return
 	action_btn.disabled = true
 	var profile: Dictionary

@@ -51,6 +51,8 @@ var _last_refresh_unix := 0.0
 ## True once we've seen at least one creature row and learned which optional
 ## columns exist; until then the poll uses select=* (see _creature_select_columns).
 var _creature_columns_probed := false
+var _pattern_hash_column_available := false
+var _resume_profile: Dictionary = {}
 
 func _log(msg: String) -> void:
 	GameState.add_admin_log(msg)
@@ -466,22 +468,32 @@ func clear_saved_session() -> void:
 	_online = false
 	GameState.player_data.clear()
 	GameState.player_creature = null
+	_resume_profile.clear()
 	if _uses_web_bridge():
 		_web_net().clearSessionJson()
 	if FileAccess.file_exists(SESSION_PATH):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(SESSION_PATH))
 	_log("Cleared saved session; reload to show onboarding")
 
+## Leave the world for onboarding but keep the Supabase auth session so
+## "Continue as …" works after the X button or idle exit.
+func exit_to_onboarding() -> void:
+	GameState.player_data.clear()
+	GameState.player_creature = null
+	_resume_profile.clear()
+	_log("Exited to onboarding (session preserved)")
+
 func boot() -> void:
 	_last_error = ""
 	GameState.player_data.clear()
 	GameState.player_creature = null
+	_resume_profile.clear()
 	var ok := await _boot_online()
 	if ok:
-		if GameState.player_data.is_empty():
+		if _resume_profile.is_empty():
 			_log("No profile for this session; showing onboarding")
 		else:
-			_log("Restored profile for %s" % GameState.player_data.get("name", "Creature"))
+			_log("Session has profile for %s — onboarding with Continue" % _resume_profile.get("name", "Creature"))
 		return
 	_online = false
 	var msg := "Could not reach server — starting locally"
@@ -507,10 +519,23 @@ func _boot_online() -> bool:
 		return false
 	var row := await fetch_my_creature(user_id)
 	if not row.is_empty():
-		GameState.player_data = db_row_to_player_data(row)
+		_resume_profile = db_row_to_player_data(row)
 	else:
 		_log("Authenticated session has no creature row")
 	return true
+
+## Profile tied to this auth session (for "Continue as …" on onboarding).
+func get_resume_profile() -> Dictionary:
+	return _resume_profile
+
+## Skip manual login when the session already has a creature row.
+func continue_resume_profile() -> Dictionary:
+	if _resume_profile.is_empty():
+		return {}
+	GameState.player_data = _resume_profile.duplicate(true)
+	_resume_profile.clear()
+	_log("Continued as '%s'" % GameState.player_data.get("name", "Creature"))
+	return GameState.player_data
 
 func ensure_auth() -> bool:
 	if await _try_refresh_session():
@@ -528,7 +553,9 @@ func fetch_my_creature(user_id: String) -> Dictionary:
 	var rows: Variant = resp.data
 	if typeof(rows) != TYPE_ARRAY or rows.is_empty():
 		return {}
-	return rows[0]
+	var row: Dictionary = rows[0]
+	_note_row_columns(row)
+	return row
 
 func fetch_creature_by_name(profile_name: String) -> Dictionary:
 	# Names are stored/matched in ALL CAPS (Postgres eq is case-sensitive).
@@ -543,7 +570,9 @@ func fetch_creature_by_name(profile_name: String) -> Dictionary:
 	var rows: Variant = resp.data
 	if typeof(rows) != TYPE_ARRAY or rows.is_empty():
 		return {}
-	return rows[0]
+	var row: Dictionary = rows[0]
+	_note_row_columns(row)
+	return row
 
 func fetch_creature_by_id(creature_id: String) -> Dictionary:
 	var path := "/rest/v1/creatures?id=eq.%s&select=*&limit=1" % creature_id.uri_encode()
@@ -604,9 +633,20 @@ func register_profile(profile_name: String, color: Color, pattern: String) -> Di
 	if created.is_empty():
 		_log("Create profile failed for '%s'" % cleaned_name)
 		return {}
+	_note_row_columns(created)
+	if _pattern_hash_column_available:
+		var expected := pattern_hash_for(cleaned_name, pattern)
+		var saved := ""
+		if created.get("pattern_hash") != null:
+			saved = str(created.get("pattern_hash")).strip_edges()
+		if saved.is_empty() or saved != expected:
+			_last_error = "Pattern lock failed to save — run migration-pattern-lock.sql"
+			_log("Register: pattern_hash not persisted for '%s'" % cleaned_name)
+			return {}
 	GameState.player_data = db_row_to_player_data(created)
 	# Keep the exact chosen color in-session regardless of DB round-trip quirks.
 	GameState.player_data["color"] = color
+	_resume_profile.clear()
 	_log("Registered profile '%s'" % cleaned_name)
 	return GameState.player_data
 
@@ -625,11 +665,20 @@ func login_profile(profile_name: String, pattern: String) -> Dictionary:
 	if existing.is_empty():
 		_last_error = "No profile named '%s' — register instead" % cleaned_name
 		return {}
+	_note_row_columns(existing)
+	if pattern.strip_edges().is_empty():
+		_last_error = "Pattern required"
+		return {}
 	var stored_hash := ""
-	if typeof(existing.get("pattern_hash")) == TYPE_STRING:
-		stored_hash = str(existing.get("pattern_hash"))
+	if existing.get("pattern_hash") != null:
+		stored_hash = str(existing.get("pattern_hash")).strip_edges()
 	var entered_hash := pattern_hash_for(cleaned_name, pattern)
-	if not stored_hash.is_empty() and stored_hash != entered_hash:
+	if _pattern_hash_column_available:
+		if not stored_hash.is_empty() and stored_hash != entered_hash:
+			_last_error = "Wrong pattern"
+			_log("Login rejected: pattern mismatch for '%s'" % cleaned_name)
+			return {}
+	elif not stored_hash.is_empty() and stored_hash != entered_hash:
 		_last_error = "Wrong pattern"
 		return {}
 	var patch := {
@@ -637,8 +686,8 @@ func login_profile(profile_name: String, pattern: String) -> Dictionary:
 		"last_active": _iso_now(),
 		"updated_at": _iso_now(),
 	}
-	if stored_hash.is_empty() and existing.has("pattern_hash"):
-		# Grandfathered profile: adopt the pattern drawn at this first login.
+	if _pattern_hash_column_available and stored_hash.is_empty():
+		# First login after migration: adopt the pattern drawn now.
 		patch["pattern_hash"] = entered_hash
 	var id := str(existing.get("id", ""))
 	var claimed := await _patch_creature_returning("/rest/v1/creatures?id=eq.%s" % id.uri_encode(), patch)
@@ -651,6 +700,7 @@ func login_profile(profile_name: String, pattern: String) -> Dictionary:
 		_last_error = "Login failed — see admin log"
 		return {}
 	GameState.player_data = db_row_to_player_data(claimed)
+	_resume_profile.clear()
 	_log("Logged in as '%s'" % cleaned_name)
 	return GameState.player_data
 
@@ -763,6 +813,9 @@ func _note_row_columns(row: Dictionary) -> void:
 	if not _form_column_available and typeof(row) == TYPE_DICTIONARY and row.has("form"):
 		_form_column_available = true
 		_log("Detected `form` column — form sync enabled")
+	if not _pattern_hash_column_available and typeof(row) == TYPE_DICTIONARY and row.has("pattern_hash"):
+		_pattern_hash_column_available = true
+		_log("Detected `pattern_hash` column — pattern lock enabled")
 
 ## Persist the player's current shapeshift form. No-op (graceful) until we know
 ## the `form` column exists, so writes never fail on an un-migrated DB.

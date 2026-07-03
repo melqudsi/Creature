@@ -21,6 +21,7 @@ const SEGMENT_SPECS: Array[Dictionary] = [
 
 ## Shapeshift interaction tuning.
 const INTERACT_RADIUS := 1.15   # how close to a world object to offer "Become"
+const PYRAMID_FACING_Y := 0.0   # creature-root yaw; mesh child adds PI/4
 const SHAPESHIFT_TIME := 1.0    # seconds to hold near an object to transform
 const OBJECT_RESPAWN_DELAY := 3.0 # object reappears this long after you die as it
 const EXPLOSION_RADIUS := 2.2
@@ -196,6 +197,8 @@ func apply_form(key: String) -> void:
 	body_root.rotation_degrees = Vector3.ZERO
 	body_root.position = Vector3.ZERO
 	body_root.scale = Vector3.ONE * _form_body_scale()
+	if form_key == FormDefs.PYRAMID:
+		rotation.y = PYRAMID_FACING_Y
 	if FormDefs.is_alien(form_key):
 		for spec in SEGMENT_SPECS:
 			_segments.append(_add_segment(spec))
@@ -438,8 +441,11 @@ func _update_transform(snap: bool, delta: float) -> void:
 	if snap:
 		position.y = 0.0
 	if not is_asleep and is_moving and _move_dir.length_squared() > 0.0001:
-		var target_rot := atan2(_move_dir.x, _move_dir.y)
-		rotation.y = lerp_angle(rotation.y, target_rot, 0.18 if snap else delta * 14.0)
+		if FormDefs.speed_mult(form_key) > 0.0:
+			var target_rot := atan2(_move_dir.x, _move_dir.y)
+			rotation.y = lerp_angle(rotation.y, target_rot, 0.18 if snap else delta * 14.0)
+	elif form_key == FormDefs.PYRAMID:
+		rotation.y = PYRAMID_FACING_Y
 
 func set_move_target(target: Vector2) -> void:
 	if is_dead or is_spawning:
@@ -465,6 +471,18 @@ func set_move_target(target: Vector2) -> void:
 		GameState.note_player_input()
 		_update_local_player_data()
 	_replan_path()
+
+## Admin test mode: snap the local player to a ground tile (no pathfinding).
+func admin_teleport_to(tile: Vector2) -> void:
+	if not is_player or is_dead or is_spawning:
+		return
+	grid_pos = Vector2(
+		clampf(tile.x, 0.0, GameConfig.MAP_W - 1.0),
+		clampf(tile.y, 0.0, GameConfig.MAP_H - 1.0))
+	_stop_movement()
+	_move_target = Vector2(-1, -1)
+	_update_transform(true, 0.0)
+	_sync_player_position(true)
 
 func _replan_path() -> void:
 	if _move_target.x < 0:
@@ -705,7 +723,7 @@ func _scan_shapeshift_target() -> void:
 	# Can only Become while an alien (pop out first to change form).
 	if is_alien_form():
 		var my := _world_xz()
-		var best_d := INTERACT_RADIUS
+		var best_d := INF
 		for obj in GameState.world_objects:
 			if not is_instance_valid(obj) or obj.consumed or not obj.is_shapeshiftable():
 				continue
@@ -715,8 +733,9 @@ func _scan_shapeshift_target() -> void:
 			# A claimed safe house belongs to its owner alone.
 			if not obj.safe_owner.is_empty() and obj.safe_owner != creature_name:
 				continue
+			var reach := maxf(INTERACT_RADIUS, obj.radius + 0.5)
 			var d := my.distance_to(Vector2(obj.position.x, obj.position.z))
-			if d <= best_d:
+			if d <= reach and d < best_d:
 				best_d = d
 				_nearby_object = obj
 		# No prop in range? A stopped NPC vehicle (braking for us) is claimable.
@@ -795,9 +814,10 @@ func _complete_shapeshift() -> void:
 		# Scenery house claim: same pattern as trees (Slice 7).
 		_register_claimed_house(obj)
 	if obj.form_key == FormDefs.PYRAMID:
-		# You ARE the Pyramid now. Stand exactly where it stands.
+		# You ARE the Pyramid now. Stand exactly where it stands, fixed facing.
 		position = obj.spawn_world_pos
 		grid_pos = Vector2(GameConfig.world_to_tile(position))
+		rotation.y = PYRAMID_FACING_Y
 	apply_form(obj.form_key)
 	# Whatever the new form can't legally hold falls to the ground here.
 	_revalidate_carried_for_form()
@@ -1671,10 +1691,8 @@ func apply_death(reason: String, exploded: bool = false, killer_name: String = "
 	var died_form := form_key
 	var died_as_vehicle := FormDefs.is_vehicle(died_form)
 	is_dead = true
-	# A squished alien (or cart rider) leaves a blood splat where it happened.
-	# Explosions have their own FX; potholes/trees "wreck", they don't squish.
-	var my_kind := FormDefs.kind(died_form)
-	if not exploded and (my_kind == "alien" or my_kind == "cart"):
+	# Leave a blood splat for non-explosion deaths (squish, wreck, abduction, etc.).
+	if not exploded:
 		GameState.blood_splat_requested.emit(position)
 	# Drop any carried money at the death location as idle world objects (synced),
 	# so killers/other players can grab it — central to the revenge/steal loop.

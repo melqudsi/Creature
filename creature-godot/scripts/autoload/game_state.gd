@@ -45,6 +45,8 @@ var admin_logs: Array[String] = []
 ## Last time the local player did anything (move, tap, HUD button). Used for
 ## idle auto-logout.
 var last_player_input_ms: int = 0
+## MOE admin: tap-to-teleport instead of pathfinding (set from admin panel).
+var admin_test_mode := false
 ## Interactive/solid props (trees, buildings, shapeshift sources). Scanned by the
 ## local player each frame for collisions/kills/shapeshift prompts.
 var world_objects: Array[WorldObject] = []

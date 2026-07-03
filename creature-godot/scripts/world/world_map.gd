@@ -64,6 +64,24 @@ func note_deleted(object_id: String, secs: float = 15.0) -> void:
 		return
 	_tombstones[object_id] = Time.get_ticks_msec() + int(secs * 1000.0)
 	_local_authority.erase(object_id)
+	var dead = _shared_objects.get(object_id)
+	if dead != null and is_instance_valid(dead):
+		dead.queue_free()
+	_shared_objects.erase(object_id)
+
+func _prune_invalid_shared_objects() -> void:
+	for id in _shared_objects.keys():
+		var obj = _shared_objects[id]
+		if obj == null or not is_instance_valid(obj):
+			_shared_objects.erase(id)
+
+func _get_shared_object(id: String) -> WorldObject:
+	var obj = _shared_objects.get(id)
+	if obj != null and is_instance_valid(obj):
+		return obj
+	if _shared_objects.has(id):
+		_shared_objects.erase(id)
+	return null
 
 func _expire_grace_maps() -> void:
 	var now := Time.get_ticks_msec()
@@ -714,6 +732,7 @@ func _spawn_world_object(key: String, world_pos: Vector3, parent: Node3D) -> Wor
 ## persists where it was dropped, and survives a controller disconnect).
 func sync_world_objects(rows: Array) -> void:
 	_activate_shared_objects()
+	_prune_invalid_shared_objects()
 	_expire_grace_maps()
 	var my_uid := NetworkService.get_user_id()
 	# LOCAL possession is authoritative for my own object so a just-become /
@@ -740,8 +759,8 @@ func sync_world_objects(rows: Array) -> void:
 		# We deleted this row locally (combine); the server DELETE may still be in
 		# flight. Never resurrect it — that's how two stacks became two bags.
 		if _tombstones.has(id):
-			var dead: WorldObject = _shared_objects.get(id)
-			if dead and is_instance_valid(dead):
+			var dead := _get_shared_object(id)
+			if dead:
 				dead.queue_free()
 			_shared_objects.erase(id)
 			continue
@@ -858,8 +877,8 @@ func sync_world_objects(rows: Array) -> void:
 			var cfg_form := str(_object_cfg(type_key).get("form_key", ""))
 			if pc and is_instance_valid(pc) and locally_possessed_id.is_empty() \
 					and not cfg_form.is_empty() and cfg_form == pc.form_key:
-				var adopt: WorldObject = _shared_objects.get(id)
-				if adopt == null or not is_instance_valid(adopt):
+				var adopt := _get_shared_object(id)
+				if adopt == null:
 					adopt = _spawn_world_object(type_key, GameConfig.tile_to_world(tile), _objects_root)
 					adopt.object_id = id
 					_shared_objects[id] = adopt
@@ -872,14 +891,14 @@ func sync_world_objects(rows: Array) -> void:
 		elif possessed and _known_user_ids.has(possessed_by):
 			hide_prop = true # a remote player we can see is wearing it
 		# else: idle, or possessed by an absent controller -> render idle
-		var obj: WorldObject = _shared_objects.get(id)
+		var obj := _get_shared_object(id)
 		if hide_prop:
-			if obj and is_instance_valid(obj):
+			if obj:
 				obj.consume()
 			continue
 		# Idle (or orphaned-possessed): render at its shared position.
 		var world_pos := GameConfig.tile_to_world(tile)
-		if obj == null or not is_instance_valid(obj):
+		if obj == null:
 			obj = _spawn_world_object(type_key, world_pos, _objects_root)
 			obj.object_id = id
 			_shared_objects[id] = obj
@@ -915,8 +934,8 @@ func sync_world_objects(rows: Array) -> void:
 	for id in _shared_objects.keys():
 		if seen.has(id):
 			continue
-		var gone: WorldObject = _shared_objects[id]
-		if is_instance_valid(gone):
+		var gone := _get_shared_object(id)
+		if gone:
 			gone.queue_free()
 		_shared_objects.erase(id)
 

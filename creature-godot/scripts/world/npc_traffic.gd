@@ -26,7 +26,7 @@ const STOP_LOOKAHEAD := 2.4
 ## Lateral distance from the lane line that still counts as "in the way".
 const STOP_LATERAL := 0.8
 ## How long a vehicle waits at a full stop before driving through the player.
-const PATIENCE_SEC := 5.0
+const PATIENCE_SEC := 8.5
 const ACCEL := 2.6         # tiles/s^2 pulling away
 const BRAKE := 7.0         # tiles/s^2 stopping (must out-brake STOP_LOOKAHEAD)
 ## Below this speed a vehicle is harmless and claimable (matches the
