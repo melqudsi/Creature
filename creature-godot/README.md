@@ -244,7 +244,7 @@ Buildings use a box body, flat red roof slab, chimney, and door. Avoid using the
 ## PWA / mobile orientation
 
 - Manifest: [`web/manifest.webmanifest`](web/manifest.webmanifest) — `orientation: any`
-- Shell: [`web/custom_shell.html`](web/custom_shell.html) — **no** `screen.orientation.lock('landscape')`, **no** fullscreen retry on `orientationchange` (causes flashing when returning to portrait), **no** mobile "Tap to start" bottom banner (`setupCanvasFocus()` only). Boot splash image: `loading_splash1.png` via Project Settings → Boot Splash (exported as `index.png` on web).
+- Shell: [`web/custom_shell.html`](web/custom_shell.html) — **no** `screen.orientation.lock('landscape')`, **no** fullscreen retry on `orientationchange` (causes flashing when returning to portrait), **no** mobile "Tap to start" bottom banner (`setupCanvasFocus()` only). Boot splash: save art as `loading_splash2.jpg`; export converts it to PNG for Godot and copies the JPG to `index.png` for the web shell.
 - After manifest changes: remove and re-add to home screen on iOS
 
 ### Responsive display (portrait + landscape + any desktop shape)
@@ -275,7 +275,7 @@ Buildings use a box body, flat red roof slab, chimney, and door. Avoid using the
 
 > **Dev environment:** the repo is on a **Google Drive virtual filesystem**; the in-repo `Godot_v4.7/` folder is an unmaterialized stub. Use the real editor at `C:\godot47\Godot_v4.7-stable_win64.exe` (console: `...win64_console.exe`).
 
-CLI export — run an import/compile pass, then export (or use `export-web.ps1`, which also copies `loading_splash1.png` → `index.png`):
+CLI export — run an import/compile pass, then export (or use `export-web.ps1`, which converts `loading_splash2.jpg` -> PNG for Godot and copies the JPG to `index.png`):
 
 ```powershell
 & "C:\godot47\Godot_v4.7-stable_win64_console.exe" --headless --path "F:\GdriveFS\My Drive\_DEV\Game\Creature_game\creature-godot" --import
@@ -283,7 +283,7 @@ CLI export — run an import/compile pass, then export (or use `export-web.ps1`,
 # or: cd creature-godot; .\export-web.ps1
 ```
 
-**Boot splash:** `loading_splash1.png` at the project root (`project.godot` → Application → Boot Splash). Close any app locking that file (Godot's PNG tab, image viewer) before export.
+**Boot splash:** `loading_splash2.jpg` at the project root (Godot uses the auto-generated `loading_splash2.png`). Close any app locking those files before export.
 
 **The export lands in the REPO ROOT** (GitHub Pages serves from `main` root). Push `main` to deploy.
 
@@ -298,7 +298,7 @@ Dev mode on `:8443` / `:8080` clears service worker cache (no incognito needed).
 
 **Build freshness / cache-busting:**
 
-- Bump `GameConfig.BUILD_ID` (currently `build 2026-07-04c`) and the matching `#build-stamp` string in `custom_shell.html` on each shipped build (every time you re-export the web build). It renders bottom-right in the shell and on the onboarding screen so users can confirm a fresh load.
+- Bump `GameConfig.BUILD_ID` (currently `build 2026-07-04f`) and the matching `#build-stamp` string in `custom_shell.html` on each shipped build (every time you re-export the web build). It renders bottom-right in the shell and on the onboarding screen so users can confirm a fresh load.
 - `custom_shell.html` runs `setupServiceWorkerAutoUpdate()` to force-activate a newer service worker on reload (Godot's default SW is cache-first and never `skipWaiting()`s). Skipped on the dev-server path.
 - **Do not grep `index.pck`** to judge freshness — GDScript compiles to `.gdc` bytecode, so string literals aren't plain-text there. Check `CACHE_VERSION` in the repo-root `index.service.worker.js` and file timestamps instead.
 - **GitHub Pages requires `variant/thread_support=false`** in `export_presets.cfg` — Pages can't send COOP/COEP headers, so a threaded build errors with "SharedArrayBuffer missing" in production (local dev servers send the headers, hiding the bug). Deploy = export → commit root export files → push `main`.

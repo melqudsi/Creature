@@ -93,14 +93,59 @@ html {
 	image-rendering: pixelated;
 }
 
+#status-load-footer {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 8%;
+	z-index: 2;
+	display: none;
+	flex-direction: column;
+	align-items: center;
+	gap: 0.55rem;
+	padding: 0 1.5rem;
+	pointer-events: none;
+}
+
+#status-loading-text {
+	font-family: system-ui, sans-serif;
+	font-size: 1rem;
+	font-weight: 500;
+	color: #b0bec5;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+}
+
 #status-progress, #status-notice {
 	display: none;
 }
 
 #status-progress {
-	bottom: 10%;
-	width: 50%;
-	margin: 0 auto;
+	width: min(320px, 72vw);
+	height: 10px;
+	margin: 0;
+	-webkit-appearance: none;
+	appearance: none;
+	border: none;
+	border-radius: 5px;
+	overflow: hidden;
+	background-color: rgba(10, 22, 40, 0.85);
+	box-shadow: 0 0 0 1px rgba(0, 229, 255, 0.35);
+}
+
+#status-progress::-webkit-progress-bar {
+	background-color: rgba(10, 22, 40, 0.85);
+	border-radius: 5px;
+}
+
+#status-progress::-webkit-progress-value {
+	background: linear-gradient(90deg, #0088a8, #00e5ff);
+	border-radius: 5px;
+}
+
+#status-progress::-moz-progress-bar {
+	background: linear-gradient(90deg, #0088a8, #00e5ff);
+	border-radius: 5px;
 }
 
 #status-notice {
@@ -213,12 +258,15 @@ window.CreatureNet = (function () {
 
 		<div id="status">
 			<img id="status-splash" class="$GODOT_SPLASH_CLASSES" src="$GODOT_SPLASH" alt="">
-			<progress id="status-progress"></progress>
+			<div id="status-load-footer">
+				<div id="status-loading-text">Loading...</div>
+				<progress id="status-progress"></progress>
+			</div>
 			<div id="status-notice"></div>
 		</div>
 
 		<!-- Build stamp: keep the string in sync with GameConfig.BUILD_ID. -->
-		<div id="build-stamp">build 2026-07-04d</div>
+		<div id="build-stamp">build 2026-07-04f</div>
 
 		<script src="$GODOT_URL"></script>
 		<script>
@@ -303,6 +351,7 @@ async function prepareCachesForDev() {
 	await prepareCachesForDev();
 	const engine = new Engine(GODOT_CONFIG);
 	const statusOverlay = document.getElementById('status');
+	const statusLoadFooter = document.getElementById('status-load-footer');
 	const statusProgress = document.getElementById('status-progress');
 	const statusNotice = document.getElementById('status-notice');
 
@@ -319,7 +368,7 @@ async function prepareCachesForDev() {
 			return;
 		}
 		statusOverlay.style.visibility = 'visible';
-		statusProgress.style.display = mode === 'progress' ? 'block' : 'none';
+		statusLoadFooter.style.display = mode === 'progress' ? 'flex' : 'none';
 		statusNotice.style.display = mode === 'notice' ? 'block' : 'none';
 		statusMode = mode;
 	}

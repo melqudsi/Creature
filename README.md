@@ -134,7 +134,7 @@ Phase 3 of the feature batch (`build 2026-07-03c`):
 
 ---
 
-## Slice 7 — Pattern lock, safe houses, polish (current)
+## Slice 7 — Pattern lock, safe houses, polish
 
 Phase 4 + mobile input fixes (`build 2026-07-03i`):
 
@@ -151,12 +151,24 @@ Phase 4 + mobile input fixes (`build 2026-07-03i`):
 
 ---
 
+## Polish batch — UX, splash, admin (`build 2026-07-04f`, current)
+
+- **Boot splash** — custom art via `creature-godot/loading_splash2.jpg`; `export-web.ps1` converts to PNG for Godot and copies the JPG to repo-root `index.png` for a smaller web deploy.
+- **Loading UI** — web shell shows a bottom **Loading…** label + cyan progress bar above the splash (`#status-load-footer` in `custom_shell.html`).
+- **Onboarding** — **Continue as [name]** when a valid session exists; **X** returns to login without clearing the session until a different player signs in.
+- **Pattern lock** — stricter verify when `pattern_hash` column is present; pad copy mentions swipe; minimum 4 dots.
+- **HUD** — larger region label, auto-hide move hint, narrower name bar.
+- **Gameplay** — pyramid rotation locked while shapeshifted; blood splat on all non-explosion deaths; money-combine crash fix; Shelby Farms trees; longer NPC vehicle stop time.
+- **Admin (MOE)** — test-mode tap-to-teleport, spawn 20 stacks, pain-test max defaults.
+
+---
+
 ## Deployment — GitHub Pages
 
 The Godot **web export lands in the repo root** (`index.html`, `index.pck`, `index.wasm`, `index.service.worker.js`, …) and GitHub Pages serves `main`'s root directly. The old Phase-1 web game was archived to `_arc/`.
 
 1. Bump `GameConfig.BUILD_ID` + the `#build-stamp` string in `creature-godot/web/custom_shell.html`.
-2. Export (headless command below, or editor → preset default `../index.html`).
+2. Export with `creature-godot/export-web.ps1` (or headless command below; preset default `../index.html`). Save splash art as `loading_splash2.jpg` first.
 3. Commit the changed root export files + push `main`. Pages redeploys automatically in ~1–2 min.
 4. Verify the live build stamp (bottom-right on the spawn screen).
 
@@ -421,7 +433,7 @@ Or from the editor:
 
 ### Build stamp + PWA cache-busting
 
-- `GameConfig.BUILD_ID` (currently **`build 2026-07-03i`**) is shown bottom-right in the web shell and on the onboarding screen so users can confirm they loaded a fresh build. **Bump this string on every new build you ship** (and match the `#build-stamp` literal in `creature-godot/web/custom_shell.html`) whenever you re-export the web build.
+- `GameConfig.BUILD_ID` (currently **`build 2026-07-04f`**) is shown bottom-right in the web shell and on the onboarding screen so users can confirm they loaded a fresh build. **Bump this string on every new build you ship** (and match the `#build-stamp` literal in `creature-godot/web/custom_shell.html`) whenever you re-export the web build.
 - Godot's default service worker is cache-first and never `skipWaiting()`s, which caused the recurring "old cached build keeps loading" bug. `custom_shell.html` now runs `setupServiceWorkerAutoUpdate()`: on reload it calls `registration.update()`, and on `updatefound` posts `'update'` to the new worker → `controllerchange` triggers a one-time reload. It is skipped on the dev-server path (which already unregisters SWs).
 
 | Export setting | Value | Why |
