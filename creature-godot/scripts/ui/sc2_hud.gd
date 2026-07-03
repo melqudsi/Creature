@@ -85,17 +85,25 @@ func _process(_delta: float) -> void:
 		region_label.text = region
 	_update_money_buttons(c)
 
-## Show "Pick Up" when eligible money is in reach and "Drop" while carrying. Kept
-## cheap: only toggles the buttons when the state actually changes.
+## Show "Pick Up <thing>" when eligible money is in reach and "Drop"/"Combine"
+## while carrying. Kept cheap: only touches the buttons when state changes.
 func _update_money_buttons(c: Creature) -> void:
 	if not pickup_button or not drop_button:
 		return
 	var can_pick: bool = c.can_pick_up_now() and not c.is_dead
 	if pickup_button.visible != can_pick:
 		pickup_button.visible = can_pick
+	if can_pick:
+		var pick_text: String = c.pickup_label()
+		if pickup_button.text != pick_text:
+			pickup_button.text = pick_text
 	var carrying: bool = c.is_carrying()
 	if drop_button.visible != carrying:
 		drop_button.visible = carrying
+	if carrying:
+		var drop_text: String = c.drop_label()
+		if drop_button.text != drop_text:
+			drop_button.text = drop_text
 
 func _setup_action_buttons() -> void:
 	become_button.visible = false
@@ -138,6 +146,9 @@ func _on_form_changed(form_key: String) -> void:
 		FormDefs.BBQ_SMOKER:
 			special_button.visible = true
 			special_button.text = "Smoke Cloud"
+		FormDefs.PROPANE:
+			special_button.visible = true
+			special_button.text = "Detonate"
 		_:
 			special_button.visible = false
 	if not alien:

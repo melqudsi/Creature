@@ -99,6 +99,21 @@ The world is now a simplified, walkable-scale Memphis: **160×112 tiles** (~2:40
 
 ---
 
+## Slice 5 — Phase 1 polish (current)
+
+Game-feel batch from the July feature list (Phase 1 of 4 — see the todo phases at the bottom):
+
+- **Safe money placement** — every drop/combine/scatter/generate goes through `GameState.free_drop_tile()`: a spiral search that rejects blocked tiles, water, and tiles holding any solid world object. Fixes the "vault dropped inside an Altima" soft-lock.
+- **Contextual money buttons** — Pick Up/Drop buttons now name the item and telegraph combines: "Pick Up Money Bag", "Combine → Vault" (`creature.gd::pickup_label()/drop_label()`). Carried loot renders full-size overhead instead of shrunken.
+- **Death rework** — on death the camera zooms in on the corpse, a short pause + red "Respawning in 3/2/1…" countdown plays before the respawn at The Dump (`apply_death` → `_run_respawn_countdown`).
+- **Kill feed for everyone** — deaths broadcast a transient `kill_event` row through `world_objects` (message in `owner_name`, victim uid in `possessed_by` so the victim isn't double-toasted). Every other client toasts it once (`_kill_events_seen`) and any client garbage-collects rows older than 20s. No schema change.
+- **Propane detonate** — possessing a propane tank turns the special button into **Detonate**: kills the player ("You detonated. On purpose. Respect.") and triggers the normal chain-reaction explosion. Propane players also die when a vehicle rams them (propane added to `explosion_kills`).
+- **Explosion money demotion** — combined money near a blast splits down one tier (vault → 2 bags, bag → 2 stacks; bags keep the owner) and the pieces fling outward to free tiles; loose stacks just scatter (`world_map.gd::_demote_money/_fling_money`).
+- **Movement feel** — ease-in/ease-out on start/stop (`_move_ease`), prop speed bump (pothole 0.45, magnolia 0.5, propane 0.8, smoker 0.9, bus 1.3, cart 1.6), Altima burst 2.2x, and vehicles get **+35% on roads** (`ROAD_SPEED_MULT`).
+- **Pinch-zoom tap fix** — taps are decided on touch *release*: any gesture that ever had 2+ fingers, moved past the drag threshold, or ended within 350ms of a pinch is not a move command; emulated mouse clicks after real touches are dropped.
+
+---
+
 ## Deployment — GitHub Pages
 
 The Godot **web export lands in the repo root** (`index.html`, `index.pck`, `index.wasm`, `index.service.worker.js`, …) and GitHub Pages serves `main`'s root directly. The old Phase-1 web game was archived to `_arc/`.

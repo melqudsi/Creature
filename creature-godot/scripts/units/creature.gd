@@ -24,16 +24,25 @@ const INTERACT_RADIUS := 1.15   # how close to a world object to offer "Become"
 const SHAPESHIFT_TIME := 1.0    # seconds to hold near an object to transform
 const OBJECT_RESPAWN_DELAY := 3.0 # object reappears this long after you die as it
 const EXPLOSION_RADIUS := 2.2
-const ALTIMA_BURST_MULT := 1.7
+const ALTIMA_BURST_MULT := 2.2
 const ALTIMA_BURST_TIME := 2.0
 const ALTIMA_BURST_COOLDOWN := 6.0
+## Vehicles drive noticeably faster on asphalt than cutting across grass.
+const ROAD_SPEED_MULT := 1.35
+## Movement easing: seconds-ish to reach full speed from a stop, and the
+## distance (tiles) over which we brake into the final destination.
+const MOVE_ACCEL_RATE := 3.0
+const MOVE_DECEL_DIST := 0.9
 ## Remote position jumps larger than this (tiles) are treated as a teleport
 ## (death/respawn) and SNAP instead of interpolating, so other players don't see
 ## a dead player smoothly "walk" back to the dump.
 const REMOTE_SNAP_TILES := 3.0
-## How long an explosive death lingers at the blast before the camera-following
-## player teleports to the landfill, so the explosion is actually visible.
-const EXPLODE_RESPAWN_DELAY := 0.8
+## Death flow: hold on the corpse for a beat, then a 3-2-1 countdown before the
+## respawn teleport, so the player can actually see what killed them.
+const RESPAWN_DEATH_PAUSE := 0.9
+const RESPAWN_COUNTDOWN := 3
+## How long a kill-feed broadcast row lives before the victim's client deletes it.
+const KILL_FEED_TTL_SEC := 6.0
 
 var creature_id: String = ""
 var creature_name: String = "Creature"
@@ -78,6 +87,8 @@ const MONEY_COMBINE_RADIUS := 1.5
 var _move_dir := Vector2.ZERO
 var _move_target: Vector2 = Vector2(-1, -1)
 var _path: Array[Vector2] = []
+## 0..1 ease factor: ramps up from a standstill and brakes near the destination.
+var _speed_ease := 0.0
 var _walk_phase := 0.0
 var _spawn_t := 0.0
 var _breath_phase := 0.0
@@ -450,7 +461,7 @@ func _advance_along_path(delta: float) -> void:
 	var waypoint := _path[0]
 	var to_waypoint := waypoint - grid_pos
 	var dist := to_waypoint.length()
-	var step := delta * _current_speed()
+	var step := delta * _current_speed() * _move_ease(delta)
 
 	if dist <= 0.001:
 		_path.remove_at(0)
@@ -494,7 +505,19 @@ func _finish_path() -> void:
 func _stop_movement() -> void:
 	is_moving = false
 	_path.clear()
+	_speed_ease = 0.0
 	_reset_body_pose()
+
+## Tiny accel from a stop + decel into the final destination — pure feel, keeps
+## taps from reading as instant velocity snaps.
+func _move_ease(delta: float) -> float:
+	_speed_ease = minf(1.0, _speed_ease + delta * MOVE_ACCEL_RATE)
+	var ease_out := 1.0
+	if not _path.is_empty():
+		var remaining := grid_pos.distance_to(_path[_path.size() - 1])
+		if remaining < MOVE_DECEL_DIST:
+			ease_out = maxf(0.35, remaining / MOVE_DECEL_DIST)
+	return minf(_speed_ease, ease_out)
 
 func _has_reached_target() -> bool:
 	if _move_target.x < 0:
@@ -587,6 +610,10 @@ func _current_speed() -> float:
 	var mult := FormDefs.speed_mult(form_key)
 	if _burst_t > 0.0:
 		mult *= ALTIMA_BURST_MULT
+	# Asphalt bonus: vehicles cruise faster when actually driving on a road.
+	if FormDefs.is_vehicle(form_key) \
+			and MemphisLayout.is_road(Vector2i(int(floor(grid_pos.x)), int(floor(grid_pos.y)))):
+		mult *= ROAD_SPEED_MULT
 	mult *= _carry_speed_factor()
 	return GameConfig.MOVE_TILES_PER_SEC * mult
 
@@ -725,7 +752,7 @@ func pop_out() -> void:
 	apply_form(FormDefs.ALIEN)
 	GameState.show_toast("Popped out to alien")
 
-## Form specials: Altima speed burst; BBQ Smoker smoke cloud.
+## Form specials: Altima speed burst; BBQ Smoker smoke cloud; Propane detonate.
 func use_special() -> void:
 	if not is_player or is_dead:
 		return
@@ -738,6 +765,17 @@ func use_special() -> void:
 			GameState.show_toast("Smoker recharging (%ds)" % int(ceil(_smoke_cd)))
 		else:
 			_deploy_smoke_cloud()
+	elif form_key == FormDefs.PROPANE:
+		_detonate_propane()
+
+## Manual propane detonation: the blast scatters/demotes nearby money and, per
+## the design rule, the tank's pilot goes with it. The worn tank returns to its
+## home spot via the normal death release.
+func _detonate_propane() -> void:
+	# Die FIRST (with the funnier self-detonation message), THEN blast: the death
+	# drops any carried money at the spot and the blast then scatters it.
+	apply_death(FormDefs.DEATH_SELF_DETONATE, true)
+	GameState.explosion_requested.emit(position, EXPLOSION_RADIUS)
 
 # ---------------------------------------------------------------------------
 # BBQ Smoker (Slice 3): smoke cover + parked money generation.
@@ -802,7 +840,7 @@ func _count_world_stacks() -> int:
 ## Spawn a fresh stack on a tile right beside the smoker (synced when online).
 func _generate_money_stack() -> void:
 	var offs: Array[Vector2] = [Vector2(1, 0), Vector2(-1, 0), Vector2(0, 1), Vector2(0, -1), Vector2(1, 1), Vector2(-1, 1)]
-	var tile: Vector2 = GameConfig.safe_drop_tile(grid_pos + offs[randi() % offs.size()])
+	var tile: Vector2 = GameState.free_drop_tile(grid_pos + offs[randi() % offs.size()])
 	GameState.show_toast("BBQ sold — fresh money stack!")
 	var new_id := ""
 	if NetworkService.is_online():
@@ -852,6 +890,37 @@ func is_carrying() -> bool:
 ## now (drives the HUD "Pick Up" button visibility).
 func can_pick_up_now() -> bool:
 	return _nearest_pickup() != null
+
+## HUD Pick Up button label — names what's about to be grabbed ("Pick Up Money Bag").
+func pickup_label() -> String:
+	var obj := _nearest_pickup()
+	if obj == null:
+		return "Pick Up"
+	return "Pick Up %s" % FormDefs.tier_display(obj.tier)
+
+## HUD Drop button label — says "Combine" when the drop is going to merge with a
+## same-tier money object (either one on the ground nearby, or a second one we're
+## carrying), so the player knows what's about to happen.
+func drop_label() -> String:
+	if _carried.is_empty():
+		return "Drop"
+	var counts: Dictionary = {}
+	for entry in _carried:
+		var t := int(entry.get("tier", 0))
+		if t < FormDefs.TIER_STACK or t >= FormDefs.TIER_VAULT:
+			continue
+		counts[t] = int(counts.get(t, 0)) + 1
+		if int(counts[t]) >= 2: # two carried same-tier items merge on drop
+			return "Combine → %s" % FormDefs.tier_display(t + 1)
+	var my := _world_xz()
+	for obj in GameState.world_objects:
+		if not is_instance_valid(obj) or obj.consumed or not obj.is_money():
+			continue
+		if not counts.has(obj.tier):
+			continue
+		if my.distance_to(Vector2(obj.position.x, obj.position.z)) <= MONEY_COMBINE_RADIUS:
+			return "Combine → %s" % FormDefs.tier_display(obj.tier + 1)
+	return "Drop"
 
 ## Nearest idle money object within reach that this form may carry given its
 ## current load. Returns null if none is eligible.
@@ -924,7 +993,7 @@ func drop_all() -> void:
 		if obj == null or not is_instance_valid(obj):
 			i += 1
 			continue
-		var drop_tile := GameConfig.safe_drop_tile(base_tile + _drop_offset(i))
+		var drop_tile := GameState.free_drop_tile(base_tile + _drop_offset(i))
 		i += 1
 		var wp := GameConfig.tile_to_world(drop_tile)
 		# Claim: hauling a bag/vault you don't own into the landfill steals it.
@@ -962,7 +1031,7 @@ func _drop_carried_entries(entries: Array, base_tile: Vector2) -> void:
 		if obj == null or not is_instance_valid(obj):
 			i += 1
 			continue
-		var drop_tile := GameConfig.safe_drop_tile(base_tile + _drop_offset(i))
+		var drop_tile := GameState.free_drop_tile(base_tile + _drop_offset(i))
 		i += 1
 		var wp := GameConfig.tile_to_world(drop_tile)
 		obj.carried_by = ""
@@ -1034,7 +1103,8 @@ func _combine_pair(a: WorldObject, b: WorldObject) -> void:
 		return
 	var new_tier: int = a.tier + 1
 	var mid_world: Vector3 = (a.position + b.position) * 0.5
-	var mid_tile := Vector2(GameConfig.world_to_tile(mid_world))
+	var mid_tile := GameState.free_drop_tile(Vector2(GameConfig.world_to_tile(mid_world)))
+	mid_world = GameConfig.tile_to_world(mid_tile)
 	var type_key := _money_type_key(new_tier)
 	var owner := creature_name
 	_remove_money_object(a)
@@ -1089,13 +1159,14 @@ func update_carried_display(tiers: Array) -> void:
 	_carried_root = Node3D.new()
 	_carried_root.name = "CarriedLoot"
 	add_child(_carried_root)
-	var y := 0.85
+	# Carried loot renders at full world size (it used to shrink to half size,
+	# which made a hauled vault look like pocket change).
+	var y := 0.9
 	for tier in tiers:
 		var node := ObjectMesh.build(_money_visual_for_tier(int(tier)))
-		node.scale = Vector3.ONE * 0.5
 		node.position = Vector3(0, y, 0)
 		_carried_root.add_child(node)
-		y += 0.35
+		y += 0.7
 
 ## Drop every carried money object at the death location as idle world objects
 ## (ownership preserved — killers/others can then grab it). No combine on death.
@@ -1109,7 +1180,7 @@ func _drop_carried_on_death() -> void:
 		if obj == null or not is_instance_valid(obj):
 			i += 1
 			continue
-		var drop_tile := GameConfig.safe_drop_tile(grid_pos + _drop_offset(i))
+		var drop_tile := GameState.free_drop_tile(grid_pos + _drop_offset(i))
 		i += 1
 		var wp := GameConfig.tile_to_world(drop_tile)
 		obj.carried_by = ""
@@ -1164,7 +1235,8 @@ func _resolve_contacts() -> void:
 		if res.die:
 			if res.explode:
 				GameState.explosion_requested.emit(position, EXPLOSION_RADIUS)
-			apply_death(res.reason, res.explode)
+			# A remote player did this — credit them in the kill feed.
+			apply_death(res.reason, res.explode, c.creature_name)
 			return
 
 ## Called by the world when an explosion goes off. Applies its lethal radius to
@@ -1179,9 +1251,10 @@ func apply_explosion(world_pos: Vector3, radius: float) -> void:
 		apply_death(FormDefs.DEATH_PROPANE, true)
 
 ## Death + respawn as alien at the landfill. Kills are non-punishing.
-## `exploded` lingers the corpse at the blast for a beat so the camera-following
-## player actually sees the explosion before teleporting to the dump.
-func apply_death(reason: String, exploded: bool = false) -> void:
+## The corpse lingers at the death spot through a short pause + 3-2-1 countdown
+## (with the camera zoomed in) so the player actually sees what happened.
+## `killer_name` (when known, i.e. a remote player did it) feeds the kill feed.
+func apply_death(reason: String, exploded: bool = false, killer_name: String = "") -> void:
 	if is_dead:
 		return
 	is_dead = true
@@ -1196,6 +1269,7 @@ func apply_death(reason: String, exploded: bool = false) -> void:
 	if not reason.is_empty():
 		GameState.show_toast(reason)
 	GameState.add_admin_log("Player died: %s (form %s)" % [reason, form_key])
+	_broadcast_kill_feed(reason, killer_name)
 
 	# If we died while shapeshifted, the worn object returns to its home spot.
 	# Shared objects release on the server (visible to everyone); client-local
@@ -1216,11 +1290,44 @@ func apply_death(reason: String, exploded: bool = false) -> void:
 	apply_form(FormDefs.ALIEN)
 	_stop_movement()
 	_move_target = Vector2(-1, -1)
-	if exploded:
-		var timer := get_tree().create_timer(EXPLODE_RESPAWN_DELAY)
-		timer.timeout.connect(_respawn_at_landfill)
+	GameState.death_zoom_requested.emit(position)
+	_run_respawn_countdown()
+
+## Fire-and-forget coroutine: hold on the corpse, count down, then respawn.
+func _run_respawn_countdown() -> void:
+	await get_tree().create_timer(RESPAWN_DEATH_PAUSE).timeout
+	for i in RESPAWN_COUNTDOWN:
+		GameState.show_toast("Respawning in %d…" % (RESPAWN_COUNTDOWN - i))
+		await get_tree().create_timer(1.0).timeout
+	_respawn_at_landfill()
+
+## Broadcast this death to everyone's kill feed via a short-lived world_objects
+## row (the smoke-cloud trick — no new table, rides the existing poll). Other
+## clients toast the message once; we delete the row a few seconds later, and
+## any client garbage-collects stale rows whose owner never got to delete them.
+func _broadcast_kill_feed(reason: String, killer_name: String) -> void:
+	if not is_player or creature_name.is_empty() or not NetworkService.is_online():
+		return
+	var msg := reason
+	if msg.begins_with("You "):
+		msg = creature_name + msg.substr(3) # "You got Altima'd." -> "MOE got Altima'd."
 	else:
-		_respawn_at_landfill()
+		msg = "%s died. %s" % [creature_name, msg] # "MOE died. The pothole won."
+	if not killer_name.is_empty():
+		msg = "%s by %s." % [msg.trim_suffix("."), killer_name]
+	var created: Dictionary = await NetworkService.create_world_object({
+		"type": "kill_event",
+		"x": grid_pos.x, "y": grid_pos.y,
+		"state": "possessed",
+		"possessed_by": NetworkService.get_user_id(),
+		"owner_name": msg,
+	})
+	var id := str(created.get("id", ""))
+	if id.is_empty():
+		return
+	await get_tree().create_timer(KILL_FEED_TTL_SEC).timeout
+	_note_deleted(id)
+	NetworkService.delete_world_object(id)
 
 ## Relocate to the landfill and play the emerge animation (which also grants a
 ## brief invulnerability window since interactions skip while spawning).

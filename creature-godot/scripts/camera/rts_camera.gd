@@ -18,10 +18,16 @@ var _desired_distance := 8.0
 var _active_touches: Dictionary = {}
 var _touch_start := Vector2.ZERO
 var _touch_moved := false
-var _was_pinching := false
 var _last_pinch_dist := 0.0
 var _last_tap_ms := 0
 var _last_tap_pos := Vector2.ZERO
+## Most touches this gesture ever had at once (a pinch that decays to one finger
+## is still a pinch, not a tap) + a cooldown after pinching before taps count.
+var _gesture_max_touches := 0
+var _pinch_block_until_ms := 0
+## Last time a real touch event arrived — used to ignore the EMULATED mouse
+## click that mirrors every touch (it must never issue its own move command).
+var _last_touch_ms := 0
 
 var _world_map: Node
 
@@ -35,7 +41,17 @@ func _ready() -> void:
 	fov = 42.0
 	_desired_distance = zoom_min
 	_edge_pan_enabled = not DisplayServer.is_touchscreen_available()
+	GameState.death_zoom_requested.connect(_on_death_zoom)
 	_update_position(true)
+
+## On the local player's death, pull the camera in on the corpse so the respawn
+## countdown actually shows what happened (no-op if already zoomed in).
+func _on_death_zoom(_world_pos: Vector3) -> void:
+	if _desired_distance <= 14.0:
+		return
+	var tw := create_tween()
+	tw.tween_property(self, "_desired_distance", 13.0, 0.4) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 
 func bind_world_map(world_map: Node) -> void:
 	_world_map = world_map
@@ -52,25 +68,32 @@ func process_pointer_input(event: InputEvent) -> bool:
 
 	if event is InputEventScreenTouch:
 		var touch := event as InputEventScreenTouch
+		_last_touch_ms = Time.get_ticks_msec()
 		if touch.pressed:
+			if _active_touches.is_empty():
+				_gesture_max_touches = 0
 			if touch.index == 0:
 				_touch_start = touch.position
 				_touch_moved = false
-				if _active_touches.is_empty():
-					_was_pinching = false
 			_active_touches[touch.index] = touch.position
-			if touch.index == 0 and _active_touches.size() == 1:
-				_handle_tap(touch.position, true)
+			_gesture_max_touches = maxi(_gesture_max_touches, _active_touches.size())
 			_update_pinch()
 		else:
+			var was_solo := _gesture_max_touches <= 1
 			_active_touches.erase(touch.index)
 			if _active_touches.size() < 2:
 				_last_pinch_dist = 0.0
-				_was_pinching = false
+			# Tap-to-move fires on RELEASE, and only if the whole gesture stayed
+			# one steady finger. A pinch whose second finger lands a half-beat
+			# after the first must never issue a move command.
+			if touch.index == 0 and was_solo and not _touch_moved \
+					and Time.get_ticks_msec() >= _pinch_block_until_ms:
+				_handle_tap(touch.position, true)
 		return true
 
 	if event is InputEventScreenDrag:
 		var drag := event as InputEventScreenDrag
+		_last_touch_ms = Time.get_ticks_msec()
 		_active_touches[drag.index] = drag.position
 		if drag.index == 0 and _active_touches.size() == 1:
 			if drag.position.distance_to(_touch_start) > TAP_MOVE_THRESHOLD:
@@ -90,6 +113,11 @@ func process_pointer_input(event: InputEvent) -> bool:
 			_apply_zoom(zoom_step)
 			return true
 		if mb.button_index == MOUSE_BUTTON_LEFT or mb.button_index == MOUSE_BUTTON_RIGHT:
+			# The emulated mouse click that mirrors a touch arrives right after
+			# the touch events — the ScreenTouch path already owns tapping there
+			# (with pinch suppression), so this must not double-fire a move.
+			if Time.get_ticks_msec() - _last_touch_ms < 500:
+				return true
 			_handle_tap(mb.position, false)
 			return true
 
@@ -111,7 +139,7 @@ func _update_pinch() -> void:
 	if _active_touches.size() < 2:
 		_last_pinch_dist = 0.0
 		return
-	_was_pinching = true
+	_pinch_block_until_ms = Time.get_ticks_msec() + 350
 	var keys := _active_touches.keys()
 	var a: Vector2 = _active_touches[keys[0]]
 	var b: Vector2 = _active_touches[keys[1]]
@@ -128,8 +156,6 @@ func _viewport_position(screen_pos: Vector2) -> Vector2:
 	return vp.get_screen_transform().affine_inverse() * screen_pos
 
 func _handle_tap(screen_pos: Vector2, from_touch: bool) -> void:
-	if _was_pinching or _touch_moved:
-		return
 	var now := Time.get_ticks_msec()
 	if now - _last_tap_ms < 80 and _last_tap_pos.distance_to(screen_pos) < 16.0:
 		return

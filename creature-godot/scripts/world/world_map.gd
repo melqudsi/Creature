@@ -35,6 +35,9 @@ var _tombstones: Dictionary = {}      # object_id -> expiry msec
 ## Everything inside a cloud's radius (remote players + loose money) is hidden.
 var _smoke_clouds: Dictionary = {}
 
+## Kill-feed rows already toasted (never repeat a broadcast on later polls).
+var _kill_events_seen: Dictionary = {}
+
 func note_local_authority(object_id: String, secs: float = 6.0) -> void:
 	if object_id.is_empty():
 		return
@@ -543,6 +546,21 @@ func sync_world_objects(rows: Array) -> void:
 			else:
 				register_smoke_cloud(id, GameConfig.tile_to_world(tile), remain)
 			continue
+		# Kill-feed broadcasts: transient message rows, not props. Toast once for
+		# everyone except the victim (they already saw their own death message);
+		# the victim deletes the row after a few seconds, and we GC stale rows
+		# if the victim disconnected before cleanup.
+		if type_key == "kill_event":
+			if not _kill_events_seen.has(id):
+				_kill_events_seen[id] = true
+				if str(row.get("possessed_by", "")) != my_uid:
+					var msg := _row_owner_name(row)
+					if not msg.is_empty():
+						GameState.show_toast(msg)
+			if _row_age_sec(row) > 20.0:
+				note_deleted(id)
+				NetworkService.delete_world_object(id)
+			continue
 		var state := str(row.get("state", "idle"))
 		var possessed_by := str(row.get("possessed_by", ""))
 		var possessed := state == "possessed" and not possessed_by.is_empty()
@@ -871,29 +889,73 @@ func spawn_explosion(world_pos: Vector3, radius: float) -> void:
 	# the client that spawned the explosion runs this, so there's no PATCH race.
 	_scatter_money(world_pos, maxf(radius * 1.6, 3.0))
 
-## Fling idle money objects near a blast to random open tiles a couple of tiles
-## away, and persist the new positions so every client agrees where it landed.
+## Blasts near money: loose stacks get flung to nearby open tiles, and COMBINED
+## money breaks DOWN a tier (vault -> two bags, bag -> two stacks). Explosions
+## never destroy money (design rule) — they just undo the bundling.
 func _scatter_money(world_pos: Vector3, scatter_radius: float) -> void:
 	var origin := Vector2(world_pos.x, world_pos.z)
+	var hit: Array[WorldObject] = []
 	for obj in GameState.world_objects:
 		if not is_instance_valid(obj) or obj.consumed or not obj.is_money():
 			continue
-		if origin.distance_to(Vector2(obj.position.x, obj.position.z)) > scatter_radius:
-			continue
-		var away := (Vector2(obj.position.x, obj.position.z) - origin).normalized()
-		if away.length_squared() < 0.01:
-			away = Vector2.RIGHT.rotated(randf() * TAU)
-		var dist := randf_range(1.5, 3.0)
-		var cur_tile := Vector2(GameConfig.world_to_tile(obj.position))
-		var new_tile := cur_tile + away * dist + Vector2(randf_range(-0.6, 0.6), randf_range(-0.6, 0.6))
-		new_tile = GameConfig.safe_drop_tile(new_tile) # never fling money into the river
-		var new_pos := GameConfig.tile_to_world(new_tile)
-		obj.respawn_at(new_pos)
-		obj.spawn_world_pos = new_pos
-		obj.spawn_tile = new_tile
-		if not obj.object_id.is_empty():
-			note_local_authority(obj.object_id)
-			NetworkService.drop_money_object(obj.object_id, new_tile.x, new_tile.y, obj.owner_name)
+		if origin.distance_to(Vector2(obj.position.x, obj.position.z)) <= scatter_radius:
+			hit.append(obj)
+	for obj in hit:
+		if obj.tier >= FormDefs.TIER_BAG:
+			_demote_money(obj, origin)
+		else:
+			_fling_money(obj, origin)
+
+## Fling one money object away from the blast to a nearby open tile, and persist
+## the new position so every client agrees where it landed.
+func _fling_money(obj: WorldObject, origin: Vector2) -> void:
+	var away := (Vector2(obj.position.x, obj.position.z) - origin).normalized()
+	if away.length_squared() < 0.01:
+		away = Vector2.RIGHT.rotated(randf() * TAU)
+	var dist := randf_range(1.5, 3.0)
+	var cur_tile := Vector2(GameConfig.world_to_tile(obj.position))
+	var new_tile := cur_tile + away * dist + Vector2(randf_range(-0.6, 0.6), randf_range(-0.6, 0.6))
+	new_tile = GameState.free_drop_tile(new_tile) # never into the river or inside a prop
+	var new_pos := GameConfig.tile_to_world(new_tile)
+	obj.respawn_at(new_pos)
+	obj.spawn_world_pos = new_pos
+	obj.spawn_tile = new_tile
+	if not obj.object_id.is_empty():
+		note_local_authority(obj.object_id)
+		NetworkService.drop_money_object(obj.object_id, new_tile.x, new_tile.y, obj.owner_name)
+
+## Split a bag/vault caught in a blast into TWO objects of the tier below, thrown
+## to different sides. Bags keep the owner label; stacks are unowned as always.
+## Only the client that spawned the explosion runs this (no PATCH race).
+func _demote_money(obj: WorldObject, origin: Vector2) -> void:
+	var child_tier: int = obj.tier - 1
+	var type_key := "money_bag" if child_tier >= FormDefs.TIER_BAG else "money_stack"
+	var owner: String = obj.owner_name if child_tier >= FormDefs.TIER_BAG else ""
+	var base := Vector2(GameConfig.world_to_tile(obj.position))
+	var away := (Vector2(obj.position.x, obj.position.z) - origin).normalized()
+	if away.length_squared() < 0.01:
+		away = Vector2.RIGHT.rotated(randf() * TAU)
+	GameState.show_toast("The blast broke a %s apart!" % FormDefs.tier_display(obj.tier))
+	# Remove the source (tombstoned so a stale poll can't resurrect it).
+	obj.consume()
+	if not obj.object_id.is_empty():
+		note_deleted(obj.object_id)
+		NetworkService.delete_world_object(obj.object_id)
+	obj.queue_free()
+	for k in 2:
+		var side := away.rotated(deg_to_rad(-45.0 + 90.0 * float(k)) + randf_range(-0.3, 0.3))
+		var tile := GameState.free_drop_tile(base + side * randf_range(1.5, 2.8))
+		_spawn_demoted_money(type_key, tile, owner)
+
+func _spawn_demoted_money(type_key: String, tile: Vector2, owner: String) -> void:
+	var new_id := ""
+	if NetworkService.is_online():
+		var fields := {"type": type_key, "x": tile.x, "y": tile.y, "state": "idle"}
+		if not owner.is_empty():
+			fields["owner_name"] = owner
+		var created: Dictionary = await NetworkService.create_world_object(fields)
+		new_id = str(created.get("id", ""))
+	spawn_money_object(type_key, GameConfig.tile_to_world(tile), owner, new_id)
 
 ## A squished alien leaves a blood splat: one main puddle + a few random droplet
 ## blobs, all flat against the ground, fading away over several seconds.

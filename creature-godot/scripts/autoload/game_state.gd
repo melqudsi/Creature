@@ -16,6 +16,9 @@ signal interaction_changed(can_become: bool, form_display: String)
 signal explosion_requested(world_pos: Vector3, radius: float)
 signal money_combined(world_pos: Vector3)
 signal blood_splat_requested(world_pos: Vector3)
+## The local player died: the camera should zoom in on the death spot so the
+## player can see what killed them during the respawn countdown.
+signal death_zoom_requested(world_pos: Vector3)
 
 var creatures: Dictionary = {} # id -> Creature
 var player_creature: Creature = null
@@ -72,6 +75,33 @@ func note_player_input() -> void:
 
 func show_toast(msg: String) -> void:
 	toast_requested.emit(msg)
+
+## Where to set money (or any prop) down: near `base`, in bounds, out of the
+## water, and NOT inside a solid object (the vault-inside-an-Altima bug). Money
+## objects don't count as blockers — dropping near money is how combines work.
+func free_drop_tile(base: Vector2) -> Vector2:
+	var first := GameConfig.safe_drop_tile(base)
+	if _drop_tile_clear(first):
+		return first
+	for ring in [0.9, 1.5, 2.2]:
+		for k in 8:
+			var dir := Vector2.RIGHT.rotated(TAU * float(k) / 8.0)
+			var cand := GameConfig.safe_drop_tile(base + dir * float(ring))
+			if _drop_tile_clear(cand):
+				return cand
+	return first
+
+func _drop_tile_clear(tile: Vector2) -> bool:
+	if GridNav.is_blocked(Vector2i(int(floor(tile.x)), int(floor(tile.y))), blocked_tiles, {}):
+		return false
+	var wp := GameConfig.tile_to_world(tile)
+	var at := Vector2(wp.x, wp.z)
+	for obj in world_objects:
+		if not is_instance_valid(obj) or obj.consumed or obj.is_money():
+			continue
+		if at.distance_to(Vector2(obj.position.x, obj.position.z)) < obj.radius + 0.45:
+			return false
+	return true
 
 func add_admin_log(msg: String) -> void:
 	var stamp := Time.get_time_string_from_system()

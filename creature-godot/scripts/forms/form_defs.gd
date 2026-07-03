@@ -22,12 +22,12 @@ const TIER_VAULT := 3
 const FORMS := {
 	ALIEN: {"display": "Alien", "speed": 1.0, "radius": 0.35, "kind": "alien", "visual": "alien"},
 	ALTIMA: {"display": "Altima", "speed": 3.0, "radius": 0.55, "kind": "vehicle", "visual": "altima"},
-	MAGNOLIA: {"display": "Magnolia Tree", "speed": 0.25, "radius": 0.5, "kind": "tree", "visual": "magnolia"},
-	POTHOLE: {"display": "Pothole", "speed": 0.2, "radius": 0.5, "kind": "pothole", "visual": "pothole"},
-	PROPANE: {"display": "Propane Tank", "speed": 0.5, "radius": 0.45, "kind": "propane", "visual": "propane"},
-	SHOPPING_CART: {"display": "Shopping Cart", "speed": 1.4, "radius": 0.42, "kind": "cart", "visual": "cart"},
-	MATA_BUS: {"display": "MATA Bus", "speed": 0.85, "radius": 0.75, "kind": "mata_bus", "visual": "mata_bus"},
-	BBQ_SMOKER: {"display": "BBQ Smoker", "speed": 0.6, "radius": 0.5, "kind": "smoker", "visual": "smoker"},
+	MAGNOLIA: {"display": "Magnolia Tree", "speed": 0.5, "radius": 0.5, "kind": "tree", "visual": "magnolia"},
+	POTHOLE: {"display": "Pothole", "speed": 0.45, "radius": 0.5, "kind": "pothole", "visual": "pothole"},
+	PROPANE: {"display": "Propane Tank", "speed": 0.8, "radius": 0.45, "kind": "propane", "visual": "propane"},
+	SHOPPING_CART: {"display": "Shopping Cart", "speed": 1.6, "radius": 0.42, "kind": "cart", "visual": "cart"},
+	MATA_BUS: {"display": "MATA Bus", "speed": 1.3, "radius": 0.75, "kind": "mata_bus", "visual": "mata_bus"},
+	BBQ_SMOKER: {"display": "BBQ Smoker", "speed": 0.9, "radius": 0.5, "kind": "smoker", "visual": "smoker"},
 }
 
 const DEATH_ALTIMA := "You got Altima'd."
@@ -37,6 +37,7 @@ const DEATH_POTHOLE := "The pothole won."
 const DEATH_PROPANE := "Propane had other plans."
 const DEATH_HOUSE := "You crashed into a house."
 const DEATH_BUS := "MATA said move."
+const DEATH_SELF_DETONATE := "You detonated. On purpose. Respect."
 
 static func is_valid(key: String) -> bool:
 	return FORMS.has(key)
@@ -220,4 +221,6 @@ static func resolve_player_death(my_key: String, other_kind: String) -> Dictiona
 
 static func explosion_kills(key: String) -> bool:
 	var k := kind(key)
-	return k == "alien" or k == "vehicle" or k == "cart" or k == "mata_bus" or k == "smoker"
+	# Propane included: a blast near a player-shaped tank sets THEM off too.
+	return k == "alien" or k == "vehicle" or k == "cart" or k == "mata_bus" \
+		or k == "smoker" or k == "propane"

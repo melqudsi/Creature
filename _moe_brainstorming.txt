@@ -28,22 +28,92 @@ core changes
 
 
 backlog / issues:
-- Server-authoritative combines/claims/kills Known tech debt. I'd keep deferring it until player count or cheating actually makes it hurt.
-- add better collision detection when placing money down (dont want it inside things)
+
+- add better collision detection when placing money down (dont want it end up inside objects), this was an issue when a vault was placed inside an Altima, when player tries to shapeshift into Altima and move, it collides with vault and die and there is no way to recover or use the Altima nor the vault at this point.
 - when getting close to money and the "pick up" button appears, make it say pick up stack or money bag or whatever it is
 - and when dropping a stack near another stack to combine, make the label say combine instead of just drop so player knows whats about to happen, do same when combining other monies too
-- crash or death then re-spawn happens too fast, lets pause for a little bit so the player can understand what happened and do a 3 second count down till re-spawn
+- picked up monies appear on top of player but its considerably smaller, make it where it retains the same size as it appears in the world.
+
+- crash or death then re-spawn happens too fast, lets pause for a little bit, zoom in if player is zoomed out so the player can see and understand what happened and do a 3 second count down till re-spawn
 - give ability to manually detonate propane tank
-- when a player shapeshifted into a propane tank, and if the tank explodes by either manual detonation or if a car runs into propane player, the player also dies
-- if a combined money item (like bag or vault) is near an explosion, it separates into the lower combo, for example, if a vault explodes, it seperates into money bags, and exploded money bags turn into stacks, etc.
-- add more combo money tiers
+- when a player shapeshifted into a propane tank, and if the tank explodes by either manual detonation or if a vehicle runs into propane shapeshifted player, the propane player also dies
+
+- if a combined money item (like bag or vault) is near an explosion, it separates into the lower combo, for example, if a vault explodes, it seperates into money bags. exploded money bags turn into stacks, etc.
 - Kill feed toasts for everyone — right now only the victim sees the funny death message; broadcasting "MOE got Altima'd by JOSH" to all players turns every kill into a shared joke.
-- when doing pinch to zoom, it also takes in an unintended tap to move along with it, need for a way to detect pinch to zoom and not accept a tap to move along with it.
-
-
-
-- Sounds?
 - 
+
+- when doing pinch to zoom, it also takes in an unintended tap to move along with it, need for a way to detect pinch to zoom and not accept a tap to move along with it.
+- add tiny acceleration/decel from/to stop to movements for smoothness
+- shapeshifted Altima has a good base moving speed, other props move way too slowly, bump their speeds up. also make the Altima's speed burst more speedy.
+
+- change new player onboarding to a traditional setup with "Log in" or "Register" and instead of a password, add cool looking pin pad "Choose a 4 Dot Pattern" with a note "You'll need to enter in this pattern to Login, remember it" this will be like the Android phone style lock screen unlock where you can swipe on a pin pad looking thing but no numbers, just dots and you'd swipe to touch your dot pattern instead of memorizing a pin number or password. i know this isn't secure but it will do for now.  you can clear all current profiles, i'll register as MOE as the first profile since its the admin.
+
+- make npc vehicles stop when a player gets in its way, then a player can approach the vehicle and shapeshift into it.  if the player takes too long sitting infront of the npc vehicle, then the npc vehicle will start driving again and squish the player.
+- make vehicles go faster on roads.
+- walnut grove and union are disconnected in the game, they are connected in the real world.
+- road intersections and road connections look odd, they either overlap each other or connect in a way where the yellow lines dont make sense, lets do this a little cleaner.
+- add side walks on sides of roads (for adding human NPCs in the future)
+- road names look good but the yellow road line visually interferes with the letters making them a little hard to read.
+- seed some potholes on roads
+- add lamar ave if we don't have it yet, and seed a lot of potholes on it.
+- seed bbq trailers in midtown and downtown
+- allow players to shapeshift into regular trees too
+- i see 2 roads downtown that are parallel to each other and are right next to each other, make sure we can fit side walks on both sides and space for some buildings between them too, they look odd being that close to each other.
+- add subregions and/or landmarks like University of Memphis, Shelby Farms off of walnut grove (just one lake with a walking trail around it), Memphis Zoo, Memphis International Airport with Fedex hub next to it. add a few krogers with parking lots with some altimas parked and shopping carts, Tom Lee Park.
+- add the Memphis Pyramid where players can shapeshift into it, they cannot move but will get a button/option labeled with illegible alien words, when a player presses it, a beam shoots up from the top of the pyramid to the sky and an alien ship flies in and abducts everything near the pyramid (npc's and players).
+
+- when a player picks up another player's money (money that has ownership, currently money bag or vault), ownership automatically switches to the thief player's name.  show toast messages to all players of what happened.
+
+- allow players to shapeshift into houses, they can move as a house. give players option to claim a house as their own, once they claim the house, the house cannot move until they unclaim the house. when a player claims a house, it becomes their personal safe house, other players cannot claim or shapeshift into another player's claimed house. if a player has a house claimed, they get an option to spawn at safe house or at the dump when they die. players who have a claimed house can still shapeshift and move other unclaimed houses.
+- allow players to steal money from another player carrying money
+
+
+`- label street names and add more like Germantown rd, Houston levee, 385, Winchester rd, Summer Ave (if doesn't already exist), Stage Rd, etc.  also give all roads a divider to make them two lanes.
+`- make npc vehicles spawn and drive on the roads (both lanes each direction), for now we only have Altima and mata bus, we'll add more vehicles later, for now make it spawn just those two, much more altimas than buses
+`- make it where as a player, going behind buildings will turn the building (or object) translucent so player can see whats behind the building/object.
+
+
+- Server-authoritative combines/claims/kills Known tech debt. I'd keep deferring it until player count or cheating actually makes it hurt.
+- change re-spawn mechanic to avoid spawn camping
+
+-Recommendations for next steps: a minimap is now near-essential at this size (it's easy to get lost with no overview); after that, region-specific spawns (Altimas in South Memphis, carts at suburban big-boxes, buses Downtown) and landmarks per region. I'd also consider a small speed bonus for vehicles on roads to make the road network matter for gameplay, not just navigation.
+
+- add more combo money tiers beyond vault (need to add bigger vehicles/buildings first)
+- Sounds?
+- add delivery trucks (USPS, FEDEX, UPS, AMAZON)
+
+*** Memphis Map regions and landmarks **
+below is a list of regions in Memphis i'd like to incorporate in the game. its time to start building out the map.  not looking to represent Memphis to scale, for reference, i'd like for a creature to be able to walk across one end to the other in about 2-3 minutes.  place the regions according to the real Memphis layout as possible, but doesn't have to be perfect, dont need detailed accurate geographic boundaries, looking for it to be simplistic. divide each region using actual major roads that exist in Memphis like poplar, i240/i40 loop, union, walnutgrove, riverside, front st, etc.  not looking to collect all major roads either, dont want it too crowded.  we can start here and we'll start populating the regions with neighborhoods, landmarks, which units spawn in which regions, etc. feel free to add slight elevation changes. feel free to make recommendations or ask questions before or during the build out.  include the Memphis Bridge but the map deadends west of it.  map also deadends at i40 east side.  you can retain the current map/world and incorporate it as part of south Memphis if it makes sense to do so.
+list of regions:
+North Memphis
+Downtown Memphis
+Midtown Memphis
+East Memphis
+South Memphis
+Bartlett
+Cordova
+Germantown
+Collierville
+Mississippi River
+Mud Island
+
+
+North Memphis
+Downtown Memphis
+- The Pyramid
+Midtown Memphis
+- Memphis Zoo
+East Memphis
+South Memphis
+- Airport
+- Fedex
+Bartlett
+Cordova
+Germantown
+Collierville
+Mississippi River
+- Barge Boats
+Mud Island
 
 
 game play brainstorming:
