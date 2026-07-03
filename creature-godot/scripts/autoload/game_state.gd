@@ -26,6 +26,9 @@ var player_data: Dictionary = {}
 ## The active WorldMap (set in WorldMap._ready). Lets gameplay code spawn shared
 ## objects (e.g. a combined money object) without a hard scene-path dependency.
 var world_map: Node = null
+## The ambient NPC traffic controller (set in WorldMap._ready). The player scans
+## it for stopped vehicles that can be claimed via shapeshift.
+var npc_traffic: Node = null
 ## Solid tiles (water/trees/houses/towers) as a Dictionary (Vector2i -> true)
 ## for O(1) pathfinding lookups — the Memphis map has thousands of them.
 var blocked_tiles: Dictionary = {}

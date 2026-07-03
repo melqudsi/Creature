@@ -63,6 +63,8 @@ var is_dead := false
 var _active_object: WorldObject = null       # object currently "worn" as a form
 var _nearby_object: WorldObject = null       # closest shapeshiftable object in range
 var _shapeshift_candidate: WorldObject = null # object we're mid-transform into
+var _nearby_npc: Dictionary = {}             # closest claimable (stopped) NPC vehicle
+var _shapeshift_npc: Dictionary = {}         # NPC vehicle we're mid-transform into
 var _shapeshifting := false
 var _shapeshift_t := 0.0
 var _last_prompt_can := false
@@ -656,6 +658,7 @@ func _update_player_interactions(delta: float) -> void:
 
 func _scan_shapeshift_target() -> void:
 	_nearby_object = null
+	_nearby_npc = {}
 	# Can only Become while an alien (pop out first to change form).
 	if is_alien_form():
 		var my := _world_xz()
@@ -667,8 +670,17 @@ func _scan_shapeshift_target() -> void:
 			if d <= best_d:
 				best_d = d
 				_nearby_object = obj
-	var can := _nearby_object != null
-	var display := FormDefs.display(_nearby_object.form_key) if can else ""
+		# No prop in range? A stopped NPC vehicle (braking for us) is claimable.
+		if _nearby_object == null:
+			var traffic := GameState.npc_traffic
+			if traffic != null and is_instance_valid(traffic):
+				_nearby_npc = traffic.claimable_vehicle(my)
+	var can := _nearby_object != null or not _nearby_npc.is_empty()
+	var display := ""
+	if _nearby_object != null:
+		display = FormDefs.display(_nearby_object.form_key)
+	elif not _nearby_npc.is_empty():
+		display = GameState.npc_traffic.vehicle_display(_nearby_npc)
 	if can != _last_prompt_can or display != _last_prompt_name:
 		_last_prompt_can = can
 		_last_prompt_name = display
@@ -677,22 +689,36 @@ func _scan_shapeshift_target() -> void:
 func _update_shapeshift_progress(delta: float) -> void:
 	if not _shapeshifting:
 		return
-	# Cancel if the target vanished or we wandered out of range.
-	if not is_instance_valid(_shapeshift_candidate) or _shapeshift_candidate.consumed or _nearby_object != _shapeshift_candidate:
+	# Cancel if the target vanished, drove off, or we wandered out of range.
+	if not _shapeshift_npc.is_empty():
+		if _nearby_npc != _shapeshift_npc or not GameState.npc_traffic.is_vehicle_claimable(_shapeshift_npc):
+			_shapeshifting = false
+			_shapeshift_t = 0.0
+			_shapeshift_npc = {}
+			return
+	elif not is_instance_valid(_shapeshift_candidate) or _shapeshift_candidate.consumed or _nearby_object != _shapeshift_candidate:
 		_shapeshifting = false
 		_shapeshift_t = 0.0
 		return
 	_shapeshift_t += delta
 	if _shapeshift_t >= SHAPESHIFT_TIME:
-		_complete_shapeshift()
+		if not _shapeshift_npc.is_empty():
+			_complete_npc_shapeshift()
+		else:
+			_complete_shapeshift()
 
 ## Called by the HUD "Become" button. Begins the ~1s hold-to-transform timer.
 func begin_shapeshift() -> void:
 	if not is_player or is_dead or not is_alien_form():
 		return
-	if _nearby_object == null or not is_instance_valid(_nearby_object):
+	if _nearby_object != null and is_instance_valid(_nearby_object):
+		_shapeshift_candidate = _nearby_object
+		_shapeshift_npc = {}
+	elif not _nearby_npc.is_empty():
+		_shapeshift_candidate = null
+		_shapeshift_npc = _nearby_npc
+	else:
 		return
-	_shapeshift_candidate = _nearby_object
 	_shapeshifting = true
 	_shapeshift_t = 0.0
 
@@ -716,6 +742,59 @@ func _complete_shapeshift() -> void:
 	# Whatever the new form can't legally hold falls to the ground here.
 	_revalidate_carried_for_form()
 	GameState.show_toast("You became a %s" % FormDefs.display(form_key))
+
+## Claiming a stopped NPC vehicle: the local NPC despawns and a SHARED world
+## object is born in its place, already possessed by us — so it persists (and
+## is visible parked) for everyone once we pop out.
+func _complete_npc_shapeshift() -> void:
+	var v := _shapeshift_npc
+	_shapeshifting = false
+	_shapeshift_t = 0.0
+	_shapeshift_npc = {}
+	_shapeshift_candidate = null
+	var traffic := GameState.npc_traffic
+	if traffic == null or not is_instance_valid(traffic) or not traffic.is_vehicle_claimable(v):
+		return
+	_stop_movement()
+	_move_target = Vector2(-1, -1)
+	var is_bus: bool = v.get("is_bus", false)
+	var vpos: Vector3 = traffic.vehicle_world_pos(v)
+	var tile := Vector2(GameConfig.world_to_tile(vpos))
+	traffic.claim_vehicle(v)
+	var type_key := "bus" if is_bus else "altima"
+	var wm := GameState.world_map
+	var obj: WorldObject = null
+	if wm and is_instance_valid(wm) and wm.has_method("materialize_claimed_vehicle"):
+		obj = wm.materialize_claimed_vehicle(type_key, GameConfig.tile_to_world(tile))
+	if obj == null:
+		return
+	obj.consume()
+	_active_object = obj
+	apply_form(obj.form_key)
+	_revalidate_carried_for_form()
+	GameState.show_toast("You became a %s" % FormDefs.display(form_key))
+	# Register the new shared row in the background (snappy transform first).
+	_register_claimed_vehicle(obj, type_key, tile)
+
+func _register_claimed_vehicle(obj: WorldObject, type_key: String, tile: Vector2) -> void:
+	if not NetworkService.is_online():
+		return
+	var created: Dictionary = await NetworkService.create_world_object({
+		"type": type_key, "x": tile.x, "y": tile.y,
+		"state": "possessed", "possessed_by": NetworkService.get_user_id(),
+	})
+	var new_id := str(created.get("id", ""))
+	if new_id.is_empty() or not is_instance_valid(obj):
+		return
+	obj.object_id = new_id
+	var wm := GameState.world_map
+	if wm and is_instance_valid(wm) and wm.has_method("track_shared_object"):
+		wm.track_shared_object(obj)
+	# Popped out (or died) before the create landed? Release the row right away
+	# so the server doesn't hold a phantom possession.
+	if _active_object != obj:
+		var t := Vector2(GameConfig.world_to_tile(obj.position))
+		NetworkService.release_world_object(new_id, t.x, t.y)
 
 ## Re-link a shared object we already possess on the server (session restore:
 ## the player reloaded while shapeshifted, so the local _active_object reference

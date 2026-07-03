@@ -71,6 +71,7 @@ func _ready() -> void:
 	var traffic := NpcTraffic.new()
 	traffic.name = "Traffic"
 	add_child(traffic)
+	GameState.npc_traffic = traffic
 	# Propane tanks and other blasts ask the world to spawn an explosion here.
 	GameState.explosion_requested.connect(spawn_explosion)
 	GameState.money_combined.connect(spawn_money_combine_fx)
@@ -309,9 +310,11 @@ func _build_region_tints() -> void:
 		_add_ground_quad(r["rect"] as Rect2i, r["tint"] as Color, y, root, str(r["name"]).replace(" ", ""))
 		idx += 1
 
-## Roads: asphalt quad + yellow center divider (two lanes) + flat painted
-## street-name labels. Heights are staggered (interstate < street, horizontal <
-## vertical) so crossing quads never z-fight at intersections.
+## Roads: asphalt quad + sidewalks (streets only) + dashed yellow center divider
+## (two lanes) + flat painted street-name labels. Heights are staggered
+## (sidewalk < interstate < street, horizontal < vertical) so crossing quads
+## never z-fight at intersections. Divider dashes SKIP intersection tiles and
+## the tiles under name labels, so crossings and text stay clean.
 func _build_roads() -> void:
 	var root := Node3D.new()
 	root.name = "Roads"
@@ -330,33 +333,94 @@ func _build_roads() -> void:
 			y = 0.044 if horizontal else 0.046
 		var label := str(r["name"]).replace(" ", "")
 		_add_ground_quad(rect, color, y, root, label)
-		_add_road_divider(rect, horizontal, y + 0.004, root)
-		_add_road_labels(rect, horizontal, str(r["name"]), root)
+		if kind == "street":
+			_add_sidewalks(rect, horizontal, root)
+		var label_alongs := _label_alongs(rect, horizontal)
+		_add_road_divider(rect, horizontal, y + 0.004, root, label_alongs)
+		_add_road_labels(rect, horizontal, str(r["name"]), label_alongs, root)
 
-## Thin yellow center stripe splitting the 2-tile road into two lanes.
-func _add_road_divider(rect: Rect2i, horizontal: bool, y: float, parent: Node3D) -> void:
-	var stripe := MeshInstance3D.new()
-	stripe.name = "Divider"
-	var plane := PlaneMesh.new()
-	var len_tiles := rect.size.x if horizontal else rect.size.y
-	var length := len_tiles * GameConfig.TILE_SIZE
-	plane.size = Vector2(length, 0.14) if horizontal else Vector2(0.14, length)
-	stripe.mesh = plane
-	stripe.material_override = _quad_mat(Color(0.82, 0.72, 0.24))
-	stripe.position = Vector3(
-		(rect.position.x + rect.size.x * 0.5) * GameConfig.TILE_SIZE,
-		y,
-		(rect.position.y + rect.size.y * 0.5) * GameConfig.TILE_SIZE
-	)
-	parent.add_child(stripe)
-
-## Street names painted flat on the asphalt, repeated along long roads.
-func _add_road_labels(rect: Rect2i, horizontal: bool, road_name: String, parent: Node3D) -> void:
+## Where along the road (tile offsets from rect origin) name labels sit.
+func _label_alongs(rect: Rect2i, horizontal: bool) -> Array[float]:
 	var len_tiles := rect.size.x if horizontal else rect.size.y
 	var count := maxi(1, int(len_tiles / 26.0))
+	var out: Array[float] = []
 	for i in count:
-		var along := rect.position.x if horizontal else rect.position.y
-		along += int((float(i) + 0.5) * float(len_tiles) / float(count))
+		out.append((float(i) + 0.5) * float(len_tiles) / float(count))
+	return out
+
+## Dashed yellow center line, one dash per tile — skipping tiles that belong to
+## another road (intersections) and a gap around each painted name label.
+func _add_road_divider(rect: Rect2i, horizontal: bool, y: float, parent: Node3D, label_alongs: Array[float]) -> void:
+	var len_tiles := rect.size.x if horizontal else rect.size.y
+	var dash_mat := _quad_mat(Color(0.82, 0.72, 0.24))
+	var cx_center := (rect.position.x + rect.size.x * 0.5) * GameConfig.TILE_SIZE
+	var cz_center := (rect.position.y + rect.size.y * 0.5) * GameConfig.TILE_SIZE
+	for i in len_tiles:
+		var along := float(i) + 0.5
+		# Gap under the street-name text so the paint doesn't fight the letters.
+		var near_label := false
+		for la in label_alongs:
+			if absf(along - la) < 2.6:
+				near_label = true
+				break
+		if near_label:
+			continue
+		# Skip intersection tiles (either lane tile inside ANOTHER road's rect).
+		var t_a: Vector2i
+		var t_b: Vector2i
+		if horizontal:
+			t_a = Vector2i(rect.position.x + i, rect.position.y)
+			t_b = Vector2i(rect.position.x + i, rect.position.y + rect.size.y - 1)
+		else:
+			t_a = Vector2i(rect.position.x, rect.position.y + i)
+			t_b = Vector2i(rect.position.x + rect.size.x - 1, rect.position.y + i)
+		if _tile_on_other_road(t_a, rect) or _tile_on_other_road(t_b, rect):
+			continue
+		var dash := MeshInstance3D.new()
+		var plane := PlaneMesh.new()
+		plane.size = Vector2(0.55, 0.13) if horizontal else Vector2(0.13, 0.55)
+		dash.mesh = plane
+		dash.material_override = dash_mat
+		if horizontal:
+			dash.position = Vector3((rect.position.x + along) * GameConfig.TILE_SIZE, y, cz_center)
+		else:
+			dash.position = Vector3(cx_center, y, (rect.position.y + along) * GameConfig.TILE_SIZE)
+		parent.add_child(dash)
+
+func _tile_on_other_road(tile: Vector2i, own_rect: Rect2i) -> bool:
+	for r in MemphisLayout.ROADS:
+		var rr: Rect2i = r["rect"]
+		if rr == own_rect:
+			continue
+		if rr.has_point(tile):
+			return true
+	return false
+
+## Light concrete strips along both edges of a street (future human-NPC turf).
+## Drawn BELOW all road asphalt so crossing roads pave over them cleanly.
+func _add_sidewalks(rect: Rect2i, horizontal: bool, parent: Node3D) -> void:
+	var walk_mat := _quad_mat(Color(0.62, 0.61, 0.58))
+	var length := (rect.size.x if horizontal else rect.size.y) * GameConfig.TILE_SIZE
+	var half_w := (rect.size.y if horizontal else rect.size.x) * 0.5 * GameConfig.TILE_SIZE
+	var offset := half_w + 0.16
+	var cx := (rect.position.x + rect.size.x * 0.5) * GameConfig.TILE_SIZE
+	var cz := (rect.position.y + rect.size.y * 0.5) * GameConfig.TILE_SIZE
+	for side in [-1.0, 1.0]:
+		var walk := MeshInstance3D.new()
+		walk.name = "Sidewalk"
+		var plane := PlaneMesh.new()
+		plane.size = Vector2(length, 0.3) if horizontal else Vector2(0.3, length)
+		walk.mesh = plane
+		walk.material_override = walk_mat
+		if horizontal:
+			walk.position = Vector3(cx, 0.034, cz + side * offset)
+		else:
+			walk.position = Vector3(cx + side * offset, 0.034, cz)
+		parent.add_child(walk)
+
+## Street names painted flat on the asphalt, repeated along long roads.
+func _add_road_labels(rect: Rect2i, horizontal: bool, road_name: String, label_alongs: Array[float], parent: Node3D) -> void:
+	for la in label_alongs:
 		var lbl := Label3D.new()
 		lbl.text = road_name.to_upper()
 		lbl.font_size = 64
@@ -365,8 +429,9 @@ func _add_road_labels(rect: Rect2i, horizontal: bool, road_name: String, parent:
 		lbl.outline_size = 6
 		# Lie flat on the road, text running along the road's axis.
 		lbl.rotation_degrees = Vector3(-90, 0, 0) if horizontal else Vector3(-90, 90, 0)
-		var cx := (along + 0.0) * GameConfig.TILE_SIZE if horizontal else (rect.position.x + rect.size.x * 0.5) * GameConfig.TILE_SIZE
-		var cz := (rect.position.y + rect.size.y * 0.5) * GameConfig.TILE_SIZE if horizontal else (along + 0.0) * GameConfig.TILE_SIZE
+		var along := (rect.position.x if horizontal else rect.position.y) + la
+		var cx := along * GameConfig.TILE_SIZE if horizontal else (rect.position.x + rect.size.x * 0.5) * GameConfig.TILE_SIZE
+		var cz := (rect.position.y + rect.size.y * 0.5) * GameConfig.TILE_SIZE if horizontal else along * GameConfig.TILE_SIZE
 		lbl.position = Vector3(cx, 0.065, cz)
 		parent.add_child(lbl)
 
@@ -804,6 +869,19 @@ func spawn_money_object(type_key: String, world_pos: Vector3, owner_name: String
 	obj.set_money_owner(owner_name)
 	if not object_id.is_empty():
 		_shared_objects[object_id] = obj
+
+## A claimed NPC vehicle becomes a real world object (possessed by the claimer).
+## Spawned consumed-side-up by the caller; tracked once the create returns an id.
+func materialize_claimed_vehicle(type_key: String, world_pos: Vector3) -> WorldObject:
+	_ensure_objects_root()
+	return _spawn_world_object(type_key, world_pos, _objects_root)
+
+## Track a locally-created object under its server row id so the next poll
+## matches it instead of spawning a duplicate.
+func track_shared_object(obj: WorldObject) -> void:
+	if obj == null or not is_instance_valid(obj) or obj.object_id.is_empty():
+		return
+	_shared_objects[obj.object_id] = obj
 
 ## Swap the client-config fallback objects for the shared set exactly once, the
 ## first time a world_objects poll succeeds. Keeps any fallback object the player

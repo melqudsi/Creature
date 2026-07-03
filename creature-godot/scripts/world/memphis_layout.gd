@@ -55,15 +55,25 @@ const ROADS: Array = [
 	{"name": "385", "rect": Rect2i(54, 92, 106, 2), "kind": "interstate"},
 	{"name": "Poplar Ave", "rect": Rect2i(16, 34, 140, 2), "kind": "street"},
 	{"name": "Union Ave", "rect": Rect2i(16, 28, 46, 2), "kind": "street"},
-	{"name": "Walnut Grove Rd", "rect": Rect2i(62, 24, 68, 2), "kind": "street"},
+	# Walnut Grove reaches back to E Parkway, which ties it into Union (they
+	# connect in the real world; previously disconnected in-game).
+	{"name": "Walnut Grove Rd", "rect": Rect2i(60, 24, 70, 2), "kind": "street"},
+	{"name": "E Parkway", "rect": Rect2i(60, 24, 2, 6), "kind": "street"},
 	{"name": "Summer Ave", "rect": Rect2i(16, 8, 95, 2), "kind": "street"},
 	{"name": "Stage Rd", "rect": Rect2i(72, 4, 76, 2), "kind": "street"},
-	{"name": "Front St", "rect": Rect2i(17, 20, 2, 28), "kind": "street"},
+	# Front St sits 4 tiles east of Riverside so sidewalks + a row of Downtown
+	# buildings fit between the two (they used to touch).
+	{"name": "Front St", "rect": Rect2i(21, 20, 2, 28), "kind": "street"},
 	{"name": "Riverside Dr", "rect": Rect2i(15, 20, 2, 32), "kind": "street"},
 	{"name": "Elvis Presley Blvd", "rect": Rect2i(54, 58, 2, 54), "kind": "street"},
 	{"name": "Winchester Rd", "rect": Rect2i(24, 76, 136, 2), "kind": "street"},
 	{"name": "Germantown Rd", "rect": Rect2i(118, 18, 2, 72), "kind": "street"},
 	{"name": "Houston Levee Rd", "rect": Rect2i(144, 18, 2, 94), "kind": "street"},
+	# Lamar Ave is diagonal in the real world — approximated as a 3-segment
+	# staircase from Union down to Winchester. Pothole country.
+	{"name": "Lamar Ave", "rect": Rect2i(38, 30, 2, 14), "kind": "street"},
+	{"name": "Lamar Ave", "rect": Rect2i(38, 44, 26, 2), "kind": "street"},
+	{"name": "Lamar Ave", "rect": Rect2i(62, 46, 2, 30), "kind": "street"},
 ]
 
 ## Per-region procedural scatter (houses/trees/towers). Rects stay inside the

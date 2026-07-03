@@ -8,6 +8,11 @@ extends Node3D
 ##
 ## A moving NPC vehicle kills exactly what a moving player-driven one would
 ## (FormDefs.resolve_player_death) — crossing the street is now a hazard.
+##
+## Slice 5: vehicles BRAKE for a player standing in their lane. While one is
+## stopped an alien can shapeshift into it (it converts into a shared world
+## object). But NPC drivers have Memphis patience: block one too long and it
+## drives THROUGH you.
 
 const TARGET_ALTIMAS := 26
 const TARGET_BUSES := 5
@@ -15,6 +20,20 @@ const ALTIMA_SPEED := 3.2
 const BUS_SPEED := 2.0
 ## Lanes sit half a tile either side of the divider on a 2-tile road.
 const LANE_OFFSET := 0.5
+
+## How far ahead (tiles) a vehicle scans for a player in its lane.
+const STOP_LOOKAHEAD := 2.4
+## Lateral distance from the lane line that still counts as "in the way".
+const STOP_LATERAL := 0.8
+## How long a vehicle waits at a full stop before driving through the player.
+const PATIENCE_SEC := 5.0
+const ACCEL := 2.6         # tiles/s^2 pulling away
+const BRAKE := 7.0         # tiles/s^2 stopping (must out-brake STOP_LOOKAHEAD)
+## Below this speed a vehicle is harmless and claimable (matches the
+## "parked vehicles are safe" rule).
+const SAFE_SPEED := 0.35
+## An alien must be this close to a stopped vehicle to Become it.
+const CLAIM_RADIUS := 1.6
 
 var _vehicles: Array[Dictionary] = []
 var _roads: Array[Dictionary] = []
@@ -53,6 +72,8 @@ func _spawn_vehicle(is_bus: bool) -> void:
 		"dir": dir,
 		"is_bus": is_bus,
 		"speed": BUS_SPEED if is_bus else ALTIMA_SPEED,
+		"cur_speed": 0.0,
+		"wait": 0.0,
 		"along": randf_range(1.0, float(road["length"]) - 1.0),
 	}
 	_vehicles.append(v)
@@ -96,12 +117,28 @@ func _place(v: Dictionary, snap: bool) -> void:
 
 func _process(delta: float) -> void:
 	var player := GameState.player_creature
-	var check_kills: bool = player != null and is_instance_valid(player) \
+	var player_ok: bool = player != null and is_instance_valid(player) \
 		and not player.is_dead and not player.is_spawning
 	for v in _vehicles:
 		var road: Dictionary = v["road"]
 		var length := float(road["length"])
-		v["along"] = float(v["along"]) + float(v["speed"]) * float(v["dir"]) * delta
+		# Brake for a live player in our lane — until patience runs out, then
+		# the driver leans on the horn and goes (squish rule).
+		var blocked := player_ok and _player_in_path(v, player)
+		var target_speed: float = float(v["speed"])
+		if blocked:
+			v["wait"] = float(v["wait"]) + delta
+			if float(v["wait"]) < PATIENCE_SEC:
+				target_speed = 0.0
+		else:
+			v["wait"] = 0.0
+		var cur := float(v["cur_speed"])
+		if cur < target_speed:
+			cur = minf(cur + ACCEL * delta, target_speed)
+		else:
+			cur = maxf(cur - BRAKE * delta, target_speed)
+		v["cur_speed"] = cur
+		v["along"] = float(v["along"]) + cur * float(v["dir"]) * delta
 		# U-turn at either end of the road (into the opposite lane).
 		if float(v["along"]) >= length - 0.6:
 			v["along"] = length - 0.6
@@ -110,8 +147,26 @@ func _process(delta: float) -> void:
 			v["along"] = 0.6
 			v["dir"] = 1
 		_place(v, false)
-		if check_kills:
+		# A crawling/stopped vehicle is harmless (parked-vehicle rule).
+		if player_ok and cur > SAFE_SPEED:
 			_check_kill(v, player)
+
+## True when the player stands within the vehicle's forward stopping zone.
+func _player_in_path(v: Dictionary, player: Creature) -> bool:
+	var node: Node3D = v["node"]
+	var road: Dictionary = v["road"]
+	var dir := float(v["dir"])
+	var ahead: float
+	var lateral: float
+	if road["horizontal"]:
+		ahead = (player.position.x - node.position.x) * dir
+		lateral = absf(player.position.z - node.position.z)
+	else:
+		ahead = (player.position.z - node.position.z) * dir
+		lateral = absf(player.position.x - node.position.x)
+	var front := 0.75 if v["is_bus"] else 0.55
+	return ahead > front * 0.5 and ahead < STOP_LOOKAHEAD * GameConfig.TILE_SIZE \
+		and lateral < STOP_LATERAL * GameConfig.TILE_SIZE
 
 func _check_kill(v: Dictionary, player: Creature) -> void:
 	var node: Node3D = v["node"]
@@ -126,3 +181,44 @@ func _check_kill(v: Dictionary, player: Creature) -> void:
 		if res.explode:
 			GameState.explosion_requested.emit(player.position, Creature.EXPLOSION_RADIUS)
 		player.apply_death(res.reason, res.explode)
+
+# ---------------------------------------------------------------------------
+# Claiming (shapeshift into a stopped NPC vehicle)
+# ---------------------------------------------------------------------------
+
+## The nearest fully-stopped vehicle within CLAIM_RADIUS of `pos` (world XZ),
+## or {} if none. The dict is a live internal entry — pass it to claim_vehicle.
+func claimable_vehicle(pos: Vector2) -> Dictionary:
+	var best: Dictionary = {}
+	var best_d := CLAIM_RADIUS * GameConfig.TILE_SIZE
+	for v in _vehicles:
+		if float(v["cur_speed"]) > SAFE_SPEED * 0.5:
+			continue
+		var node: Node3D = v["node"]
+		var d := pos.distance_to(Vector2(node.position.x, node.position.z))
+		if d < best_d:
+			best_d = d
+			best = v
+	return best
+
+func vehicle_display(v: Dictionary) -> String:
+	return "MATA Bus" if v.get("is_bus", false) else "Altima"
+
+func vehicle_world_pos(v: Dictionary) -> Vector3:
+	var node: Node3D = v["node"]
+	return node.position
+
+func is_vehicle_claimable(v: Dictionary) -> bool:
+	return not v.is_empty() and _vehicles.has(v) and float(v["cur_speed"]) <= SAFE_SPEED
+
+## Remove the NPC from local traffic (the claimer converts it into a shared
+## world object) and respawn a fresh one elsewhere so traffic density holds.
+func claim_vehicle(v: Dictionary) -> void:
+	var idx := _vehicles.find(v)
+	if idx < 0:
+		return
+	_vehicles.remove_at(idx)
+	var node: Node3D = v["node"]
+	if is_instance_valid(node):
+		node.queue_free()
+	_spawn_vehicle(bool(v["is_bus"]))

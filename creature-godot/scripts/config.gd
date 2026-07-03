@@ -24,7 +24,7 @@ const DEFAULT_CREATURE_NAME := "Creature"
 
 ## Visible build stamp so a loaded build can be identified at a glance.
 ## Keep this in sync with the build-stamp string in web/custom_shell.html.
-const BUILD_ID := "build 2026-07-02i"
+const BUILD_ID := "build 2026-07-03a"
 
 ## Landfill Dump: the spawn/respawn zone (now inside South Memphis — old-world
 ## coords + OLD_WORLD_OFFSET). All new players and respawns appear here.
@@ -115,6 +115,40 @@ static func interactive_objects() -> Array:
 		{"key": "propane", "tile": _old(Vector2(21, 11))},
 		{"key": "magnolia", "tile": _old(Vector2(12, 9))},
 		{"key": "altima", "tile": _old(Vector2(24, 13))},
+	]
+
+## Slice 5 road hazards + street food: potholes seeded on roads (Lamar Ave gets
+## a beating — it's Lamar), BBQ trailers in Midtown and Downtown. Tiles are
+## world coordinates (NOT old-world offsets). Pothole tiles sit in a lane of
+## the road they belong to; trailer tiles are nudged to a free tile at seed time.
+static func slice5_seed_objects() -> Array:
+	return [
+		# --- Lamar Ave: pothole country ---
+		{"key": "pothole", "tile": Vector2(38, 33)},
+		{"key": "pothole", "tile": Vector2(39, 37)},
+		{"key": "pothole", "tile": Vector2(38, 41)},
+		{"key": "pothole", "tile": Vector2(45, 44)},
+		{"key": "pothole", "tile": Vector2(51, 45)},
+		{"key": "pothole", "tile": Vector2(57, 44)},
+		{"key": "pothole", "tile": Vector2(62, 50)},
+		{"key": "pothole", "tile": Vector2(63, 58)},
+		{"key": "pothole", "tile": Vector2(62, 66)},
+		{"key": "pothole", "tile": Vector2(63, 72)},
+		# --- A scattering on other roads ---
+		{"key": "pothole", "tile": Vector2(30, 34)},   # Poplar
+		{"key": "pothole", "tile": Vector2(74, 35)},   # Poplar
+		{"key": "pothole", "tile": Vector2(112, 34)},  # Poplar
+		{"key": "pothole", "tile": Vector2(26, 29)},   # Union
+		{"key": "pothole", "tile": Vector2(42, 8)},    # Summer
+		{"key": "pothole", "tile": Vector2(88, 9)},    # Summer
+		{"key": "pothole", "tile": Vector2(64, 77)},   # Winchester
+		{"key": "pothole", "tile": Vector2(118, 76)},  # Winchester
+		{"key": "pothole", "tile": Vector2(55, 70)},   # Elvis Presley
+		# --- BBQ trailers (smokers): Midtown x2, Downtown x2 ---
+		{"key": "smoker", "tile": Vector2(47, 31), "free": true},
+		{"key": "smoker", "tile": Vector2(58, 40), "free": true},
+		{"key": "smoker", "tile": Vector2(24, 31), "free": true},
+		{"key": "smoker", "tile": Vector2(28, 42), "free": true},
 	]
 
 ## Starter money piles (Slice 2) — merged into shared seed on first poll / upgrade.

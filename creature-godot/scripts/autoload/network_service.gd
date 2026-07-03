@@ -238,6 +238,22 @@ func _build_world_object_seed() -> Array:
 	for entry in GameConfig.money_seed_objects():
 		var tile: Vector2 = entry["tile"]
 		out.append({"type": str(entry["key"]), "x": tile.x, "y": tile.y, "state": "idle"})
+	out.append_array(_slice5_seed_rows())
+	return out
+
+## Slice 5 rows (road potholes, Midtown/Downtown BBQ trailers). Entries flagged
+## "free" get nudged off blocked tiles (scattered houses/trees) at seed time.
+func _slice5_seed_rows() -> Array:
+	var out: Array = []
+	for entry in GameConfig.slice5_seed_objects():
+		var tile: Vector2 = entry["tile"]
+		if entry.get("free", false):
+			tile = GameConfig.safe_drop_tile(tile)
+			var ti := Vector2i(int(tile.x), int(tile.y))
+			if MemphisLayout.blocked_tiles().has(ti):
+				var open := GridNav.nearest_walkable(ti, ti, MemphisLayout.blocked_tiles(), {})
+				tile = Vector2(open)
+		out.append({"type": str(entry["key"]), "x": tile.x, "y": tile.y, "state": "idle"})
 	return out
 
 ## Top-up seed for worlds created before the current slice: if money/bus
@@ -245,8 +261,8 @@ func _build_world_object_seed() -> Array:
 func _maybe_seed_slice2_objects(rows: Array) -> void:
 	if _slice2_seed_attempted or not _world_objects_available:
 		return
-	var found := _note_seed_types(rows, {"money": false, "bus": false, "smoker": false})
-	if found.money and found.bus and found.smoker:
+	var found := _note_seed_types(rows, {"money": false, "bus": false, "smoker": false, "slice5": false})
+	if found.money and found.bus and found.smoker and found.slice5:
 		_slice2_seed_attempted = true
 		return
 	_slice2_seed_attempted = true
@@ -264,15 +280,17 @@ func _maybe_seed_slice2_objects(rows: Array) -> void:
 		to_add.append({"key": "bus", "tile": Vector2(29, 21)})
 	if not found.smoker:
 		to_add.append({"key": "smoker", "tile": Vector2(12, 6)})
-	if to_add.is_empty():
-		return
 	var payload: Array = []
 	for entry in to_add:
 		var tile: Vector2 = entry["tile"]
 		payload.append({"type": str(entry["key"]), "x": tile.x, "y": tile.y, "state": "idle"})
+	if not found.slice5:
+		payload.append_array(_slice5_seed_rows())
+	if payload.is_empty():
+		return
 	var created := await seed_world_objects(payload)
 	if not created.is_empty():
-		_log("Top-up seeded %d world objects (money/bus/smoker)" % created.size())
+		_log("Top-up seeded %d world objects (money/bus/smoker/slice5)" % created.size())
 
 func _note_seed_types(rows: Array, found: Dictionary) -> Dictionary:
 	for row in rows:
@@ -285,6 +303,10 @@ func _note_seed_types(rows: Array, found: Dictionary) -> Dictionary:
 			found.bus = true
 		elif t == "smoker":
 			found.smoker = true
+			# Slice 5 marker: a smoker parked OUTSIDE the old South Memphis world
+			# (Midtown/Downtown trailers) means the slice-5 seed already ran.
+			if float(row.get("y", 999.0)) < 60.0:
+				found.slice5 = true
 	return found
 
 func _note_world_row_columns(row: Dictionary) -> void:

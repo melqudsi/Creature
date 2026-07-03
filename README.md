@@ -112,6 +112,14 @@ Game-feel batch from the July feature list (Phase 1 of 4 — see the todo phases
 - **Movement feel** — ease-in/ease-out on start/stop (`_move_ease`), prop speed bump (pothole 0.45, magnolia 0.5, propane 0.8, smoker 0.9, bus 1.3, cart 1.6), Altima burst 2.2x, and vehicles get **+35% on roads** (`ROAD_SPEED_MULT`).
 - **Pinch-zoom tap fix** — taps are decided on touch *release*: any gesture that ever had 2+ fingers, moved past the drag threshold, or ended within 350ms of a pinch is not a move command; emulated mouse clicks after real touches are dropped.
 
+**Phase 2 — traffic & streets** (build 2026-07-03a):
+
+- **NPC vehicles brake for players** — a live player in a vehicle's lane within ~2.4 tiles makes it brake to a stop (`npc_traffic.gd`: `STOP_LOOKAHEAD`, `BRAKE`). The driver has 5s of patience (`PATIENCE_SEC`); block longer and it drives through you. A stopped/crawling NPC is harmless (parked-vehicle rule).
+- **Shapeshift into stopped traffic** — an alien within 1.6 tiles of a fully-stopped NPC gets the Become prompt. Claiming removes the local NPC (a replacement spawns elsewhere to hold density) and creates a **shared `world_objects` row already possessed by the claimer** — pop out later and the car persists for everyone. Traffic stays client-local; only claimed vehicles are synced.
+- **Road cleanup** — Union now connects to Walnut Grove via a short **E Parkway** link (they meet in the real world); **Front St moved 4 tiles east of Riverside** so sidewalks + a building row fit between them; the center divider is now **dashed per-tile and skips intersection tiles** (no more yellow lines crossing each other) plus a gap under each painted street name (readability).
+- **Sidewalks** — light concrete strips along both edges of every street (not interstates), drawn under the asphalt layer so crossings pave over them. Future human-NPC turf.
+- **Lamar Ave** — 3-segment staircase (diagonal in real life) from Union down to Winchester, seeded with 10 potholes; ~9 more potholes scattered on Poplar/Union/Summer/Winchester/EP Blvd. 4 BBQ trailers seeded: 2 Midtown, 2 Downtown. Existing worlds top-up automatically (slice-5 marker: any smoker north of the old world).
+
 ---
 
 ## Deployment — GitHub Pages
