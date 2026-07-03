@@ -7,11 +7,15 @@ var hud: Control
 var pain_test: Node
 
 const ONBOARDING_SCENE := preload("res://scenes/ui/creature_create.tscn")
+## Auto-logout after this many seconds without player input (40 minutes).
+const IDLE_LOGOUT_SEC := 2400.0
 
 var _onboarding: Control
 var _world_started := false
+var _idle_sec := 0.0
 
 func _ready() -> void:
+	GameState.last_player_input_ms = Time.get_ticks_msec()
 	_resolve_scene_nodes()
 	await NetworkService.boot()
 	_resolve_scene_nodes()
@@ -19,6 +23,18 @@ func _ready() -> void:
 		_show_onboarding()
 		return
 	_begin_world()
+
+func _process(delta: float) -> void:
+	if not _world_started or (_onboarding and is_instance_valid(_onboarding)):
+		return
+	_idle_sec += delta
+	if _idle_sec >= IDLE_LOGOUT_SEC:
+		_logout_to_onboarding("Logged out after 40 minutes idle")
+		return
+	# Any recent input resets the idle clock.
+	var since_ms := Time.get_ticks_msec() - GameState.last_player_input_ms
+	if since_ms < 2000:
+		_idle_sec = 0.0
 
 func _resolve_scene_nodes() -> void:
 	# Resolve relative to this Main node (the script owner). get_tree().current_scene
@@ -82,16 +98,33 @@ func _begin_world() -> void:
 		rts_camera.set_follow(player)
 	if hud and hud.has_method("bind_pain_test"):
 		hud.bind_pain_test(pain_test)
+	if hud and hud.has_method("bind_main"):
+		hud.bind_main(self)
+
+func logout_to_onboarding(reason: String = "") -> void:
+	_logout_to_onboarding(reason)
+
+func _logout_to_onboarding(reason: String = "") -> void:
+	if not reason.is_empty():
+		GameState.show_toast(reason)
+	NetworkService.clear_saved_session()
+	_world_started = false
+	get_tree().reload_current_scene()
 
 func _unhandled_input(event: InputEvent) -> void:
 	_forward_pointer_input(event)
 
 func _input(event: InputEvent) -> void:
 	# Web mobile often delivers taps as emulated mouse before unhandled routing.
-	if event is InputEventMouseButton or event is InputEventScreenTouch or event is InputEventScreenDrag:
+	if event is InputEventMouseButton or event is InputEventScreenTouch \
+			or event is InputEventScreenDrag or event is InputEventMagnifyGesture:
 		_forward_pointer_input(event)
 
 func _forward_pointer_input(event: InputEvent) -> void:
+	if _world_started:
+		if event is InputEventScreenTouch or event is InputEventScreenDrag \
+				or event is InputEventMouseButton or event is InputEventMagnifyGesture:
+			GameState.note_player_input()
 	if _is_ui_pointer_event(event):
 		return
 	if not rts_camera.has_method("process_pointer_input"):

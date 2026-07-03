@@ -32,7 +32,7 @@ const ROAD_SPEED_MULT := 1.35
 ## Movement easing: seconds-ish to reach full speed from a stop, and the
 ## distance (tiles) over which we brake into the final destination.
 const MOVE_ACCEL_RATE := 3.0
-const MOVE_DECEL_DIST := 0.9
+const MOVE_DECEL_DIST := 0.28
 ## Remote position jumps larger than this (tiles) are treated as a teleport
 ## (death/respawn) and SNAP instead of interpolating, so other players don't see
 ## a dead player smoothly "walk" back to the dump.
@@ -43,6 +43,10 @@ const RESPAWN_DEATH_PAUSE := 0.9
 const RESPAWN_COUNTDOWN := 3
 ## How long a kill-feed broadcast row lives before the victim's client deletes it.
 const KILL_FEED_TTL_SEC := 6.0
+## Slice 7: how close (world units) to a carrying player to offer "Steal", and
+## how long the respawn-choice buttons wait before defaulting to The Dump.
+const STEAL_RADIUS := 1.3
+const RESPAWN_CHOICE_TIMEOUT := 12.0
 
 var creature_id: String = ""
 var creature_name: String = "Creature"
@@ -74,6 +78,8 @@ var _burst_t := 0.0
 var _burst_cd := 0.0
 # Pyramid abduction cooldown (Slice 6).
 var _abduct_cd := 0.0
+# Slice 7: respawn destination picked by the death-choice buttons ("" = waiting).
+var _respawn_choice := ""
 # BBQ Smoker (Slice 3): smoke-cloud cooldown + parked money-generation timer.
 var _smoke_cd := 0.0
 var _smoker_gen_t := 0.0
@@ -368,6 +374,12 @@ func _process(delta: float) -> void:
 		_process_remote(delta)
 		return
 
+	# Dead players linger as a corpse through the respawn countdown — no input,
+	# no movement, no interactions until _respawn_at* sets is_spawning.
+	if is_dead:
+		_stop_movement()
+		return
+
 	if is_spawning:
 		_spawn_t += delta
 		var p := clampf(_spawn_t / 1.2, 0.0, 1.0)
@@ -430,6 +442,8 @@ func _update_transform(snap: bool, delta: float) -> void:
 		rotation.y = lerp_angle(rotation.y, target_rot, 0.18 if snap else delta * 14.0)
 
 func set_move_target(target: Vector2) -> void:
+	if is_dead or is_spawning:
+		return
 	if is_asleep:
 		return
 	# The Pyramid does not move.
@@ -437,11 +451,19 @@ func set_move_target(target: Vector2) -> void:
 		if is_player:
 			GameState.show_toast("The Pyramid does not move")
 		return
+	# A claimed safe house is rooted in place until its owner unclaims it.
+	if form_key == FormDefs.HOUSE and _active_object and is_instance_valid(_active_object) \
+			and not _active_object.safe_owner.is_empty():
+		if is_player:
+			GameState.show_toast("Safe house is rooted — unclaim it to move")
+		return
 	_move_target = target
+	_path.clear()
+	if is_moving:
+		_speed_ease = maxf(_speed_ease, 0.92)
 	if is_player:
 		GameState.note_player_input()
-	if is_spawning:
-		return
+		_update_local_player_data()
 	_replan_path()
 
 func _replan_path() -> void:
@@ -486,7 +508,7 @@ func _advance_along_path(delta: float) -> void:
 		_move_dir = to_waypoint / dist
 		_walk_phase += delta * 12.0
 		_apply_slither(delta)
-		_sync_player_position(false)
+		_update_local_player_data()
 		if _path.is_empty():
 			_finish_path()
 		return
@@ -495,14 +517,20 @@ func _advance_along_path(delta: float) -> void:
 	grid_pos += _move_dir * step
 	_walk_phase += delta * 12.0
 	_apply_slither(delta)
-	_sync_player_position(false)
+	_update_local_player_data()
+
+func _update_local_player_data() -> void:
+	if not is_player:
+		return
+	GameState.player_data["x"] = grid_pos.x
+	GameState.player_data["y"] = grid_pos.y
 
 func _sync_player_position(flush_now: bool) -> void:
 	if not is_player or creature_id.is_empty():
 		return
-	NetworkService.save_creature_position(creature_id, grid_pos.x, grid_pos.y, flush_now)
-	GameState.player_data["x"] = grid_pos.x
-	GameState.player_data["y"] = grid_pos.y
+	_update_local_player_data()
+	if flush_now:
+		NetworkService.save_creature_position(creature_id, grid_pos.x, grid_pos.y, true)
 
 func _finish_path() -> void:
 	is_moving = false
@@ -527,7 +555,7 @@ func _move_ease(delta: float) -> float:
 	if not _path.is_empty():
 		var remaining := grid_pos.distance_to(_path[_path.size() - 1])
 		if remaining < MOVE_DECEL_DIST:
-			ease_out = maxf(0.35, remaining / MOVE_DECEL_DIST)
+			ease_out = maxf(0.82, remaining / MOVE_DECEL_DIST)
 	return minf(_speed_ease, ease_out)
 
 func _has_reached_target() -> bool:
@@ -684,6 +712,9 @@ func _scan_shapeshift_target() -> void:
 			# Only one Pyramid pilot at a time.
 			if obj.form_key == FormDefs.PYRAMID and _pyramid_claimed():
 				continue
+			# A claimed safe house belongs to its owner alone.
+			if not obj.safe_owner.is_empty() and obj.safe_owner != creature_name:
+				continue
 			var d := my.distance_to(Vector2(obj.position.x, obj.position.z))
 			if d <= best_d:
 				best_d = d
@@ -760,6 +791,9 @@ func _complete_shapeshift() -> void:
 		# Scenery tree claim: it enters the shared object world (possessed by
 		# us), and every client hides + unblocks the original scenery tree.
 		_register_claimed_tree(obj)
+	elif obj.type_key == "house_decor":
+		# Scenery house claim: same pattern as trees (Slice 7).
+		_register_claimed_house(obj)
 	if obj.form_key == FormDefs.PYRAMID:
 		# You ARE the Pyramid now. Stand exactly where it stands.
 		position = obj.spawn_world_pos
@@ -793,6 +827,35 @@ func _register_claimed_tree(obj: WorldObject) -> void:
 	if new_id.is_empty() or not is_instance_valid(obj):
 		return
 	obj.object_id = new_id
+	if wm and is_instance_valid(wm) and wm.has_method("track_shared_object"):
+		wm.track_shared_object(obj)
+	# Popped out (or died) before the create landed? Release the row now.
+	if _active_object != obj:
+		var t := Vector2(GameConfig.world_to_tile(obj.position))
+		NetworkService.release_world_object(new_id, t.x, t.y)
+
+## A claimed scenery house becomes a shared "house" row (possessed by us) whose
+## owner_name carries the home tile — other clients use it to hide + unblock
+## the original scenery house. Walk it somewhere, pop out, and it stays there
+## for everyone (see also the safe-house claim in _toggle_house_claim).
+func _register_claimed_house(obj: WorldObject) -> void:
+	var home := Vector2i(obj.spawn_tile)
+	var wm := GameState.world_map
+	if wm and is_instance_valid(wm) and wm.has_method("retire_scenery_house"):
+		wm.retire_scenery_house(home)
+	obj.type_key = "house"
+	if not NetworkService.is_online():
+		return
+	var created: Dictionary = await NetworkService.create_world_object({
+		"type": "house", "x": obj.spawn_tile.x, "y": obj.spawn_tile.y,
+		"state": "possessed", "possessed_by": NetworkService.get_user_id(),
+		"owner_name": "home:%d,%d" % [home.x, home.y],
+	})
+	var new_id := str(created.get("id", ""))
+	if new_id.is_empty() or not is_instance_valid(obj):
+		return
+	obj.object_id = new_id
+	obj.owner_name = "home:%d,%d" % [home.x, home.y]
 	if wm and is_instance_valid(wm) and wm.has_method("track_shared_object"):
 		wm.track_shared_object(obj)
 	# Popped out (or died) before the create landed? Release the row now.
@@ -870,12 +933,20 @@ func pop_out() -> void:
 		return
 	_stop_movement()
 	var was_pyramid := form_key == FormDefs.PYRAMID
+	# A claimed safe house is rooted: like the Pyramid, it stays exactly where
+	# it stands and the alien steps off beside it.
+	var was_rooted := was_pyramid or (form_key == FormDefs.HOUSE \
+		and _active_object and is_instance_valid(_active_object) \
+		and not _active_object.safe_owner.is_empty())
 	var drop_tile := GameConfig.safe_drop_tile(grid_pos + Vector2(0.9, 0.0))
 	if _active_object and is_instance_valid(_active_object):
-		if was_pyramid:
-			# The Pyramid stays exactly where it has always stood; the alien
-			# steps off to a free neighboring tile instead.
+		if was_rooted:
+			# Stays exactly where it stood; the alien steps off instead.
 			_active_object.respawn_at(_active_object.spawn_world_pos)
+			if not was_pyramid and not _active_object.object_id.is_empty():
+				_note_local_authority(_active_object.object_id)
+				NetworkService.release_world_object(_active_object.object_id,
+					_active_object.spawn_tile.x, _active_object.spawn_tile.y)
 		else:
 			# Drop the object just beside us at our CURRENT location and leave it
 			# there. In shared mode this writes the new position + idle state to
@@ -885,8 +956,8 @@ func pop_out() -> void:
 				_note_local_authority(_active_object.object_id)
 				NetworkService.release_world_object(_active_object.object_id, drop_tile.x, drop_tile.y)
 	_active_object = null
-	if was_pyramid:
-		# Step out of the (blocked) pyramid tile onto open ground.
+	if was_rooted:
+		# Step out of the rooted structure's tile onto open ground.
 		var out_tile := GameState.free_drop_tile(grid_pos + Vector2(1.2, 0.6))
 		position = GameConfig.tile_to_world(out_tile)
 		grid_pos = out_tile
@@ -919,6 +990,8 @@ func use_special() -> void:
 			GameState.show_toast("The Pyramid recharges (%ds)" % int(ceil(_abduct_cd)))
 		else:
 			_trigger_abduction()
+	elif form_key == FormDefs.HOUSE:
+		_toggle_house_claim()
 
 const ABDUCTION_COOLDOWN_SEC := 45.0
 
@@ -948,6 +1021,72 @@ func _trigger_abduction() -> void:
 	await get_tree().create_timer(10.0).timeout
 	_note_deleted(id)
 	NetworkService.delete_world_object(id)
+
+# ---------------------------------------------------------------------------
+# Safe houses (Slice 7).
+# ---------------------------------------------------------------------------
+
+## HUD label for the house special button (state-dependent claim toggle).
+func house_special_label() -> String:
+	if _active_object and is_instance_valid(_active_object) \
+			and _active_object.safe_owner == creature_name:
+		return "Unclaim Safe House"
+	return "Claim Safe House"
+
+## Toggle the worn house between free-roaming and claimed-personal-safe-house.
+## Claimed = rooted in place, only the owner may wear it, and it becomes a
+## respawn option on death. One safe house per player: claiming a new one
+## releases the previous claim.
+func _toggle_house_claim() -> void:
+	var obj := _active_object
+	if obj == null or not is_instance_valid(obj):
+		return
+	if obj.object_id.is_empty():
+		GameState.show_toast("House still syncing — try again in a second")
+		return
+	var wm := GameState.world_map
+	if obj.safe_owner == creature_name:
+		# Unclaim: strip the safe segment, keep the home segment.
+		obj.owner_name = WorldObject.parse_home_part(obj.owner_name)
+		obj.set_safe_owner("")
+		_note_local_authority(obj.object_id)
+		NetworkService.update_world_object(obj.object_id,
+			{"owner_name": obj.owner_name if not obj.owner_name.is_empty() else null})
+		if wm and is_instance_valid(wm) and wm.has_method("note_safe_house"):
+			wm.note_safe_house(creature_name, "", Vector2.ZERO)
+		GameState.show_toast("Safe house unclaimed — it can move again")
+		return
+	if not obj.safe_owner.is_empty():
+		GameState.show_toast("This is %s's safe house" % obj.safe_owner)
+		return
+	# Release any previous safe house (one per player).
+	if wm and is_instance_valid(wm) and wm.has_method("safe_house_for"):
+		var prev: Dictionary = wm.safe_house_for(creature_name)
+		var prev_id := str(prev.get("id", ""))
+		if not prev_id.is_empty() and prev_id != obj.object_id:
+			var prev_home := WorldObject.parse_home_part(str(prev.get("raw", "")))
+			NetworkService.update_world_object(prev_id,
+				{"owner_name": prev_home if not prev_home.is_empty() else null})
+	var parts: Array[String] = []
+	var home_part := WorldObject.parse_home_part(obj.owner_name)
+	if not home_part.is_empty():
+		parts.append(home_part)
+	parts.append("safe:%s" % creature_name)
+	obj.owner_name = "|".join(parts)
+	obj.set_safe_owner(creature_name)
+	_stop_movement()
+	_move_target = Vector2(-1, -1)
+	_note_local_authority(obj.object_id)
+	# Root the row at our CURRENT tile so respawns and other clients see the
+	# claimed spot, not the stale pre-walk position.
+	var here := Vector2(GameConfig.world_to_tile(position))
+	obj.spawn_world_pos = GameConfig.tile_to_world(here)
+	obj.spawn_tile = here
+	NetworkService.update_world_object(obj.object_id,
+		{"owner_name": obj.owner_name, "x": here.x, "y": here.y})
+	if wm and is_instance_valid(wm) and wm.has_method("note_safe_house"):
+		wm.note_safe_house(creature_name, obj.object_id, here, obj.owner_name)
+	GameState.show_toast("Safe house claimed! It's rooted until you unclaim it")
 
 ## Manual propane detonation: the blast scatters/demotes nearby money and, per
 ## the design rule, the tank's pilot goes with it. The worn tank returns to its
@@ -1150,14 +1289,105 @@ func pick_up_nearest() -> void:
 		else:
 			GameState.show_toast("No money in reach")
 		return
+	# Slice 7: grabbing another player's labeled bag/vault re-brands it to the
+	# taker on the spot — and everyone hears about it.
+	var prev_owner := obj.owner_name
+	var switched := obj.tier >= FormDefs.TIER_BAG and not prev_owner.is_empty() \
+		and prev_owner != creature_name and not creature_name.is_empty()
+	if switched:
+		obj.set_money_owner(creature_name)
 	_carried.append({"obj": obj, "id": obj.object_id, "tier": obj.tier})
 	obj.carried_by = NetworkService.get_user_id()
 	obj.consume() # hidden as a ground prop; now drawn as attached loot
 	if not obj.object_id.is_empty():
 		_note_local_authority(obj.object_id)
-		NetworkService.carry_world_object(obj.object_id, NetworkService.get_user_id())
+		NetworkService.carry_world_object(obj.object_id, NetworkService.get_user_id(),
+			creature_name if switched else "")
 	update_carried_display(carried_tiers())
-	GameState.show_toast("Picked up a %s" % FormDefs.tier_display(obj.tier))
+	if switched:
+		GameState.show_toast("Took %s's %s — it's yours now" % [prev_owner, FormDefs.tier_display(obj.tier)])
+		_broadcast_toast_event("%s snatched %s's %s!" % [creature_name, prev_owner, FormDefs.tier_display(obj.tier)])
+	else:
+		GameState.show_toast("Picked up a %s" % FormDefs.tier_display(obj.tier))
+
+# ---------------------------------------------------------------------------
+# Stealing from carrying players (Slice 7).
+# ---------------------------------------------------------------------------
+
+## Nearest remote player in reach hauling something this form can take:
+## {"uid", "name", "rows"} or {}.
+func _steal_target() -> Dictionary:
+	if not is_player or is_dead or is_spawning:
+		return {}
+	var wm := GameState.world_map
+	if wm == null or not is_instance_valid(wm) or not wm.has_method("nearest_carrier"):
+		return {}
+	return wm.nearest_carrier(_world_xz(), STEAL_RADIUS)
+
+## Highest-tier row of theirs that our form's carry rules allow right now.
+func _stealable_row(rows: Array) -> Dictionary:
+	var best: Dictionary = {}
+	for r in rows:
+		var t := int(r.get("tier", 0))
+		if not FormDefs.carry_check(form_key, carried_tiers(), t).ok:
+			continue
+		if best.is_empty() or t > int(best.get("tier", 0)):
+			best = r
+	return best
+
+func can_steal_now() -> bool:
+	var target := _steal_target()
+	return not target.is_empty() and not _stealable_row(target.get("rows", [])).is_empty()
+
+func steal_label() -> String:
+	var target := _steal_target()
+	if target.is_empty():
+		return "Steal"
+	var row := _stealable_row(target.get("rows", []))
+	if row.is_empty():
+		return "Steal"
+	return "Steal %s" % FormDefs.tier_display(int(row.get("tier", 0)))
+
+## HUD "Steal" button: yank the best carriable money row off the nearest
+## carrying player. Ownership switches to us; everyone gets the toast.
+func steal_from_nearest() -> void:
+	if not is_player or is_dead or is_spawning or is_asleep:
+		return
+	var target := _steal_target()
+	if target.is_empty():
+		return
+	var row := _stealable_row(target.get("rows", []))
+	if row.is_empty():
+		GameState.show_toast("Can't carry anything they're holding")
+		return
+	var id := str(row.get("id", ""))
+	var tier := int(row.get("tier", 0))
+	var victim := str(target.get("name", "Someone"))
+	var wm := GameState.world_map
+	var obj: WorldObject = wm.claim_carried_object(id, str(row.get("type", "money_stack")), position)
+	obj.carried_by = NetworkService.get_user_id()
+	var switched := tier >= FormDefs.TIER_BAG
+	if switched:
+		obj.set_money_owner(creature_name)
+	_carried.append({"obj": obj, "id": id, "tier": tier})
+	_note_local_authority(id)
+	NetworkService.carry_world_object(id, NetworkService.get_user_id(),
+		creature_name if switched else "")
+	update_carried_display(carried_tiers())
+	GameState.show_toast("Stole %s's %s!" % [victim, FormDefs.tier_display(tier)])
+	_broadcast_toast_event("%s stole %s's %s!" % [creature_name, victim, FormDefs.tier_display(tier)])
+
+## The world sync detected that another player's carry PATCH took one of OUR
+## carried rows (they stole it): let go locally and break the news.
+func on_money_stolen(object_id: String, thief_name: String) -> void:
+	for i in _carried.size():
+		if str(_carried[i].get("id", "")) != object_id:
+			continue
+		var tier := int(_carried[i].get("tier", 0))
+		_carried.remove_at(i)
+		update_carried_display(carried_tiers())
+		GameState.show_toast("%s stole your %s!" % [thief_name, FormDefs.tier_display(tier)])
+		return
 
 ## HUD "Drop" button: set every carried money object down at our current tile,
 ## claim ownership if we hauled someone's bag/vault into a claim zone, then try to
@@ -1438,10 +1668,12 @@ func apply_explosion(world_pos: Vector3, radius: float) -> void:
 func apply_death(reason: String, exploded: bool = false, killer_name: String = "") -> void:
 	if is_dead:
 		return
+	var died_form := form_key
+	var died_as_vehicle := FormDefs.is_vehicle(died_form)
 	is_dead = true
 	# A squished alien (or cart rider) leaves a blood splat where it happened.
 	# Explosions have their own FX; potholes/trees "wreck", they don't squish.
-	var my_kind := FormDefs.kind(form_key)
+	var my_kind := FormDefs.kind(died_form)
 	if not exploded and (my_kind == "alien" or my_kind == "cart"):
 		GameState.blood_splat_requested.emit(position)
 	# Drop any carried money at the death location as idle world objects (synced),
@@ -1471,16 +1703,45 @@ func apply_death(reason: String, exploded: bool = false, killer_name: String = "
 	apply_form(FormDefs.ALIEN)
 	_stop_movement()
 	_move_target = Vector2(-1, -1)
+	if died_as_vehicle and not exploded:
+		GameState.vehicle_wreck_requested.emit(position, died_form)
 	GameState.death_zoom_requested.emit(position)
 	_run_respawn_countdown()
 
 ## Fire-and-forget coroutine: hold on the corpse, count down, then respawn.
+## Safe-house owners get a destination choice (buttons in the HUD); everyone
+## else goes straight back to The Dump.
 func _run_respawn_countdown() -> void:
 	await get_tree().create_timer(RESPAWN_DEATH_PAUSE).timeout
 	for i in RESPAWN_COUNTDOWN:
 		GameState.show_toast("Respawning in %d…" % (RESPAWN_COUNTDOWN - i))
 		await get_tree().create_timer(1.0).timeout
-	_respawn_at_landfill()
+	var safe := _my_safe_house()
+	if safe.is_empty():
+		_respawn_at_landfill()
+		return
+	_respawn_choice = ""
+	GameState.respawn_choice_requested.emit(true)
+	var waited := 0.0
+	while _respawn_choice.is_empty() and waited < RESPAWN_CHOICE_TIMEOUT:
+		await get_tree().create_timer(0.2).timeout
+		waited += 0.2
+	GameState.respawn_choice_requested.emit(false)
+	if _respawn_choice == "safe":
+		var tile: Vector2 = safe.get("tile", GameConfig.LANDFILL_CENTER)
+		_respawn_at(GameState.free_drop_tile(tile + Vector2(1.0, 0.6)))
+	else:
+		_respawn_at_landfill()
+
+## Called by the HUD respawn-choice buttons ("safe" or "dump").
+func choose_respawn(choice: String) -> void:
+	_respawn_choice = choice
+
+func _my_safe_house() -> Dictionary:
+	var wm := GameState.world_map
+	if wm and is_instance_valid(wm) and wm.has_method("safe_house_for"):
+		return wm.safe_house_for(creature_name)
+	return {}
 
 ## Broadcast this death to everyone's kill feed via a short-lived world_objects
 ## row (the smoke-cloud trick — no new table, rides the existing poll). Other
@@ -1496,6 +1757,13 @@ func _broadcast_kill_feed(reason: String, killer_name: String) -> void:
 		msg = "%s died. %s" % [creature_name, msg] # "MOE died. The pothole won."
 	if not killer_name.is_empty():
 		msg = "%s by %s." % [msg.trim_suffix("."), killer_name]
+	_broadcast_toast_event(msg)
+
+## Toast `msg` on every other player's screen via a short-lived kill_event row
+## (author excluded — they get their own local toast). Fire-and-forget.
+func _broadcast_toast_event(msg: String) -> void:
+	if not NetworkService.is_online() or msg.is_empty():
+		return
 	var created: Dictionary = await NetworkService.create_world_object({
 		"type": "kill_event",
 		"x": grid_pos.x, "y": grid_pos.y,
@@ -1513,7 +1781,10 @@ func _broadcast_kill_feed(reason: String, killer_name: String) -> void:
 ## Relocate to the landfill and play the emerge animation (which also grants a
 ## brief invulnerability window since interactions skip while spawning).
 func _respawn_at_landfill() -> void:
-	grid_pos = GameConfig.landfill_spawn_tile()
+	_respawn_at(GameConfig.landfill_spawn_tile())
+
+func _respawn_at(tile: Vector2) -> void:
+	grid_pos = tile
 	_stop_movement()
 	_move_target = Vector2(-1, -1)
 	_update_transform(true, 0.0)

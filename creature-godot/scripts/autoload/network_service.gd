@@ -21,9 +21,6 @@ const PRESENCE_WINDOW_SEC := 150
 var _session: Dictionary = {}
 var _online := false
 var _last_error := ""
-var _save_creature_id := ""
-var _save_pos := Vector2.ZERO
-var _save_dirty := false
 var _save_timer := 0.0
 ## Web-bridge requests are concurrent (poll + position save + money PATCHes can
 ## overlap); each in-flight request gets its own id so responses can't cross.
@@ -73,11 +70,11 @@ func _web_net() -> Object:
 	return net
 
 func _process(delta: float) -> void:
-	if _save_dirty and _online:
+	if _online:
 		_save_timer += delta
 		if _save_timer >= POSITION_SAVE_INTERVAL:
 			_save_timer = 0.0
-			_flush_position_save()
+			_autosave_player_position()
 	if _online and _world_map and is_instance_valid(_world_map):
 		_poll_accum += delta
 		if _poll_accum >= GameConfig.POLL_OTHERS_SEC and not _poll_in_flight:
@@ -111,7 +108,7 @@ func _touch_presence() -> void:
 		return
 	if pc.creature_id.is_empty():
 		return
-	save_creature_position(pc.creature_id, pc.grid_pos.x, pc.grid_pos.y)
+	_autosave_player_position()
 
 func start_creature_poll(world_map: Node) -> void:
 	_world_map = world_map
@@ -368,8 +365,13 @@ func possess_world_object(object_id: String, user_id: String) -> void:
 func release_world_object(object_id: String, x: float, y: float) -> void:
 	update_world_object(object_id, {"state": "idle", "possessed_by": null, "x": x, "y": y})
 
-func carry_world_object(object_id: String, user_id: String) -> void:
-	update_world_object(object_id, {"state": "carried", "possessed_by": user_id})
+## `owner_name` (when set) re-brands the loot in the same PATCH — picking up or
+## stealing another player's bag/vault switches ownership to the taker.
+func carry_world_object(object_id: String, user_id: String, owner_name: String = "") -> void:
+	var patch := {"state": "carried", "possessed_by": user_id}
+	if _owner_name_column_available and not owner_name.is_empty():
+		patch["owner_name"] = owner_name
+	update_world_object(object_id, patch)
 
 func drop_money_object(object_id: String, x: float, y: float, owner_name: String) -> void:
 	var patch := {"state": "idle", "possessed_by": null, "x": x, "y": y}
@@ -555,12 +557,31 @@ func fetch_creature_by_id(creature_id: String) -> Dictionary:
 		return {}
 	return rows[0]
 
-func register_or_claim_profile(profile_name: String, color: Color) -> Dictionary:
-	# Force ALL CAPS so lookups/stores are consistent and case-variant duplicates
-	# ("Bob" vs "boB") can't be created; both stored value and query are uppercased.
-	var cleaned_name := profile_name.strip_edges().to_upper().substr(0, GameConfig.NAME_MAX_LEN)
+# ---------------------------------------------------------------------------
+# Pattern-lock onboarding (Slice 7): Register creates a fresh profile guarded
+# by a swipe-pattern hash; Login verifies the pattern before claiming the row
+# for the current anonymous session. Friendly lock, not real security.
+# ---------------------------------------------------------------------------
+
+## Human-readable last error for onboarding status labels.
+func last_error_text() -> String:
+	return _short_error(_last_error) if not _last_error.is_empty() else "Something went wrong"
+
+## sha256 of name + dot sequence ("0-4-8-5"). The raw pattern is never stored.
+static func pattern_hash_for(profile_name: String, pattern: String) -> String:
+	return ("creature:%s:%s" % [profile_name, pattern]).sha256_text()
+
+## Uppercase + trim, exactly how names are stored and queried.
+static func _clean_profile_name(profile_name: String) -> String:
+	return profile_name.strip_edges().to_upper().substr(0, GameConfig.NAME_MAX_LEN)
+
+## REGISTER: the name must be free; the new row carries the pattern hash.
+## Returns player_data on success, {} on failure (_last_error says why).
+func register_profile(profile_name: String, color: Color, pattern: String) -> Dictionary:
+	var cleaned_name := _clean_profile_name(profile_name)
 	if cleaned_name.is_empty():
-		cleaned_name = GameConfig.DEFAULT_CREATURE_NAME
+		_last_error = "Name required"
+		return {}
 	if not _online and not await _boot_online():
 		var local := GameConfig.default_player_data()
 		local["name"] = cleaned_name
@@ -568,34 +589,69 @@ func register_or_claim_profile(profile_name: String, color: Color) -> Dictionary
 		GameState.player_data = local
 		_log("Offline profile created locally for %s" % cleaned_name)
 		return local
-
 	var existing := await fetch_creature_by_name(cleaned_name)
 	if not existing.is_empty():
-		_log("Attempting to claim existing profile '%s'" % cleaned_name)
-		var claimed := await claim_creature(existing, color)
-		if not claimed.is_empty():
-			GameState.player_data = db_row_to_player_data(claimed)
-			# The chosen color is authoritative for this session; do not depend on
-			# the DB round-trip (a claimed row may carry a stale/previous color).
-			GameState.player_data["color"] = color
-			_log("Claimed profile '%s' for current session" % cleaned_name)
-			return GameState.player_data
-		var claim_hint := "Claim failed for '%s'." % cleaned_name
-		if not _last_error.is_empty():
-			claim_hint += " Last error: %s." % _short_error(_last_error)
-		claim_hint += " To reclaim an existing profile by name, run supabase/migration-temp-profile-admin.sql in the Supabase SQL editor (adds policy creatures_temp_claim_by_name)."
-		_log(claim_hint)
+		_last_error = "'%s' is taken — log in instead" % cleaned_name
 		return {}
-
 	var row := _new_creature_row(get_user_id(), cleaned_name, color)
+	row["pattern_hash"] = pattern_hash_for(cleaned_name, pattern)
 	var created := await create_creature(row)
+	if created.is_empty() and _last_error.contains("pattern_hash"):
+		# Column not migrated yet: register without the lock (degrade gracefully).
+		_log("pattern_hash column missing — run supabase/migration-pattern-lock.sql. Registering without a lock.")
+		row.erase("pattern_hash")
+		created = await create_creature(row)
 	if created.is_empty():
 		_log("Create profile failed for '%s'" % cleaned_name)
 		return {}
 	GameState.player_data = db_row_to_player_data(created)
 	# Keep the exact chosen color in-session regardless of DB round-trip quirks.
 	GameState.player_data["color"] = color
-	_log("Created profile '%s'" % cleaned_name)
+	_log("Registered profile '%s'" % cleaned_name)
+	return GameState.player_data
+
+## LOGIN: verify the pattern against the stored hash, then claim the row for
+## this session. Pre-pattern profiles (hash empty/column missing) log straight
+## in; if the column exists, the entered pattern becomes their lock.
+func login_profile(profile_name: String, pattern: String) -> Dictionary:
+	var cleaned_name := _clean_profile_name(profile_name)
+	if cleaned_name.is_empty():
+		_last_error = "Name required"
+		return {}
+	if not _online and not await _boot_online():
+		_last_error = "Offline — can't log in"
+		return {}
+	var existing := await fetch_creature_by_name(cleaned_name)
+	if existing.is_empty():
+		_last_error = "No profile named '%s' — register instead" % cleaned_name
+		return {}
+	var stored_hash := ""
+	if typeof(existing.get("pattern_hash")) == TYPE_STRING:
+		stored_hash = str(existing.get("pattern_hash"))
+	var entered_hash := pattern_hash_for(cleaned_name, pattern)
+	if not stored_hash.is_empty() and stored_hash != entered_hash:
+		_last_error = "Wrong pattern"
+		return {}
+	var patch := {
+		"user_id": get_user_id(),
+		"last_active": _iso_now(),
+		"updated_at": _iso_now(),
+	}
+	if stored_hash.is_empty() and existing.has("pattern_hash"):
+		# Grandfathered profile: adopt the pattern drawn at this first login.
+		patch["pattern_hash"] = entered_hash
+	var id := str(existing.get("id", ""))
+	var claimed := await _patch_creature_returning("/rest/v1/creatures?id=eq.%s" % id.uri_encode(), patch)
+	if claimed.is_empty():
+		var claim_hint := "Login claim failed for '%s'." % cleaned_name
+		if not _last_error.is_empty():
+			claim_hint += " Last error: %s." % _short_error(_last_error)
+		claim_hint += " Claiming by name needs supabase/migration-temp-profile-admin.sql (policy creatures_temp_claim_by_name)."
+		_log(claim_hint)
+		_last_error = "Login failed — see admin log"
+		return {}
+	GameState.player_data = db_row_to_player_data(claimed)
+	_log("Logged in as '%s'" % cleaned_name)
 	return GameState.player_data
 
 func create_creature(row: Dictionary) -> Dictionary:
@@ -677,18 +733,27 @@ func _patch_creature_returning(path: String, patch: Dictionary) -> Dictionary:
 func save_creature_position(creature_id: String, x: float, y: float, flush_now: bool = false) -> void:
 	if not _online or creature_id.is_empty():
 		return
-	_save_creature_id = creature_id
-	_save_pos = Vector2(x, y)
 	if flush_now:
-		_save_dirty = false
-		_save_timer = 0.0
 		update_creature(creature_id, {
 			"x": x,
 			"y": y,
 			"last_active": _iso_now(),
 		})
 		return
-	_save_dirty = true
+	# Non-flush calls are ignored — position sync runs on POSITION_SAVE_INTERVAL
+	# via _autosave_player_position(), decoupled from tap-to-move.
+
+## Push the live player position to Supabase on the fixed interval. Movement and
+## tap-to-move never wait on this — they update grid_pos locally every frame.
+func _autosave_player_position() -> void:
+	var pc: Creature = GameState.player_creature
+	if pc == null or not is_instance_valid(pc) or pc.creature_id.is_empty():
+		return
+	update_creature(pc.creature_id, {
+		"x": pc.grid_pos.x,
+		"y": pc.grid_pos.y,
+		"last_active": _iso_now(),
+	})
 
 func has_form_column() -> bool:
 	return _form_column_available
@@ -756,17 +821,6 @@ func _new_creature_row(user_id: String, profile_name: String = "", color: Color 
 		"size_level": 1,
 		"is_asleep": false,
 	}
-
-func _flush_position_save() -> void:
-	if not _save_dirty or _save_creature_id.is_empty():
-		return
-	_save_dirty = false
-	_save_timer = 0.0
-	await update_creature(_save_creature_id, {
-		"x": _save_pos.x,
-		"y": _save_pos.y,
-		"last_active": _iso_now(),
-	})
 
 func _try_refresh_session() -> bool:
 	var stored := _load_session_file()

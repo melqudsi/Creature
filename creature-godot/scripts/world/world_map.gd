@@ -46,6 +46,14 @@ var _tree_homes_done: Dictionary = {} # row id -> true
 var _pyramid_obj: WorldObject = null
 var _abductions_seen: Dictionary = {}
 
+## Slice 7: scenery houses by tile (claimable like trees), retired house home
+## tiles, per-player carried loot rows from the latest poll (drives the Steal
+## button), and known safe-house claims (owner name -> {id, tile}).
+var _scenery_houses: Dictionary = {}     # Vector2i -> WorldObject
+var _house_homes_done: Dictionary = {}   # row id -> true
+var _carried_rows_by_user: Dictionary = {} # user_id -> Array[{id, tier, type, owner}]
+var _safe_houses: Dictionary = {}        # owner name -> {"id": String, "tile": Vector2}
+
 func note_local_authority(object_id: String, secs: float = 6.0) -> void:
 	if object_id.is_empty():
 		return
@@ -85,6 +93,7 @@ func _ready() -> void:
 	GameState.explosion_requested.connect(spawn_explosion)
 	GameState.money_combined.connect(spawn_money_combine_fx)
 	GameState.blood_splat_requested.connect(spawn_blood_splat)
+	GameState.vehicle_wreck_requested.connect(spawn_vehicle_wreck)
 	if click_marker:
 		click_marker.visible = false
 
@@ -478,12 +487,22 @@ func retire_scenery_tree(tile: Vector2i) -> void:
 	if obj and is_instance_valid(obj) and not obj.consumed:
 		obj.consume()
 
+## A scenery house that became a shared object (someone shapeshifted into it):
+## hide the original everywhere and unblock its tile.
+func retire_scenery_house(tile: Vector2i) -> void:
+	GameState.blocked_tiles.erase(tile)
+	var obj: WorldObject = _scenery_houses.get(tile)
+	if obj and is_instance_valid(obj) and not obj.consumed:
+		obj.consume()
+
 ## Houses are solid and lethal to vehicles that crash into them. Downtown gets
 ## towers instead, plus the Pyramid landmark at the north end.
+## Slice 7: houses are claimable scenery (shapeshift converts one into a shared
+## "house" row — see Creature._register_claimed_house).
 func _build_buildings() -> void:
 	for pos in MemphisLayout.house_tiles():
 		var wp := GameConfig.tile_to_world(Vector2(pos))
-		_spawn_world_object("building", Vector3(wp.x, 0, wp.z), _buildings_root)
+		_scenery_houses[pos] = _spawn_world_object("house_decor", Vector3(wp.x, 0, wp.z), _buildings_root)
 	for pos in MemphisLayout.tower_tiles():
 		var wp := GameConfig.tile_to_world(Vector2(pos))
 		_spawn_world_object("tower", Vector3(wp.x, 0, wp.z), _buildings_root)
@@ -632,10 +651,16 @@ func _object_cfg(key: String) -> Dictionary:
 			return {"kind": "tree", "form_key": FormDefs.TREE, "visual": "tree", "radius": 0.5, "display_name": "Tree"}
 		"building":
 			return {"kind": "building", "form_key": "", "visual": "building", "radius": 0.9, "display_name": "House"}
+		"house_decor":
+			# Claimable scenery: Becoming one converts it into a shared "house" row.
+			return {"kind": "building", "form_key": FormDefs.HOUSE, "visual": "building", "radius": 0.9, "display_name": "House"}
+		"house":
+			# A formerly-scenery house that entered the shared object world.
+			return {"kind": "building", "form_key": FormDefs.HOUSE, "visual": "building", "radius": 0.9, "display_name": "House"}
 		"tower":
 			return {"kind": "building", "form_key": "", "visual": "tower", "radius": 0.85, "display_name": "Tower"}
 		"pyramid":
-			return {"kind": "building", "form_key": FormDefs.PYRAMID, "visual": "pyramid", "radius": 1.1, "display_name": "The Pyramid"}
+			return {"kind": "building", "form_key": FormDefs.PYRAMID, "visual": "pyramid", "radius": 2.2, "display_name": "The Pyramid"}
 		"kroger":
 			return {"kind": "building", "form_key": "", "visual": "bigbox", "radius": 1.2, "display_name": "Kroger", "tint": Color(0.12, 0.3, 0.62)}
 		"fedex":
@@ -703,6 +728,8 @@ func sync_world_objects(rows: Array) -> void:
 		for cid in pc.carried_object_ids():
 			locally_carried[str(cid)] = true
 	var carried_tiers_by_user: Dictionary = {}
+	var carried_rows_by_user: Dictionary = {}
+	var safe_houses: Dictionary = {}
 	var seen: Dictionary = {}
 	for row in rows:
 		if typeof(row) != TYPE_DICTIONARY:
@@ -773,10 +800,29 @@ func sync_world_objects(rows: Array) -> void:
 				var parts := home.substr(5).split(",")
 				if parts.size() == 2:
 					retire_scenery_tree(Vector2i(int(parts[0]), int(parts[1])))
+		# Same for claimed scenery houses; their owner_name may also carry a
+		# "safe:<NAME>" segment (a claimed personal safe house).
+		if type_key == "house":
+			if not _house_homes_done.has(id):
+				var howner := WorldObject.parse_home_part(_row_owner_name(row))
+				if howner.begins_with("home:"):
+					_house_homes_done[id] = true
+					var hparts := howner.substr(5).split(",")
+					if hparts.size() == 2:
+						retire_scenery_house(Vector2i(int(hparts[0]), int(hparts[1])))
+			var safe_name := WorldObject.parse_safe_owner(_row_owner_name(row))
+			if not safe_name.is_empty():
+				safe_houses[safe_name] = {"id": id, "tile": tile, "raw": _row_owner_name(row)}
 		var state := str(row.get("state", "idle"))
 		var possessed_by := str(row.get("possessed_by", ""))
 		var possessed := state == "possessed" and not possessed_by.is_empty()
 		var carried := state == "carried" and not possessed_by.is_empty()
+		# THEFT (Slice 7): the server says another player now hauls something we
+		# still think we're carrying — it was stolen right off our back.
+		if carried and possessed_by != my_uid and id in locally_carried:
+			if pc and is_instance_valid(pc) and pc.has_method("on_money_stolen"):
+				pc.on_money_stolen(id, display_name_for_uid(possessed_by))
+			locally_carried.erase(id)
 		# Decide whether to hide the standalone prop (a possessing player's synced
 		# form stands in for it, or carried money floats above the carrier).
 		var hide_prop := false
@@ -798,6 +844,11 @@ func sync_world_objects(rows: Array) -> void:
 				if not carried_tiers_by_user.has(possessed_by):
 					carried_tiers_by_user[possessed_by] = []
 				carried_tiers_by_user[possessed_by].append(t)
+				# Index the actual rows too — the Steal action needs ids/owners.
+				if not carried_rows_by_user.has(possessed_by):
+					carried_rows_by_user[possessed_by] = []
+				carried_rows_by_user[possessed_by].append(
+					{"id": id, "tier": t, "type": type_key, "owner": _row_owner_name(row)})
 		# carried by an ABSENT player (disconnected mid-haul) -> render idle
 		elif possessed and possessed_by == my_uid:
 			# Two cases. (a) Session restore: I reloaded while shapeshifted, so I'm
@@ -841,6 +892,14 @@ func sync_world_objects(rows: Array) -> void:
 		obj.spawn_tile = tile
 		if obj.has_method("apply_row"):
 			obj.apply_row(row)
+	# A just-claimed/unclaimed house row may be skipped by the local-authority
+	# grace window; keep the locally-known entry alive until the PATCH lands.
+	for owner in _safe_houses.keys():
+		var entry: Dictionary = _safe_houses[owner]
+		if _local_authority.has(str(entry.get("id", ""))) and not safe_houses.has(owner):
+			safe_houses[owner] = entry
+	_carried_rows_by_user = carried_rows_by_user
+	_safe_houses = safe_houses
 	# Remote players: show loot floating above them from shared carry state.
 	for uid in _remote_by_user.keys():
 		var remote: Creature = _remote_by_user[uid]
@@ -1144,6 +1203,64 @@ func track_shared_object(obj: WorldObject) -> void:
 		return
 	_shared_objects[obj.object_id] = obj
 
+# ---------------------------------------------------------------------------
+# Slice 7 helpers: stealing + safe houses.
+# ---------------------------------------------------------------------------
+
+## Player name for a user_id from the remote roster ("Someone" if unknown).
+func display_name_for_uid(uid: String) -> String:
+	var remote: Creature = _remote_by_user.get(uid)
+	if remote and is_instance_valid(remote) and not remote.creature_name.is_empty():
+		return remote.creature_name
+	return "Someone"
+
+## Money rows a given player is hauling, per the latest poll:
+## [{id, tier, type, owner}].
+func carried_rows_for(uid: String) -> Array:
+	return _carried_rows_by_user.get(uid, [])
+
+## Nearest visible remote player within `radius` (world units of `pos`) who is
+## hauling money: {"uid", "name", "rows"} or {}.
+func nearest_carrier(pos: Vector2, radius: float) -> Dictionary:
+	var best: Dictionary = {}
+	var best_d := radius
+	for uid in _carried_rows_by_user.keys():
+		var rows: Array = _carried_rows_by_user[uid]
+		if rows.is_empty():
+			continue
+		var remote: Creature = _remote_by_user.get(uid)
+		if remote == null or not is_instance_valid(remote) or remote.is_dead or not remote.visible:
+			continue
+		var d := pos.distance_to(Vector2(remote.position.x, remote.position.z))
+		if d <= best_d:
+			best_d = d
+			best = {"uid": uid, "name": remote.creature_name, "rows": rows}
+	return best
+
+## Hand the local player a WorldObject instance for a money row they just stole
+## (the prop was hidden while the victim carried it, so it may not exist yet).
+func claim_carried_object(id: String, type_key: String, world_pos: Vector3) -> WorldObject:
+	var obj: WorldObject = _shared_objects.get(id)
+	if obj == null or not is_instance_valid(obj):
+		_ensure_objects_root()
+		obj = _spawn_world_object(type_key, world_pos, _objects_root)
+		obj.object_id = id
+		_shared_objects[id] = obj
+	obj.consume()
+	return obj
+
+## {"id": row id, "tile": Vector2} of a player's claimed safe house, or {}.
+func safe_house_for(player_name: String) -> Dictionary:
+	return _safe_houses.get(player_name, {})
+
+## Record a claim/unclaim locally (instant respawn-choice availability while
+## the owner_name PATCH is still in flight).
+func note_safe_house(player_name: String, id: String, tile: Vector2, raw: String = "") -> void:
+	if id.is_empty():
+		_safe_houses.erase(player_name)
+	else:
+		_safe_houses[player_name] = {"id": id, "tile": tile, "raw": raw}
+
 ## Swap the client-config fallback objects for the shared set exactly once, the
 ## first time a world_objects poll succeeds. Keeps any fallback object the player
 ## is currently wearing (consumed) so an in-progress shapeshift isn't yanked away.
@@ -1326,6 +1443,68 @@ func spawn_blood_splat(world_pos: Vector3) -> void:
 	tween.tween_interval(4.0)                                # stay vivid for a beat
 	tween.tween_property(mat, "albedo_color:a", 0.0, 4.0)   # then fade out
 	tween.tween_callback(splat.queue_free)
+
+## A vehicle wreck: body chunks + wheels scatter from the impact and fade away.
+func spawn_vehicle_wreck(world_pos: Vector3, form_key: String) -> void:
+	var root := Node3D.new()
+	root.position = Vector3(world_pos.x, 0.0, world_pos.z)
+	add_child(root)
+	var is_bus := form_key == FormDefs.MATA_BUS
+	var body_col := Color(0.15, 0.28, 0.55) if not is_bus else Color(0.93, 0.94, 0.95)
+	var part_mat := StandardMaterial3D.new()
+	part_mat.albedo_color = body_col
+	part_mat.roughness = 0.55
+	var wheel_mat := StandardMaterial3D.new()
+	wheel_mat.albedo_color = Color(0.05, 0.05, 0.06)
+	wheel_mat.roughness = 0.9
+	for i in 4:
+		var chunk := BoxMesh.new()
+		chunk.size = Vector3(
+			randf_range(0.25, 0.55) if not is_bus else randf_range(0.35, 0.75),
+			randf_range(0.12, 0.32),
+			randf_range(0.25, 0.65) if not is_bus else randf_range(0.4, 0.9),
+		)
+		var mi := MeshInstance3D.new()
+		mi.mesh = chunk
+		mi.material_override = part_mat
+		root.add_child(mi)
+		var ang := randf() * TAU
+		var dist := randf_range(0.8, 2.0)
+		var end := Vector3(cos(ang) * dist, 0.06, sin(ang) * dist)
+		mi.position = Vector3(0, 0.18, 0)
+		var tw := root.create_tween()
+		tw.set_parallel(true)
+		tw.tween_property(mi, "position", end, 0.48).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
+		tw.tween_property(mi, "rotation", Vector3(randf(), randf(), randf()) * TAU, 0.48)
+	var wheel_count := 4 if not is_bus else 6
+	for i in wheel_count:
+		var wheel := CylinderMesh.new()
+		wheel.top_radius = 0.14 if not is_bus else 0.17
+		wheel.bottom_radius = wheel.top_radius
+		wheel.height = 0.1
+		var wi := MeshInstance3D.new()
+		wi.mesh = wheel
+		wi.material_override = wheel_mat
+		wi.rotation_degrees = Vector3(0, 0, 90)
+		root.add_child(wi)
+		var ang := randf() * TAU
+		var dist := randf_range(1.0, 2.4)
+		var end := Vector3(cos(ang) * dist, 0.08, sin(ang) * dist)
+		wi.position = Vector3(0, 0.12, 0)
+		var tw := root.create_tween()
+		tw.set_parallel(true)
+		tw.tween_property(wi, "position", end, 0.52).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
+		tw.tween_property(wi, "rotation:x", wi.rotation.x + randf_range(5.0, 10.0), 0.52)
+	var fade := create_tween()
+	fade.tween_interval(1.1)
+	fade.tween_method(func(a: float) -> void:
+		part_mat.albedo_color.a = a
+		wheel_mat.albedo_color.a = a
+		var fade_on := a < 0.99
+		part_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA if fade_on else BaseMaterial3D.TRANSPARENCY_DISABLED
+		wheel_mat.transparency = part_mat.transparency,
+		1.0, 0.0, 1.3)
+	fade.tween_callback(root.queue_free)
 
 func _flat_blob(mesh: Mesh, mat: StandardMaterial3D, pos: Vector3) -> MeshInstance3D:
 	var mi := MeshInstance3D.new()

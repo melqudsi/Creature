@@ -99,12 +99,25 @@ layout_mode = 1
 anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
-offset_left = -144.0
+offset_left = -280.0
+offset_top = 12.0
+offset_right = -148.0
+offset_bottom = 64.0
+grow_horizontal = 0
+text = "admin"
+
+[node name="ExitButton" type="Button" parent="."]
+custom_minimum_size = Vector2(52, 52)
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -64.0
 offset_top = 12.0
 offset_right = -12.0
 offset_bottom = 64.0
 grow_horizontal = 0
-text = "admin"
+text = "X"
 
 [node name="ActionBar" type="VBoxContainer" parent="."]
 layout_mode = 1
@@ -121,6 +134,12 @@ grow_horizontal = 0
 grow_vertical = 0
 alignment = 2
 theme_override_constants/separation = 10
+
+[node name="StealButton" type="Button" parent="ActionBar"]
+custom_minimum_size = Vector2(188, 56)
+layout_mode = 2
+visible = false
+text = "Steal"
 
 [node name="PickUpButton" type="Button" parent="ActionBar"]
 custom_minimum_size = Vector2(188, 56)

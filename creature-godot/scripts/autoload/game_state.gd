@@ -16,6 +16,7 @@ signal interaction_changed(can_become: bool, form_display: String)
 signal explosion_requested(world_pos: Vector3, radius: float)
 signal money_combined(world_pos: Vector3)
 signal blood_splat_requested(world_pos: Vector3)
+signal vehicle_wreck_requested(world_pos: Vector3, form_key: String)
 ## The local player died: the camera should zoom in on the death spot so the
 ## player can see what killed them during the respawn countdown.
 signal death_zoom_requested(world_pos: Vector3)
@@ -23,6 +24,10 @@ signal death_zoom_requested(world_pos: Vector3)
 ## An abduction is playing nearby: the camera should pull back so the sky beam
 ## and ship (which sit far above the normal close-zoom frame) are visible.
 signal abduction_zoom_requested(duration_sec: float)
+
+## Slice 7: the dead player owns a safe house, so the HUD should show (true) or
+## hide (false) the "Safe House / The Dump" respawn choice buttons.
+signal respawn_choice_requested(show: bool)
 
 var creatures: Dictionary = {} # id -> Creature
 var player_creature: Creature = null
@@ -37,6 +42,9 @@ var npc_traffic: Node = null
 ## for O(1) pathfinding lookups — the Memphis map has thousands of them.
 var blocked_tiles: Dictionary = {}
 var admin_logs: Array[String] = []
+## Last time the local player did anything (move, tap, HUD button). Used for
+## idle auto-logout.
+var last_player_input_ms: int = 0
 ## Interactive/solid props (trees, buildings, shapeshift sources). Scanned by the
 ## local player each frame for collisions/kills/shapeshift prompts.
 var world_objects: Array[WorldObject] = []
@@ -77,6 +85,7 @@ func get_unit_tiles(exclude_id: String = "") -> Dictionary:
 	return tiles
 
 func note_player_input() -> void:
+	last_player_input_ms = Time.get_ticks_msec()
 	if player_creature and player_creature.is_asleep:
 		player_creature.wake_up()
 

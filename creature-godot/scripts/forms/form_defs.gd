@@ -13,6 +13,7 @@ const MATA_BUS := "mata_bus"
 const BBQ_SMOKER := "bbq_smoker"
 const TREE := "tree"
 const PYRAMID := "pyramid"
+const HOUSE := "house"
 
 const DEFAULT_FORM := ALIEN
 
@@ -32,7 +33,10 @@ const FORMS := {
 	BBQ_SMOKER: {"display": "BBQ Smoker", "speed": 0.9, "radius": 0.5, "kind": "smoker", "visual": "smoker"},
 	TREE: {"display": "Tree", "speed": 0.5, "radius": 0.5, "kind": "tree", "visual": "tree"},
 	# The Pyramid does not move. The Pyramid abducts.
-	PYRAMID: {"display": "The Pyramid", "speed": 0.0, "radius": 1.1, "kind": "building", "visual": "pyramid"},
+	PYRAMID: {"display": "The Pyramid", "speed": 0.0, "radius": 2.2, "kind": "building", "visual": "pyramid"},
+	# A walking house. Slow, uncrushable, claimable as a personal safe house
+	# (claimed = rooted in place until unclaimed).
+	HOUSE: {"display": "House", "speed": 0.4, "radius": 0.9, "kind": "building", "visual": "building"},
 }
 
 const DEATH_ALTIMA := "You got Altima'd."

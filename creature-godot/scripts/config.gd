@@ -24,7 +24,7 @@ const DEFAULT_CREATURE_NAME := "Creature"
 
 ## Visible build stamp so a loaded build can be identified at a glance.
 ## Keep this in sync with the build-stamp string in web/custom_shell.html.
-const BUILD_ID := "build 2026-07-03c"
+const BUILD_ID := "build 2026-07-03i"
 
 ## Landfill Dump: the spawn/respawn zone (now inside South Memphis — old-world
 ## coords + OLD_WORLD_OFFSET). All new players and respawns appear here.

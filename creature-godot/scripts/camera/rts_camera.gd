@@ -9,25 +9,19 @@ extends Camera3D
 @export var zoom_step := 1.0
 @export var pinch_zoom_sensitivity := 1.0
 
-const TAP_MOVE_THRESHOLD := 24.0
 const CAMERA_PITCH := deg_to_rad(38.0)
 const CAMERA_YAW := deg_to_rad(45.0)
 
 var _focus := Vector3.ZERO
 var _desired_distance := 8.0
 var _active_touches: Dictionary = {}
-var _touch_start := Vector2.ZERO
-var _touch_moved := false
 var _last_pinch_dist := 0.0
-var _last_tap_ms := 0
-var _last_tap_pos := Vector2.ZERO
-## Most touches this gesture ever had at once (a pinch that decays to one finger
-## is still a pinch, not a tap) + a cooldown after pinching before taps count.
-var _gesture_max_touches := 0
-var _pinch_block_until_ms := 0
-## Last time a real touch event arrived — used to ignore the EMULATED mouse
-## click that mirrors every touch (it must never issue its own move command).
+## True once we've issued move for the current one-finger gesture (press or
+## release fallback), so emulated-mouse echoes don't double-fire.
+var _tap_fired_for_gesture := false
+## Last real touch event — used to dedupe emulated mouse clicks that mirror it.
 var _last_touch_ms := 0
+var _last_touch_pos := Vector2.ZERO
 
 var _world_map: Node
 
@@ -84,35 +78,37 @@ func process_pointer_input(event: InputEvent) -> bool:
 	if event is InputEventScreenTouch:
 		var touch := event as InputEventScreenTouch
 		_last_touch_ms = Time.get_ticks_msec()
+		_last_touch_pos = touch.position
 		if touch.pressed:
-			if _active_touches.is_empty():
-				_gesture_max_touches = 0
-			if touch.index == 0:
-				_touch_start = touch.position
-				_touch_moved = false
+			var solo := _active_touches.is_empty()
+			# Mobile browsers sometimes drop touch-end; stale entries block retargeting.
+			if not solo and not _active_touches.has(touch.index):
+				_active_touches.clear()
+				solo = true
 			_active_touches[touch.index] = touch.position
-			_gesture_max_touches = maxi(_gesture_max_touches, _active_touches.size())
-			_update_pinch()
+			_tap_fired_for_gesture = false
+			if solo:
+				_issue_move_tap(touch.position)
+				_tap_fired_for_gesture = true
+			if _active_touches.size() >= 2:
+				_last_pinch_dist = 0.0
+				_update_pinch()
 		else:
-			var was_solo := _gesture_max_touches <= 1
+			var was_solo := _active_touches.size() == 1 and _active_touches.has(touch.index)
+			# Fallback: some mobile web builds skip touch-start under load but still
+			# deliver touch-end (or press was blocked by a ghost finger in the dict).
+			if not _tap_fired_for_gesture and was_solo:
+				_issue_move_tap(touch.position)
 			_active_touches.erase(touch.index)
+			_tap_fired_for_gesture = false
 			if _active_touches.size() < 2:
 				_last_pinch_dist = 0.0
-			# Tap-to-move fires on RELEASE, and only if the whole gesture stayed
-			# one steady finger. A pinch whose second finger lands a half-beat
-			# after the first must never issue a move command.
-			if touch.index == 0 and was_solo and not _touch_moved \
-					and Time.get_ticks_msec() >= _pinch_block_until_ms:
-				_handle_tap(touch.position, true)
 		return true
 
 	if event is InputEventScreenDrag:
 		var drag := event as InputEventScreenDrag
 		_last_touch_ms = Time.get_ticks_msec()
 		_active_touches[drag.index] = drag.position
-		if drag.index == 0 and _active_touches.size() == 1:
-			if drag.position.distance_to(_touch_start) > TAP_MOVE_THRESHOLD:
-				_touch_moved = true
 		if _active_touches.size() >= 2:
 			_update_pinch()
 		return true
@@ -128,12 +124,16 @@ func process_pointer_input(event: InputEvent) -> bool:
 			_apply_zoom(zoom_step)
 			return true
 		if mb.button_index == MOUSE_BUTTON_LEFT or mb.button_index == MOUSE_BUTTON_RIGHT:
-			# The emulated mouse click that mirrors a touch arrives right after
-			# the touch events — the ScreenTouch path already owns tapping there
-			# (with pinch suppression), so this must not double-fire a move.
-			if Time.get_ticks_msec() - _last_touch_ms < 500:
+			if _is_touch_device():
+				# Swallow the emulated click that mirrors a ScreenTouch we already
+				# handled. Fast mobile taps sometimes arrive as mouse ONLY (no
+				# ScreenTouch) — those must NOT be suppressed for 500ms.
+				if Time.get_ticks_msec() - _last_touch_ms < 50 \
+						and mb.position.distance_to(_last_touch_pos) < 24.0:
+					return true
+				_issue_move_tap(mb.position)
 				return true
-			_handle_tap(mb.position, false)
+			_issue_move_tap(mb.position)
 			return true
 
 	return false
@@ -154,7 +154,6 @@ func _update_pinch() -> void:
 	if _active_touches.size() < 2:
 		_last_pinch_dist = 0.0
 		return
-	_pinch_block_until_ms = Time.get_ticks_msec() + 350
 	var keys := _active_touches.keys()
 	var a: Vector2 = _active_touches[keys[0]]
 	var b: Vector2 = _active_touches[keys[1]]
@@ -164,20 +163,20 @@ func _update_pinch() -> void:
 		_apply_zoom(delta)
 	_last_pinch_dist = dist
 
-func _viewport_position(screen_pos: Vector2) -> Vector2:
-	var vp := get_viewport()
-	if vp == null:
-		return screen_pos
-	return vp.get_screen_transform().affine_inverse() * screen_pos
+func _is_touch_device() -> bool:
+	if DisplayServer.is_touchscreen_available():
+		return true
+	if not OS.has_feature("web"):
+		return false
+	var raw: Variant = JavaScriptBridge.eval(
+		"window.matchMedia('(pointer: coarse)').matches ? '1' : ''", true)
+	return str(raw) == "1"
 
-func _handle_tap(screen_pos: Vector2, from_touch: bool) -> void:
-	var now := Time.get_ticks_msec()
-	if now - _last_tap_ms < 80 and _last_tap_pos.distance_to(screen_pos) < 16.0:
-		return
-	_last_tap_ms = now
-	_last_tap_pos = screen_pos
-	var pos := _viewport_position(screen_pos) if from_touch else screen_pos
-	_handle_ground_click(pos)
+func _issue_move_tap(screen_pos: Vector2) -> void:
+	# event.position is already in viewport space (same coords project_ray_origin
+	# expects). Applying get_screen_transform().affine_inverse() was shifting
+	# mobile taps upward — tap bottom, ring upper-middle.
+	_handle_ground_click(screen_pos)
 
 func _apply_zoom(delta: float) -> void:
 	_desired_distance = clampf(_desired_distance + delta, zoom_min, zoom_max)
@@ -257,6 +256,8 @@ func _update_position(_snap: bool) -> void:
 func _handle_ground_click(screen_pos: Vector2) -> void:
 	if not follow_target or not follow_target.has_method("set_move_target"):
 		return
+	if follow_target.get("is_dead") or follow_target.get("is_spawning"):
+		return
 	var cam := get_viewport().get_camera_3d()
 	if cam == null:
 		cam = self
@@ -294,12 +295,11 @@ func set_follow(target: Creature) -> void:
 		_update_position(true)
 
 func screen_to_tile(screen_pos: Vector2) -> Vector2:
-	var pos := _viewport_position(screen_pos)
 	var cam := get_viewport().get_camera_3d()
 	if cam == null:
 		return Vector2(-1, -1)
-	var origin := cam.project_ray_origin(pos)
-	var dir := cam.project_ray_normal(pos)
+	var origin := cam.project_ray_origin(screen_pos)
+	var dir := cam.project_ray_normal(screen_pos)
 	var plane := Plane(Vector3.UP, 0)
 	var hit = plane.intersects_ray(origin, dir)
 	if hit == null:

@@ -1,6 +1,7 @@
-[gd_scene load_steps=2 format=3 uid="uid://create001"]
+[gd_scene load_steps=3 format=3 uid="uid://create001"]
 
 [ext_resource type="Script" path="res://scripts/ui/creature_create.gd" id="1_create"]
+[ext_resource type="Script" path="res://scripts/ui/pattern_pad.gd" id="2_pad"]
 
 [node name="CreatureCreate" type="Control"]
 layout_mode = 3
@@ -28,84 +29,125 @@ anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
 offset_left = -240.0
-offset_top = -180.0
+offset_top = -320.0
 offset_right = 240.0
-offset_bottom = 180.0
+offset_bottom = 320.0
 grow_horizontal = 2
 grow_vertical = 2
 
 [node name="Title" type="Label" parent="Panel"]
 layout_mode = 0
 offset_left = 20.0
-offset_top = 20.0
+offset_top = 16.0
 offset_right = 460.0
-offset_bottom = 48.0
-text = "SPAWN YOUR CREATURE"
+offset_bottom = 44.0
+text = "CREATURE"
 horizontal_alignment = 1
 
+[node name="BackBtn" type="Button" parent="Panel"]
+visible = false
+layout_mode = 0
+offset_left = 12.0
+offset_top = 10.0
+offset_right = 92.0
+offset_bottom = 46.0
+text = "< Back"
+
+[node name="ModeRow" type="VBoxContainer" parent="Panel"]
+layout_mode = 0
+offset_left = 130.0
+offset_top = 240.0
+offset_right = 350.0
+offset_bottom = 400.0
+theme_override_constants/separation = 16
+
+[node name="LoginModeBtn" type="Button" parent="Panel/ModeRow"]
+custom_minimum_size = Vector2(220, 56)
+layout_mode = 2
+text = "LOG IN"
+
+[node name="RegisterModeBtn" type="Button" parent="Panel/ModeRow"]
+custom_minimum_size = Vector2(220, 56)
+layout_mode = 2
+text = "REGISTER"
+
 [node name="NameEdit" type="LineEdit" parent="Panel"]
+visible = false
 layout_mode = 0
 offset_left = 60.0
-offset_top = 64.0
+offset_top = 56.0
 offset_right = 420.0
-offset_bottom = 96.0
+offset_bottom = 90.0
 placeholder_text = "Name (max 10)"
 max_length = 10
 virtual_keyboard_enabled = true
 
 [node name="ColorLabel" type="Label" parent="Panel"]
+visible = false
 layout_mode = 0
 offset_left = 20.0
-offset_top = 110.0
+offset_top = 98.0
 offset_right = 460.0
-offset_bottom = 134.0
+offset_bottom = 120.0
 text = "PICK A COLOR"
 horizontal_alignment = 1
 
 [node name="ColorRow" type="GridContainer" parent="Panel"]
+visible = false
 layout_mode = 0
-offset_left = 66.0
-offset_top = 140.0
-offset_right = 414.0
-offset_bottom = 260.0
+offset_left = 78.0
+offset_top = 124.0
+offset_right = 402.0
+offset_bottom = 224.0
 theme_override_constants/h_separation = 8
 theme_override_constants/v_separation = 8
 columns = 6
 
-[node name="AppearanceRow" type="HBoxContainer" parent="Panel"]
+[node name="PatternLabel" type="Label" parent="Panel"]
 visible = false
 layout_mode = 0
-offset_left = 40.0
-offset_top = 262.0
-offset_right = 440.0
-offset_bottom = 298.0
-alignment = 1
-theme_override_constants/separation = 12
+offset_left = 20.0
+offset_top = 234.0
+offset_right = 460.0
+offset_bottom = 256.0
+text = "CHOOSE A 4 DOT PATTERN"
+horizontal_alignment = 1
 
-[node name="CuteBtn" type="Button" parent="Panel/AppearanceRow"]
-layout_mode = 2
-custom_minimum_size = Vector2(120, 36)
-text = "CUTE"
+[node name="PatternNote" type="Label" parent="Panel"]
+visible = false
+layout_mode = 0
+offset_left = 20.0
+offset_top = 256.0
+offset_right = 460.0
+offset_bottom = 276.0
+theme_override_font_sizes/font_size = 12
+text = "You'll enter this pattern to log in — remember it"
+horizontal_alignment = 1
 
-[node name="UglyBtn" type="Button" parent="Panel/AppearanceRow"]
-layout_mode = 2
-custom_minimum_size = Vector2(120, 36)
-text = "UGLY"
-
-[node name="SummonBtn" type="Button" parent="Panel"]
+[node name="PatternPad" type="Control" parent="Panel"]
+visible = false
 layout_mode = 0
 offset_left = 130.0
-offset_top = 274.0
+offset_top = 284.0
 offset_right = 350.0
-offset_bottom = 318.0
-text = "SPAWN / LOGIN"
+offset_bottom = 504.0
+script = ExtResource("2_pad")
+
+[node name="ActionBtn" type="Button" parent="Panel"]
+visible = false
+layout_mode = 0
+offset_left = 130.0
+offset_top = 522.0
+offset_right = 350.0
+offset_bottom = 566.0
+text = "REGISTER"
 
 [node name="StatusLabel" type="Label" parent="Panel"]
 layout_mode = 0
 offset_left = 20.0
-offset_top = 328.0
+offset_top = 576.0
 offset_right = 460.0
-offset_bottom = 352.0
-text = "Enter a new name, or an existing name to reclaim it."
+offset_bottom = 620.0
+text = ""
 horizontal_alignment = 1
 autowrap_mode = 2

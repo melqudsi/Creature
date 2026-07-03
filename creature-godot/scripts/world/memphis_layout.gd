@@ -21,8 +21,10 @@ const MUD_ISLAND_RECT := Rect2i(6, 22, 8, 23)
 const BRIDGE_RECT := Rect2i(0, 24, 16, 3)
 ## Where the legacy 32x24 world lives now (see GameConfig.OLD_WORLD_OFFSET).
 const OLD_WORLD_RECT := Rect2i(20, 80, 32, 24)
-## The Memphis Pyramid — hand-placed landmark at the north end of Downtown.
-const PYRAMID_TILE := Vector2i(19, 20)
+## The Memphis Pyramid — hand-placed landmark in Downtown, south of I-40 and
+## east of Front St with a clear pad (no road overlap, room for the wide base).
+const PYRAMID_TILE := Vector2i(27, 24)
+const PYRAMID_PAD := Rect2i(24, 21, 7, 7)
 
 ## Ordered: first matching rect wins (sub-zones like The Dump are checked by
 ## GameConfig.region_for_tile before this list). "tint" quads are layered in
@@ -130,7 +132,7 @@ const KROGER_SITES: Array[Vector2i] = [
 ## rejecting during sampling) keeps the RNG draw sequence — and therefore every
 ## OTHER scatter position — identical to pre-landmark builds.
 static func landmark_clear_rects() -> Array:
-	var rects: Array = [UOFM_RECT, ZOO_RECT, SHELBY_RECT, AIRPORT_RECT, TOM_LEE_RECT]
+	var rects: Array = [UOFM_RECT, ZOO_RECT, SHELBY_RECT, AIRPORT_RECT, TOM_LEE_RECT, PYRAMID_PAD]
 	for site in KROGER_SITES:
 		rects.append(Rect2i(site - Vector2i(1, 1), Vector2i(6, 4)))
 	return rects
@@ -226,7 +228,10 @@ static func blocked_tiles() -> Dictionary:
 		blocked[t] = true
 	for t in lake_tiles():
 		blocked[t] = true
-	blocked[PYRAMID_TILE] = true
+	# The Pyramid occupies a wide pad — block the center + immediate ring.
+	for dy in range(-1, 2):
+		for dx in range(-1, 2):
+			blocked[PYRAMID_TILE + Vector2i(dx, dy)] = true
 	_blocked_cache = blocked
 	return blocked
 
@@ -239,7 +244,9 @@ static func _scatter() -> Dictionary:
 	var trees: Array[Vector2i] = []
 	var houses: Array[Vector2i] = []
 	var towers: Array[Vector2i] = []
-	used[PYRAMID_TILE] = true
+	for dy in range(PYRAMID_PAD.size.y):
+		for dx in range(PYRAMID_PAD.size.x):
+			used[PYRAMID_PAD.position + Vector2i(dx, dy)] = true
 	for t in OVERTON_PARK_TREES:
 		trees.append(t)
 		used[t] = true

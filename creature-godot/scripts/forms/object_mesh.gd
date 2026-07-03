@@ -187,34 +187,38 @@ static func _build_tower() -> Node3D:
 	return root
 
 ## The Memphis Pyramid: a shiny 4-sided pyramid (cylinder with 4 radial segs).
+## Wide squat base — the real landmark reads as massive, not needle-tall.
 static func _build_pyramid() -> Node3D:
 	var root := Node3D.new()
 	var pyr := CylinderMesh.new()
 	pyr.top_radius = 0.0
-	pyr.bottom_radius = 1.5
-	pyr.height = 2.3
+	pyr.bottom_radius = 2.85
+	pyr.height = 2.35
 	pyr.radial_segments = 4
-	var node := _mesh_node(pyr, _mat(Color(0.75, 0.78, 0.82), 0.25, 0.75), Vector3(0, 1.15, 0))
+	var node := _mesh_node(pyr, _mat(Color(0.75, 0.78, 0.82), 0.25, 0.75), Vector3(0, 1.18, 0))
 	node.rotation.y = PI * 0.25
 	root.add_child(node)
 	var base := BoxMesh.new()
-	base.size = Vector3(2.3, 0.15, 2.3)
-	root.add_child(_mesh_node(base, _mat(Color(0.4, 0.42, 0.45), 0.8), Vector3(0, 0.075, 0)))
+	base.size = Vector3(5.6, 0.18, 5.6)
+	root.add_child(_mesh_node(base, _mat(Color(0.4, 0.42, 0.45), 0.8), Vector3(0, 0.09, 0)))
 	return root
 
 ## Big-box store/warehouse (Kroger, FedEx hub, airport terminal): wide flat
 ## slab with a colored sign band across the front. `tint` = brand color.
 static func _build_bigbox(tint: Color) -> Node3D:
 	var root := Node3D.new()
+	var wall_mat := _mat(Color(0.78, 0.76, 0.72), 1.0, 0.0)
 	var slab := BoxMesh.new()
 	slab.size = Vector3(2.6, 1.0, 1.5)
-	root.add_child(_mesh_node(slab, _mat(Color(0.78, 0.76, 0.72), 0.9), Vector3(0.5, 0.5, 0)))
+	root.add_child(_mesh_node(slab, wall_mat, Vector3(0.5, 0.5, 0)))
+	# Sign band sits ON TOP of the slab (no overlap — overlap caused z-fighting
+	# / white roof shimmer when the camera moved).
 	var band := BoxMesh.new()
-	band.size = Vector3(2.7, 0.28, 1.56)
-	root.add_child(_mesh_node(band, _mat(tint, 0.55, 0.1), Vector3(0.5, 0.86, 0)))
+	band.size = Vector3(2.62, 0.24, 1.52)
+	root.add_child(_mesh_node(band, _mat(tint, 0.85, 0.0), Vector3(0.5, 1.12, 0)))
 	var door := BoxMesh.new()
 	door.size = Vector3(0.7, 0.55, 0.05)
-	root.add_child(_mesh_node(door, _mat(Color(0.2, 0.26, 0.3), 0.3, 0.3), Vector3(0.5, 0.28, 0.76)))
+	root.add_child(_mesh_node(door, _mat(Color(0.2, 0.26, 0.3), 0.3, 0.0), Vector3(0.5, 0.28, 0.76)))
 	return root
 
 static func _build_mata_bus() -> Node3D:

@@ -17,6 +17,9 @@ var spawn_tile := Vector2.ZERO
 var tier := 0
 var owner_name := ""
 var carried_by := ""
+## Safe house (Slice 7): player name parsed from an owner_name "safe:<NAME>"
+## segment. A claimed safe house is rooted and only its owner may wear it.
+var safe_owner := ""
 
 var _tint := Color(0.6, 0.6, 0.6)
 var _owner_label: Label3D
@@ -34,8 +37,31 @@ func apply_row(row: Dictionary) -> void:
 	if row.has("owner_name"):
 		var v: Variant = row.get("owner_name")
 		# JSON null must clear the label; str(null) would be "<null>".
-		set_money_owner(v if typeof(v) == TYPE_STRING else "")
+		if kind == "building":
+			# Keep the raw string (home:x,y|safe:NAME) so claim/unclaim patches
+			# can preserve the home segment; the label shows only the safe owner.
+			owner_name = str(v).strip_edges() if typeof(v) == TYPE_STRING else ""
+			set_safe_owner(parse_safe_owner(owner_name))
+		else:
+			set_money_owner(v if typeof(v) == TYPE_STRING else "")
 	carried_by = str(row.get("possessed_by", "")) if str(row.get("state", "")) == "carried" else ""
+
+## owner_name for houses is "home:x,y", "safe:NAME", or "home:x,y|safe:NAME".
+static func parse_safe_owner(owner_string: String) -> String:
+	for seg in owner_string.split("|"):
+		if seg.begins_with("safe:"):
+			return seg.substr(5)
+	return ""
+
+static func parse_home_part(owner_string: String) -> String:
+	for seg in owner_string.split("|"):
+		if seg.begins_with("home:"):
+			return seg
+	return ""
+
+func set_safe_owner(name: String) -> void:
+	safe_owner = name.strip_edges()
+	_refresh_owner_label()
 
 func _ready() -> void:
 	_build_visual()
@@ -66,7 +92,9 @@ func set_money_owner(name: String) -> void:
 	_refresh_owner_label()
 
 func _refresh_owner_label() -> void:
-	if tier < FormDefs.TIER_BAG or owner_name.is_empty():
+	var is_safe_house := not safe_owner.is_empty()
+	var is_owned_money := tier >= FormDefs.TIER_BAG and not owner_name.is_empty()
+	if not is_safe_house and not is_owned_money:
 		if _owner_label and is_instance_valid(_owner_label):
 			_owner_label.visible = false
 		return
@@ -77,8 +105,13 @@ func _refresh_owner_label() -> void:
 		_owner_label.position = Vector3(0, 0.95, 0)
 		_owner_label.modulate = Color(1.0, 0.92, 0.35)
 		add_child(_owner_label)
-	var thing := "Money Bag" if tier == FormDefs.TIER_BAG else "Vault"
-	_owner_label.text = "%s's %s" % [owner_name, thing]
+	if is_safe_house:
+		_owner_label.text = "%s's Safe House" % safe_owner
+		_owner_label.position = Vector3(0, 1.9, 0)
+		_owner_label.modulate = Color(0.55, 1.0, 0.7)
+	else:
+		var thing := "Money Bag" if tier == FormDefs.TIER_BAG else "Vault"
+		_owner_label.text = "%s's %s" % [owner_name, thing]
 	_owner_label.visible = not consumed
 
 func consume() -> void:
@@ -109,7 +142,7 @@ func occlusion_height() -> float:
 		"tower":
 			return 3.6
 		"pyramid":
-			return 2.5
+			return 4.5
 		"building":
 			return 1.4
 		"tree", "magnolia":

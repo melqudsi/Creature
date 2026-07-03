@@ -4,16 +4,21 @@ extends Control
 @onready var toast_panel: Panel = $ToastPanel
 @onready var toast_label: Label = $ToastPanel/ToastLabel
 @onready var admin_button: Button = $PainTestButton
+@onready var exit_button: Button = $ExitButton
 @onready var become_button: Button = $ActionBar/BecomeButton
 @onready var special_button: Button = $ActionBar/SpecialButton
 @onready var pop_button: Button = $ActionBar/PopOutButton
 @onready var pickup_button: Button = $ActionBar/PickUpButton
 @onready var drop_button: Button = $ActionBar/DropButton
+@onready var steal_button: Button = $ActionBar/StealButton
 @onready var region_label: Label = $RegionLabel
 
 var _last_region := ""
+## Slice 7: respawn-destination choice (safe house vs The Dump), built in code.
+var _respawn_panel: VBoxContainer
 
 var _pain_test: Node
+var _main: Node
 var _admin_panel: Panel
 var _worm_spin: SpinBox
 var _object_spin: SpinBox
@@ -26,6 +31,8 @@ func _ready() -> void:
 	admin_button.text = "admin"
 	admin_button.visible = false
 	admin_button.pressed.connect(_toggle_admin_panel)
+	if exit_button:
+		exit_button.pressed.connect(_on_exit_pressed)
 	_build_admin_panel()
 	_setup_action_buttons()
 	GameState.player_stats_changed.connect(_refresh_stats)
@@ -33,6 +40,8 @@ func _ready() -> void:
 	GameState.admin_log_added.connect(_append_log_line)
 	GameState.interaction_changed.connect(_on_interaction_changed)
 	GameState.form_changed.connect(_on_form_changed)
+	GameState.respawn_choice_requested.connect(_on_respawn_choice_requested)
+	_build_respawn_choice()
 	if region_label:
 		region_label.text = ""
 	call_deferred("_refresh_stats")
@@ -104,6 +113,19 @@ func _update_money_buttons(c: Creature) -> void:
 		var drop_text: String = c.drop_label()
 		if drop_button.text != drop_text:
 			drop_button.text = drop_text
+	# Steal appears next to a remote player who's hauling loot we can take.
+	var can_steal: bool = c.can_steal_now() and not c.is_dead
+	if steal_button.visible != can_steal:
+		steal_button.visible = can_steal
+	if can_steal:
+		var steal_text: String = c.steal_label()
+		if steal_button.text != steal_text:
+			steal_button.text = steal_text
+	# The house special toggles between Claim/Unclaim as state changes.
+	if c.form_key == FormDefs.HOUSE:
+		var house_text: String = c.house_special_label()
+		if special_button.text != house_text:
+			special_button.text = house_text
 
 func _setup_action_buttons() -> void:
 	become_button.visible = false
@@ -111,16 +133,19 @@ func _setup_action_buttons() -> void:
 	pop_button.visible = false
 	pickup_button.visible = false
 	drop_button.visible = false
+	steal_button.visible = false
 	become_button.focus_mode = Control.FOCUS_NONE
 	special_button.focus_mode = Control.FOCUS_NONE
 	pop_button.focus_mode = Control.FOCUS_NONE
 	pickup_button.focus_mode = Control.FOCUS_NONE
 	drop_button.focus_mode = Control.FOCUS_NONE
+	steal_button.focus_mode = Control.FOCUS_NONE
 	become_button.pressed.connect(_on_become_pressed)
 	special_button.pressed.connect(_on_special_pressed)
 	pop_button.pressed.connect(_on_pop_pressed)
 	pickup_button.pressed.connect(_on_pickup_pressed)
 	drop_button.pressed.connect(_on_drop_pressed)
+	steal_button.pressed.connect(_on_steal_pressed)
 
 func _player_form() -> String:
 	var c = GameState.player_creature
@@ -153,6 +178,9 @@ func _on_form_changed(form_key: String) -> void:
 			# Illegible alien glyphs — what does it do? Press it and find out.
 			special_button.visible = true
 			special_button.text = "ΞΘΨΔ"
+		FormDefs.HOUSE:
+			special_button.visible = true
+			special_button.text = "Claim Safe House"
 		_:
 			special_button.visible = false
 	if not alien:
@@ -183,17 +211,78 @@ func _on_drop_pressed() -> void:
 	if c and is_instance_valid(c) and c.has_method("drop_all"):
 		c.drop_all()
 
+func _on_steal_pressed() -> void:
+	var c = GameState.player_creature
+	if c and is_instance_valid(c) and c.has_method("steal_from_nearest"):
+		c.steal_from_nearest()
+
+# ---------------------------------------------------------------------------
+# Respawn destination choice (Slice 7): shown after the death countdown when
+# the player owns a claimed safe house.
+# ---------------------------------------------------------------------------
+
+func _build_respawn_choice() -> void:
+	_respawn_panel = VBoxContainer.new()
+	_respawn_panel.name = "RespawnChoice"
+	_respawn_panel.visible = false
+	_respawn_panel.set_anchors_preset(Control.PRESET_CENTER)
+	_respawn_panel.offset_left = -130.0
+	_respawn_panel.offset_right = 130.0
+	_respawn_panel.offset_top = -70.0
+	_respawn_panel.offset_bottom = 70.0
+	_respawn_panel.add_theme_constant_override("separation", 14)
+	var title := Label.new()
+	title.text = "RESPAWN AT:"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_respawn_panel.add_child(title)
+	var safe_btn := Button.new()
+	safe_btn.text = "Safe House"
+	safe_btn.custom_minimum_size = Vector2(260, 52)
+	safe_btn.focus_mode = Control.FOCUS_NONE
+	safe_btn.pressed.connect(func(): _choose_respawn("safe"))
+	_respawn_panel.add_child(safe_btn)
+	var dump_btn := Button.new()
+	dump_btn.text = "The Dump"
+	dump_btn.custom_minimum_size = Vector2(260, 52)
+	dump_btn.focus_mode = Control.FOCUS_NONE
+	dump_btn.pressed.connect(func(): _choose_respawn("dump"))
+	_respawn_panel.add_child(dump_btn)
+	add_child(_respawn_panel)
+
+func _on_respawn_choice_requested(show: bool) -> void:
+	_respawn_panel.visible = show
+
+func _choose_respawn(choice: String) -> void:
+	_respawn_panel.visible = false
+	var c = GameState.player_creature
+	if c and is_instance_valid(c) and c.has_method("choose_respawn"):
+		c.choose_respawn(choice)
+
 func bind_pain_test(pain_test: Node) -> void:
 	_pain_test = pain_test
 
+func bind_main(main: Node) -> void:
+	_main = main
+
+func _on_exit_pressed() -> void:
+	GameState.note_player_input()
+	if _main and is_instance_valid(_main) and _main.has_method("logout_to_onboarding"):
+		_main.logout_to_onboarding()
+	elif _main and is_instance_valid(_main):
+		_main.get_tree().reload_current_scene()
+
 func consumes_pointer_at(screen_pos: Vector2) -> bool:
+	if exit_button and exit_button.get_global_rect().has_point(screen_pos):
+		return true
 	if admin_button.visible and admin_button.get_global_rect().has_point(screen_pos):
 		return true
 	if _admin_panel and _admin_panel.visible and _admin_panel.get_global_rect().has_point(screen_pos):
 		return true
-	for btn in [become_button, special_button, pop_button, pickup_button, drop_button]:
+	for btn in [become_button, special_button, pop_button, pickup_button, drop_button, steal_button]:
 		if btn and btn.visible and btn.get_global_rect().has_point(screen_pos):
 			return true
+	if _respawn_panel and _respawn_panel.visible and _respawn_panel.get_global_rect().has_point(screen_pos):
+		return true
 	return false
 
 func _build_admin_panel() -> void:
