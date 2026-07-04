@@ -43,6 +43,10 @@ static func build(visual: String, tint: Color = Color(0.6, 0.6, 0.6)) -> Node3D:
 			return _build_pyramid()
 		"bigbox":
 			return _build_bigbox(tint)
+		"tiger":
+			return _build_tiger()
+		"bear":
+			return _build_bear()
 		_:
 			return _build_trash()
 
@@ -331,6 +335,97 @@ static func _build_vault() -> Node3D:
 	var d := _mesh_node(dial, _mat(Color(0.85, 0.72, 0.2), 0.3, 0.6), Vector3(0, 0.58, 0.22))
 	d.rotation_degrees = Vector3(90, 0, 0)
 	root.add_child(d)
+	return root
+
+## Animate quadruped legs on meshes built by _build_tiger / _build_bear.
+## `amount` 0 = idle, 1 = full stride.
+static func quadruped_yaw(move: Vector2) -> float:
+	if move.length_squared() < 0.0001:
+		return 0.0
+	# Meshes face -Z at yaw 0; add PI so the head leads the walk direction.
+	return atan2(move.x, move.y) + PI
+
+static func animate_quadruped(root: Node3D, phase: float, amount: float) -> void:
+	if root == null or amount <= 0.01:
+		return
+	var swing := sin(phase) * 0.55 * amount
+	for leg_name in ["LegFL", "LegFR", "LegBL", "LegBR"]:
+		var leg := root.get_node_or_null(leg_name) as MeshInstance3D
+		if leg == null:
+			continue
+		var front: bool = leg_name.contains("F")
+		var phase_off := PI if front else 0.0
+		leg.rotation.x = sin(phase + phase_off) * swing
+
+static func _leg_node(pos: Vector3, color: Color, thick := 0.06, tall := 0.22) -> MeshInstance3D:
+	var leg_mesh := CylinderMesh.new()
+	leg_mesh.top_radius = thick
+	leg_mesh.bottom_radius = thick * 0.85
+	leg_mesh.height = tall
+	var leg := _mesh_node(leg_mesh, _mat(color), pos + Vector3(0, tall * 0.5, 0))
+	leg.name = "Leg"
+	return leg
+
+static func _build_tiger() -> Node3D:
+	var root := Node3D.new()
+	var orange := _mat(Color(0.92, 0.48, 0.12), 0.75)
+	var stripe := _mat(Color(0.08, 0.05, 0.04), 0.95)
+	# Slim body — noticeably smaller than the bear.
+	var body := BoxMesh.new()
+	body.size = Vector3(0.26, 0.16, 0.48)
+	root.add_child(_mesh_node(body, orange, Vector3(0, 0.22, 0.0)))
+	var head := BoxMesh.new()
+	head.size = Vector3(0.16, 0.14, 0.18)
+	root.add_child(_mesh_node(head, orange, Vector3(0, 0.28, -0.28)))
+	# Vertical stripes along the body.
+	for i in 5:
+		var s := BoxMesh.new()
+		s.size = Vector3(0.03, 0.14, 0.44)
+		root.add_child(_mesh_node(s, stripe, Vector3(-0.1 + i * 0.05, 0.22, 0.0)))
+	for i in 3:
+		var hs := BoxMesh.new()
+		hs.size = Vector3(0.025, 0.1, 0.06)
+		root.add_child(_mesh_node(hs, stripe, Vector3(-0.06 + i * 0.06, 0.28, -0.26)))
+	var tail := BoxMesh.new()
+	tail.size = Vector3(0.04, 0.04, 0.16)
+	var tail_n := _mesh_node(tail, orange, Vector3(0, 0.24, 0.26))
+	tail_n.rotation.x = 0.2
+	root.add_child(tail_n)
+	var leg_defs := [
+		["LegFL", Vector3(-0.1, 0.0, -0.14)],
+		["LegFR", Vector3(0.1, 0.0, -0.14)],
+		["LegBL", Vector3(-0.1, 0.0, 0.12)],
+		["LegBR", Vector3(0.1, 0.0, 0.12)],
+	]
+	for def in leg_defs:
+		var leg := _leg_node(def[1], Color(0.92, 0.48, 0.12), 0.045, 0.28)
+		leg.name = def[0]
+		root.add_child(leg)
+	return root
+
+static func _build_bear() -> Node3D:
+	var root := Node3D.new()
+	var brown := _mat(Color(0.4, 0.26, 0.14), 0.85)
+	var body := BoxMesh.new()
+	body.size = Vector3(0.5, 0.32, 0.56)
+	root.add_child(_mesh_node(body, brown, Vector3(0, 0.32, 0.0)))
+	var head := SphereMesh.new()
+	head.radius = 0.17
+	head.height = 0.28
+	root.add_child(_mesh_node(head, brown, Vector3(0, 0.46, -0.32)))
+	var snout := BoxMesh.new()
+	snout.size = Vector3(0.11, 0.09, 0.1)
+	root.add_child(_mesh_node(snout, _mat(Color(0.32, 0.2, 0.1)), Vector3(0, 0.42, -0.44)))
+	var leg_defs := [
+		["LegFL", Vector3(-0.18, 0.0, -0.17)],
+		["LegFR", Vector3(0.18, 0.0, -0.17)],
+		["LegBL", Vector3(-0.18, 0.0, 0.15)],
+		["LegBR", Vector3(0.18, 0.0, 0.15)],
+	]
+	for def in leg_defs:
+		var leg := _leg_node(def[1], Color(0.4, 0.26, 0.14), 0.08, 0.26)
+		leg.name = def[0]
+		root.add_child(leg)
 	return root
 
 static func _build_trash() -> Node3D:

@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+		<meta name="theme-color" content="#0a1628">
+		<meta name="mobile-web-app-capable" content="yes">
+		<meta name="apple-mobile-web-app-capable" content="yes">
+		<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+		<meta name="apple-mobile-web-app-title" content="Creature">
+		<link rel="manifest" href="manifest.webmanifest">
+		<title>Creature RTS</title>
+		<style>
+:root {
+	/* Read by CreatureNet.getSafeAreaJson() and applied as HUD margins in-game
+	   (iPhone notch / rounded corners / home bar in installed-PWA mode). */
+	--safe-top: env(safe-area-inset-top, 0px);
+	--safe-right: env(safe-area-inset-right, 0px);
+	--safe-bottom: env(safe-area-inset-bottom, 0px);
+	--safe-left: env(safe-area-inset-left, 0px);
+}
+
+html, body, #canvas {
+	margin: 0;
+	padding: 0;
+	border: 0;
+}
+
+body {
+	color: white;
+	background-color: black;
+	overflow: hidden;
+	touch-action: none;
+	height: 100%;
+	height: 100dvh;
+	/* Pin the page: iOS standalone PWAs can launch with a phantom scroll
+	   offset that shifts the canvas down until a rotation. */
+	position: fixed;
+	inset: 0;
+	width: 100%;
+}
+
+html {
+	height: 100%;
+	height: 100dvh;
+}
+
+#canvas {
+	display: block;
+}
+
+#canvas:focus {
+	outline: none;
+}
+
+#status, #status-splash, #status-progress {
+	position: absolute;
+	left: 0;
+	right: 0;
+}
+
+#status, #status-splash {
+	top: 0;
+	bottom: 0;
+}
+
+#status {
+	background-color: #242424;
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	align-items: center;
+	visibility: hidden;
+}
+
+#status-splash {
+	max-height: 100%;
+	max-width: 100%;
+	margin: auto;
+}
+
+#status-splash.show-image--false {
+	display: none;
+}
+
+#status-splash.fullsize--true {
+	height: 100%;
+	width: 100%;
+	object-fit: contain;
+}
+
+#status-splash.use-filter--false {
+	image-rendering: pixelated;
+}
+
+#status-progress, #status-notice {
+	display: none;
+}
+
+#status-progress {
+	bottom: 10%;
+	width: 50%;
+	margin: 0 auto;
+}
+
+#status-notice {
+	background-color: #5b3943;
+	border-radius: 0.5rem;
+	border: 1px solid #9b3943;
+	color: #e0e0e0;
+	font-family: 'Noto Sans', 'Droid Sans', Arial, sans-serif;
+	line-height: 1.3;
+	margin: 0 2rem;
+	overflow: hidden;
+	padding: 1rem;
+	text-align: center;
+	z-index: 1;
+}
+
+#fs-prompt {
+	position: fixed;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 100000;
+	display: none;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 0.5rem;
+	padding: 0.75rem 1rem;
+	padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+	background: rgba(10, 22, 40, 0.92);
+	text-align: center;
+	font-family: system-ui, sans-serif;
+}
+
+#fs-prompt.visible {
+	display: flex;
+}
+
+#fs-btn {
+	font-size: 1rem;
+	padding: 0.75rem 1.4rem;
+	border: 2px solid #00e5ff;
+	background: #0a1628;
+	color: #00e5ff;
+	border-radius: 4px;
+	cursor: pointer;
+	touch-action: manipulation;
+	-webkit-tap-highlight-color: transparent;
+}
+
+#fs-hint {
+	max-width: 20rem;
+	font-size: 0.85rem;
+	line-height: 1.5;
+	color: #b0bec5;
+	margin: 0;
+}
+
+#pwa-hint {
+	font-size: 0.75rem;
+	color: #78909c;
+	max-width: 22rem;
+}
+
+#build-stamp {
+	position: fixed;
+	right: 6px;
+	bottom: 4px;
+	z-index: 100001;
+	font-family: system-ui, sans-serif;
+	font-size: 0.7rem;
+	color: #78909c;
+	opacity: 0.45;
+	pointer-events: none;
+	user-select: none;
+}
+		</style>
+		<script>
+window.CreatureNet = (function () {
+	const SESSION_KEY = 'creature_supabase_session';
+
+	function getSessionJson() {
+		try {
+			return localStorage.getItem(SESSION_KEY) || '';
+		} catch (e) {
+			return '';
+		}
+	}
+
+	function saveSessionJson(json) {
+		try {
+			localStorage.setItem(SESSION_KEY, json);
+		} catch (e) {
+			console.warn('CreatureNet session save failed', e);
+		}
+	}
+
+	function clearSessionJson() {
+		try {
+			localStorage.removeItem(SESSION_KEY);
+		} catch (e) {
+			console.warn('CreatureNet session clear failed', e);
+		}
+	}
+
+	function runRequest(method, url, headersJson, body, callback) {
+		let headers = {};
+		try {
+			headers = JSON.parse(headersJson || '{}');
+		} catch (e) {
+			callback(JSON.stringify({ ok: false, status: 0, body: 'Bad headers JSON' }));
+			return;
+		}
+		const opts = { method, headers };
+		if (body && body.length > 0) {
+			opts.body = body;
+		}
+		fetch(url, opts)
+			.then(async (res) => {
+				const text = await res.text();
+				callback(JSON.stringify({ ok: res.ok, status: res.status, body: text }));
+			})
+			.catch((err) => {
+				callback(JSON.stringify({ ok: false, status: 0, body: String(err) }));
+			});
+	}
+
+	function getSafeAreaJson() {
+		try {
+			const cs = getComputedStyle(document.documentElement);
+			const px = (name) => parseFloat(cs.getPropertyValue(name)) || 0;
+			return JSON.stringify({
+				top: px('--safe-top'),
+				right: px('--safe-right'),
+				bottom: px('--safe-bottom'),
+				left: px('--safe-left'),
+				vw: window.innerWidth,
+				vh: window.innerHeight,
+			});
+		} catch (e) {
+			return '';
+		}
+	}
+
+	return { getSessionJson, saveSessionJson, clearSessionJson, runRequest, getSafeAreaJson };
+})();
+		</script>
+		<link id="-gd-engine-icon" rel="icon" type="image/png" href="index.icon.png" />
+<link rel="apple-touch-icon" href="index.apple-touch-icon.png"/>
+<link rel="manifest" href="index.manifest.json">
+
+	</head>
+	<body>
+		<canvas id="canvas">
+			Your browser does not support the canvas tag.
+		</canvas>
+
+		<noscript>
+			Your browser does not support JavaScript.
+		</noscript>
+
+		<div id="status">
+			<img id="status-splash" class="show-image--true fullsize--true use-filter--true" src="index.png" alt="">
+			<progress id="status-progress"></progress>
+			<div id="status-notice"></div>
+		</div>
+
+		<div id="fs-prompt" aria-hidden="true">
+			<button type="button" id="fs-btn">Tap to start</button>
+			<p id="fs-hint">For true fullscreen on iPhone, use Share → Add to Home Screen.</p>
+			<p id="pwa-hint">In browser, this banner dismisses on tap so you can play.</p>
+		</div>
+
+		<!-- Build stamp: keep the string in sync with GameConfig.BUILD_ID. -->
+		<div id="build-stamp">build 2026-07-03d</div>
+
+		<script src="index.js"></script>
+		<script>
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":false,"executable":"index","experimentalVK":true,"fileSizes":{"index.pck":225892,"index.wasm":39509339},"focusCanvas":false,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"index.service.worker.js"};
+const GODOT_THREADS_ENABLED = false;
+
+// iOS installed-PWA (standalone) launches can report a STALE window.innerWidth /
+// innerHeight until the phone is physically rotated. Godot's adaptive canvas and
+// its touch-coordinate scaling both read those values, so taps land offset (tap
+// bottom -> ring mid-screen) until a rotate + rotate-back. The layout viewport
+// (documentElement.clientWidth/Height) stays correct, so in standalone mode remap
+// inner* to it before the engine boots. Must run before engine.startGame().
+(function fixStandaloneViewport() {
+	const standalone = window.navigator.standalone === true
+		|| (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+	if (!standalone) return;
+	try {
+		const de = document.documentElement;
+		Object.defineProperty(window, 'innerWidth', {
+			get: () => de.clientWidth || window.outerWidth,
+			configurable: true,
+		});
+		Object.defineProperty(window, 'innerHeight', {
+			get: () => de.clientHeight || window.outerHeight,
+			configurable: true,
+		});
+	} catch (_e) { /* engine falls back to native innerWidth/innerHeight */ }
+})();
+
+// A physical rotate + rotate-back is what "heals" the remaining standalone
+// launch quirk: WebKit's UI-process touch mapping can be offset at launch even
+// though layout, rendering, and every DOM geometry API look correct (taps land
+// above where you touch). Nothing in JS can *detect* that state, so instead we
+// force the same viewport rebuild a rotation performs: re-commit the viewport
+// meta tag and do a 1px scroll dance.
+function recalcStandaloneViewport() {
+	const standalone = window.navigator.standalone === true
+		|| (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+	if (!standalone) return;
+	try {
+		const meta = document.querySelector('meta[name="viewport"]');
+		if (meta) {
+			const original = meta.getAttribute('content');
+			// Must actually change for WebKit to reprocess it; restored next frame.
+			meta.setAttribute('content', original + ', shrink-to-fit=no');
+			requestAnimationFrame(() => {
+				try { meta.setAttribute('content', original); } catch (_e) {}
+			});
+		}
+		window.scrollTo(0, 1);
+		requestAnimationFrame(() => {
+			try { window.scrollTo(0, 0); } catch (_e) {}
+		});
+	} catch (_e) {}
+}
+
+function isDevServer() {
+	const params = new URLSearchParams(location.search);
+	if (params.get('dev') === '1') return true;
+	if (params.get('dev') === '0') return false;
+	const port = location.port;
+	const host = location.hostname;
+	if (port === '8443' || port === '8080') return true;
+	if (host === 'localhost' || host === '127.0.0.1') return true;
+	if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(host) && port === '8443') return true;
+	return false;
+}
+
+async function prepareCachesForDev() {
+	if (!isDevServer()) return;
+	GODOT_CONFIG.serviceWorker = '';
+	if (!('serviceWorker' in navigator)) return;
+	const regs = await navigator.serviceWorker.getRegistrations();
+	await Promise.all(regs.map((reg) => reg.unregister()));
+	if (typeof caches !== 'undefined') {
+		const keys = await caches.keys();
+		await Promise.all(keys.map((key) => caches.delete(key)));
+	}
+}
+
+(async function () {
+	await prepareCachesForDev();
+	const engine = new Engine(GODOT_CONFIG);
+	const statusOverlay = document.getElementById('status');
+	const statusProgress = document.getElementById('status-progress');
+	const statusNotice = document.getElementById('status-notice');
+
+	let initializing = true;
+	let statusMode = '';
+
+	function setStatusMode(mode) {
+		if (statusMode === mode || !initializing) {
+			return;
+		}
+		if (mode === 'hidden') {
+			statusOverlay.remove();
+			initializing = false;
+			return;
+		}
+		statusOverlay.style.visibility = 'visible';
+		statusProgress.style.display = mode === 'progress' ? 'block' : 'none';
+		statusNotice.style.display = mode === 'notice' ? 'block' : 'none';
+		statusMode = mode;
+	}
+
+	function setStatusNotice(text) {
+		while (statusNotice.lastChild) {
+			statusNotice.removeChild(statusNotice.lastChild);
+		}
+		const lines = text.split('\n');
+		lines.forEach((line) => {
+			statusNotice.appendChild(document.createTextNode(line));
+			statusNotice.appendChild(document.createElement('br'));
+		});
+	}
+
+	function displayFailureNotice(err) {
+		console.error(err);
+		if (err instanceof Error) {
+			setStatusNotice(err.message);
+		} else if (typeof err === 'string') {
+			setStatusNotice(err);
+		} else {
+			setStatusNotice('An unknown error occurred.');
+		}
+		setStatusMode('notice');
+		initializing = false;
+	}
+
+	const missing = Engine.getMissingFeatures({
+		threads: GODOT_THREADS_ENABLED,
+	});
+
+	if (missing.length !== 0) {
+		if (GODOT_CONFIG['serviceWorker'] && GODOT_CONFIG['ensureCrossOriginIsolationHeaders'] && 'serviceWorker' in navigator) {
+			let serviceWorkerRegistrationPromise;
+			try {
+				serviceWorkerRegistrationPromise = navigator.serviceWorker.getRegistration();
+			} catch (err) {
+				serviceWorkerRegistrationPromise = Promise.reject(new Error('Service worker registration failed.'));
+			}
+			Promise.race([
+				serviceWorkerRegistrationPromise.then((registration) => {
+					if (registration != null) {
+						return Promise.reject(new Error('Service worker already exists.'));
+					}
+					return registration;
+				}).then(() => engine.installServiceWorker()),
+				new Promise((resolve) => {
+					setTimeout(() => resolve(), 2000);
+				}),
+			]).then(() => {
+				window.location.reload();
+			}).catch((err) => {
+				console.error('Error while registering service worker:', err);
+			});
+		} else {
+			const missingMsg = 'Error\nThe following features required to run Godot projects on the Web are missing:\n';
+			displayFailureNotice(missingMsg + missing.join('\n'));
+		}
+	} else {
+		setStatusMode('progress');
+		engine.startGame({
+			'onProgress': function (current, total) {
+				if (current > 0 && total > 0) {
+					statusProgress.value = current;
+					statusProgress.max = total;
+				} else {
+					statusProgress.removeAttribute('value');
+					statusProgress.removeAttribute('max');
+				}
+			},
+		}).then(() => {
+			setStatusMode('hidden');
+			setupServiceWorkerAutoUpdate();
+			setupMobileFullscreen();
+			setupViewportResizeKicks();
+			// Heal the launch-time touch-mapping offset without needing a physical
+			// rotate + rotate-back: once shortly after start (engine already sized),
+			// again later in case iOS settled late, and on the very first touch.
+			[250, 1200, 2500].forEach((t) => setTimeout(recalcStandaloneViewport, t));
+			window.addEventListener('touchstart', () => recalcStandaloneViewport(), { once: true, passive: true });
+		}, displayFailureNotice);
+	}
+})();
+
+// iOS standalone PWAs report a stale window size at launch (canvas appears
+// shifted down / bottom UI cut off until the phone is rotated). Re-assert
+// scroll position and synthesize resize events so Godot's adaptive canvas
+// picks up the real dimensions without needing a rotation.
+function setupViewportResizeKicks() {
+	const canvas = document.getElementById('canvas');
+
+	function keyboardOpen() {
+		const el = document.activeElement;
+		return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA');
+	}
+
+	// True when the canvas no longer covers the visual viewport (stale size or
+	// a phantom scroll offset). Skipped while the on-screen keyboard is up —
+	// the shrunken visual viewport is expected then, not a layout bug.
+	function geometryMismatch() {
+		try {
+			if (!canvas || keyboardOpen()) return false;
+			const vv = window.visualViewport;
+			const vw = vv ? vv.width : window.innerWidth;
+			const vh = vv ? vv.height : window.innerHeight;
+			const offY = vv ? Math.abs(vv.offsetTop || 0) + Math.abs(vv.pageTop || 0) : 0;
+			const rect = canvas.getBoundingClientRect();
+			return offY > 1
+				|| Math.abs(rect.top) > 1 || Math.abs(rect.left) > 1
+				|| Math.abs(rect.width - vw) > 2 || Math.abs(rect.height - vh) > 2;
+		} catch (_e) {
+			return false;
+		}
+	}
+
+	function kick() {
+		try {
+			window.scrollTo(0, 0);
+			window.dispatchEvent(new Event('resize'));
+		} catch (_e) {}
+	}
+
+	function kickIfBroken() {
+		if (geometryMismatch()) kick();
+	}
+
+	// Staggered kicks after engine start: the iOS viewport can settle late.
+	[150, 400, 900, 1800].forEach((t) => setTimeout(kick, t));
+	window.addEventListener('orientationchange', () => {
+		setTimeout(kick, 100);
+		setTimeout(kick, 400);
+	});
+	// CONDITIONAL only: unconditionally kicking on every visualViewport resize
+	// fed back into itself (kick -> engine canvas resize -> visualViewport
+	// resize -> kick ...) and made the screen bounce/shake rapidly after a
+	// landscape -> portrait rotation in installed-PWA mode.
+	if (window.visualViewport) {
+		window.visualViewport.addEventListener('resize', () => setTimeout(kickIfBroken, 50));
+	}
+	window.addEventListener('pageshow', () => setTimeout(kick, 100));
+	// Slow watchdog: self-heal whenever iOS finally reports real geometry
+	// (fixes launch-time tap offset without requiring a rotate + rotate-back).
+	setInterval(kickIfBroken, 1000);
+}
+
+// Durable cache-busting: when a newer build's service worker installs, tell it to
+// take over immediately (skipWaiting + claim + reload clients) so users never get
+// silently stuck on a stale PWA build. Never runs on the dev-server path, which
+// deliberately unregisters service workers (see prepareCachesForDev).
+let _swAutoReloaded = false;
+function setupServiceWorkerAutoUpdate() {
+	if (isDevServer()) {
+		return;
+	}
+	if (!('serviceWorker' in navigator)) {
+		return;
+	}
+
+	// Reload exactly once when a new worker takes control of this page.
+	navigator.serviceWorker.addEventListener('controllerchange', () => {
+		if (_swAutoReloaded) {
+			return;
+		}
+		_swAutoReloaded = true;
+		window.location.reload();
+	});
+
+	navigator.serviceWorker.getRegistration().then((registration) => {
+		if (registration == null) {
+			return;
+		}
+		// A newer worker may already be waiting from a previous visit.
+		if (registration.waiting && navigator.serviceWorker.controller) {
+			registration.waiting.postMessage('update');
+		}
+		// Ask the browser to check the network for a fresh build.
+		registration.update().catch(() => {});
+		registration.addEventListener('updatefound', () => {
+			const installing = registration.installing;
+			if (installing == null) {
+				return;
+			}
+			installing.addEventListener('statechange', () => {
+				// Only when this is an update (a controller already exists),
+				// not the very first install, activate the new build now.
+				if (installing.state === 'installed' && navigator.serviceWorker.controller) {
+					installing.postMessage('update');
+				}
+			});
+		});
+	}).catch((err) => {
+		console.warn('Service worker auto-update check failed:', err);
+	});
+}
+
+(function setupMobileFullscreen() {
+	const prompt = document.getElementById('fs-prompt');
+	const btn = document.getElementById('fs-btn');
+	const canvas = document.getElementById('canvas');
+	let userActivated = false;
+	let dismissed = false;
+
+	const isStandalone = window.matchMedia('(display-mode: fullscreen)').matches
+		|| window.matchMedia('(display-mode: standalone)').matches
+		|| window.navigator.standalone === true;
+
+	const isMobile = window.matchMedia('(pointer: coarse)').matches
+		|| window.matchMedia('(max-width: 900px)').matches;
+
+	function isFullscreen() {
+		return !!(document.fullscreenElement || document.webkitFullscreenElement);
+	}
+
+	function focusCanvas() {
+		try {
+			canvas.setAttribute('tabindex', '0');
+			canvas.focus({ preventScroll: true });
+		} catch (_e) {}
+	}
+
+	function dismissPrompt() {
+		dismissed = true;
+		prompt.classList.remove('visible');
+		prompt.setAttribute('aria-hidden', 'true');
+		focusCanvas();
+	}
+
+	async function enterFullscreen() {
+		userActivated = true;
+		dismissPrompt();
+
+		const targets = [canvas, document.documentElement];
+		for (const target of targets) {
+			try {
+				if (isFullscreen()) {
+					break;
+				}
+				if (target.requestFullscreen) {
+					await target.requestFullscreen({ navigationUI: 'hide' });
+					break;
+				}
+				if (target.webkitRequestFullscreen) {
+					target.webkitRequestFullscreen();
+					break;
+				}
+			} catch (err) {
+				console.warn('Fullscreen request failed:', err);
+			}
+		}
+	}
+
+	function maybeShowPrompt() {
+		if (dismissed || !isMobile || isStandalone || isFullscreen()) {
+			prompt.classList.remove('visible');
+			return;
+		}
+		prompt.classList.add('visible');
+		prompt.setAttribute('aria-hidden', 'false');
+	}
+
+	function onStartTap(e) {
+		e.preventDefault();
+		e.stopPropagation();
+		enterFullscreen();
+	}
+
+	btn.addEventListener('click', onStartTap);
+	btn.addEventListener('touchend', onStartTap, { passive: false });
+
+	document.addEventListener('fullscreenchange', () => {
+		if (isFullscreen()) {
+			dismissPrompt();
+		} else if (isMobile && !isStandalone && !dismissed) {
+			prompt.classList.add('visible');
+			prompt.setAttribute('aria-hidden', 'false');
+		}
+	});
+
+	if (isStandalone) {
+		dismissPrompt();
+	} else {
+		maybeShowPrompt();
+	}
+
+	canvas.addEventListener('touchstart', () => {
+		try {
+			canvas.setAttribute('tabindex', '0');
+			canvas.focus({ preventScroll: true });
+		} catch (_e) {}
+	}, { passive: true });
+})();
+		</script>
+	</body>
+</html>
+

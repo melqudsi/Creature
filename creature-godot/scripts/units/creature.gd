@@ -70,6 +70,14 @@ var _nearby_object: WorldObject = null       # closest shapeshiftable object in 
 var _shapeshift_candidate: WorldObject = null # object we're mid-transform into
 var _nearby_npc: Dictionary = {}             # closest claimable (stopped) NPC vehicle
 var _shapeshift_npc: Dictionary = {}         # NPC vehicle we're mid-transform into
+var _nearby_zoo_animal: Dictionary = {}      # closest claimable zoo exhibit animal
+var _shapeshift_zoo: Dictionary = {}         # zoo animal we're mid-transform into
+var _claimed_zoo_form := ""                  # form key to respawn on pop-out
+var _claimed_zoo_enc: Rect2i = Rect2i()
+var _form_mesh_root: Node3D = null           # quadruped mesh for leg animation
+var _bear_perched := false
+var _bear_perch_pos := Vector3.ZERO
+var _respawn_at_zoo := false
 var _shapeshifting := false
 var _shapeshift_t := 0.0
 var _last_prompt_can := false
@@ -204,7 +212,11 @@ func apply_form(key: String) -> void:
 			_segments.append(_add_segment(spec))
 		_add_alien_eyes()
 	else:
-		body_root.add_child(ObjectMesh.build(FormDefs.visual(form_key), creature_color))
+		_form_mesh_root = null
+		var mesh := ObjectMesh.build(FormDefs.visual(form_key), creature_color)
+		body_root.add_child(mesh)
+		if FormDefs.is_zoo_animal(form_key):
+			_form_mesh_root = mesh
 	_reset_body_pose()
 	if is_player and creature_id != "preview" and creature_id != "portrait":
 		GameState.form_changed.emit(form_key)
@@ -426,14 +438,25 @@ func _process(delta: float) -> void:
 		_move_dir = Vector2.ZERO
 		if not is_asleep:
 			_apply_idle_local(delta)
+	_apply_quadruped_animation(delta, is_moving)
 
 	_update_transform(false, delta)
 
 	if is_player and not is_asleep:
 		_update_player_interactions(delta)
 
+func _apply_quadruped_animation(delta: float, moving: bool) -> void:
+	if _form_mesh_root == null or not is_instance_valid(_form_mesh_root):
+		return
+	if not moving:
+		_walk_phase += delta * 2.0
+	ObjectMesh.animate_quadruped(_form_mesh_root, _walk_phase, 1.0 if moving else 0.12)
+
 func _update_transform(snap: bool, delta: float) -> void:
 	if creature_id == "preview":
+		return
+	if _bear_perched:
+		position = _bear_perch_pos
 		return
 	var wp := GameConfig.tile_to_world(grid_pos)
 	position.x = wp.x
@@ -443,6 +466,8 @@ func _update_transform(snap: bool, delta: float) -> void:
 	if not is_asleep and is_moving and _move_dir.length_squared() > 0.0001:
 		if FormDefs.speed_mult(form_key) > 0.0:
 			var target_rot := atan2(_move_dir.x, _move_dir.y)
+			if FormDefs.is_zoo_animal(form_key):
+				target_rot += PI
 			rotation.y = lerp_angle(rotation.y, target_rot, 0.18 if snap else delta * 14.0)
 	elif form_key == FormDefs.PYRAMID:
 		rotation.y = PYRAMID_FACING_Y
@@ -463,6 +488,8 @@ func set_move_target(target: Vector2) -> void:
 		if is_player:
 			GameState.show_toast("Safe house is rooted — unclaim it to move")
 		return
+	if _bear_perched:
+		_descend_bear_perch()
 	_move_target = target
 	_path.clear()
 	if is_moving:
@@ -720,6 +747,7 @@ func _update_player_interactions(delta: float) -> void:
 func _scan_shapeshift_target() -> void:
 	_nearby_object = null
 	_nearby_npc = {}
+	_nearby_zoo_animal = {}
 	# Can only Become while an alien (pop out first to change form).
 	if is_alien_form():
 		var my := _world_xz()
@@ -743,12 +771,18 @@ func _scan_shapeshift_target() -> void:
 			var traffic := GameState.npc_traffic
 			if traffic != null and is_instance_valid(traffic):
 				_nearby_npc = traffic.claimable_vehicle(my)
-	var can := _nearby_object != null or not _nearby_npc.is_empty()
+		if _nearby_object == null and _nearby_npc.is_empty():
+			var zoo := GameState.zoo_animals
+			if zoo != null and is_instance_valid(zoo) and zoo.has_method("claimable_animal"):
+				_nearby_zoo_animal = zoo.claimable_animal(my)
+	var can := _nearby_object != null or not _nearby_npc.is_empty() or not _nearby_zoo_animal.is_empty()
 	var display := ""
 	if _nearby_object != null:
 		display = FormDefs.display(_nearby_object.form_key)
 	elif not _nearby_npc.is_empty():
 		display = GameState.npc_traffic.vehicle_display(_nearby_npc)
+	elif not _nearby_zoo_animal.is_empty():
+		display = GameState.zoo_animals.animal_display(_nearby_zoo_animal)
 	if can != _last_prompt_can or display != _last_prompt_name:
 		_last_prompt_can = can
 		_last_prompt_name = display
@@ -757,8 +791,16 @@ func _scan_shapeshift_target() -> void:
 func _update_shapeshift_progress(delta: float) -> void:
 	if not _shapeshifting:
 		return
-	# Cancel if the target vanished, drove off, or we wandered out of range.
-	if not _shapeshift_npc.is_empty():
+	if not _shapeshift_zoo.is_empty():
+		var zoo := GameState.zoo_animals
+		if zoo == null or not is_instance_valid(zoo) \
+				or _nearby_zoo_animal != _shapeshift_zoo \
+				or not zoo.is_animal_claimable(_shapeshift_zoo):
+			_shapeshifting = false
+			_shapeshift_t = 0.0
+			_shapeshift_zoo = {}
+			return
+	elif not _shapeshift_npc.is_empty():
 		if _nearby_npc != _shapeshift_npc or not GameState.npc_traffic.is_vehicle_claimable(_shapeshift_npc):
 			_shapeshifting = false
 			_shapeshift_t = 0.0
@@ -770,7 +812,9 @@ func _update_shapeshift_progress(delta: float) -> void:
 		return
 	_shapeshift_t += delta
 	if _shapeshift_t >= SHAPESHIFT_TIME:
-		if not _shapeshift_npc.is_empty():
+		if not _shapeshift_zoo.is_empty():
+			_complete_zoo_shapeshift()
+		elif not _shapeshift_npc.is_empty():
 			_complete_npc_shapeshift()
 		else:
 			_complete_shapeshift()
@@ -782,9 +826,15 @@ func begin_shapeshift() -> void:
 	if _nearby_object != null and is_instance_valid(_nearby_object):
 		_shapeshift_candidate = _nearby_object
 		_shapeshift_npc = {}
+		_shapeshift_zoo = {}
 	elif not _nearby_npc.is_empty():
 		_shapeshift_candidate = null
 		_shapeshift_npc = _nearby_npc
+		_shapeshift_zoo = {}
+	elif not _nearby_zoo_animal.is_empty():
+		_shapeshift_candidate = null
+		_shapeshift_npc = {}
+		_shapeshift_zoo = _nearby_zoo_animal
 	else:
 		return
 	_shapeshifting = true
@@ -936,6 +986,30 @@ func _register_claimed_vehicle(obj: WorldObject, type_key: String, tile: Vector2
 		var t := Vector2(GameConfig.world_to_tile(obj.position))
 		NetworkService.release_world_object(new_id, t.x, t.y)
 
+func _complete_zoo_shapeshift() -> void:
+	var a := _shapeshift_zoo
+	_shapeshifting = false
+	_shapeshift_t = 0.0
+	_shapeshift_zoo = {}
+	_shapeshift_candidate = null
+	var zoo := GameState.zoo_animals
+	if zoo == null or not is_instance_valid(zoo) or not zoo.is_animal_claimable(a):
+		return
+	_stop_movement()
+	_move_target = Vector2(-1, -1)
+	var form_key_claimed: String = str(a.get("form_key", ""))
+	var enc: Rect2i = a.get("enc", Rect2i())
+	var apos: Vector3 = zoo.animal_world_pos(a)
+	position = apos
+	grid_pos = Vector2(GameConfig.world_to_tile(apos))
+	_claimed_zoo_form = form_key_claimed
+	_claimed_zoo_enc = enc
+	zoo.claim_animal(a)
+	_active_object = null
+	apply_form(form_key_claimed)
+	_revalidate_carried_for_form()
+	GameState.show_toast("You became a %s" % FormDefs.display(form_key_claimed))
+
 ## Re-link a shared object we already possess on the server (session restore:
 ## the player reloaded while shapeshifted, so the local _active_object reference
 ## was lost but the server row still says we're wearing it). Without this the
@@ -976,6 +1050,13 @@ func pop_out() -> void:
 				_note_local_authority(_active_object.object_id)
 				NetworkService.release_world_object(_active_object.object_id, drop_tile.x, drop_tile.y)
 	_active_object = null
+	if not _claimed_zoo_form.is_empty():
+		var zoo := GameState.zoo_animals
+		if zoo != null and is_instance_valid(zoo) and zoo.has_method("release_animal"):
+			zoo.release_animal(_claimed_zoo_form, _claimed_zoo_enc)
+		_claimed_zoo_form = ""
+		_claimed_zoo_enc = Rect2i()
+	_bear_perched = false
 	if was_rooted:
 		# Step out of the rooted structure's tile onto open ground.
 		var out_tile := GameState.free_drop_tile(grid_pos + Vector2(1.2, 0.6))
@@ -1012,6 +1093,8 @@ func use_special() -> void:
 			_trigger_abduction()
 	elif form_key == FormDefs.HOUSE:
 		_toggle_house_claim()
+	elif form_key == FormDefs.MEMPHIS_BEAR:
+		_toggle_bear_perch()
 
 const ABDUCTION_COOLDOWN_SEC := 45.0
 
@@ -1662,6 +1745,9 @@ func _resolve_contacts() -> void:
 		# safe; you only die if it actually runs you over (it's moving).
 		if (other_kind == "vehicle" or other_kind == "mata_bus") and not c.is_moving:
 			continue
+		# Zoo predators only eat you when they're actually moving.
+		if (other_kind == "zoo_tiger" or other_kind == "zoo_bear") and not c.is_moving:
+			continue
 		var res := FormDefs.resolve_player_death(form_key, other_kind)
 		if res.die:
 			if res.explode:
@@ -1669,6 +1755,49 @@ func _resolve_contacts() -> void:
 			# A remote player did this — credit them in the kill feed.
 			apply_death(res.reason, res.explode, c.creature_name)
 			return
+	# Player wearing a zoo predator form can eat exhibit animals and other players.
+	if FormDefs.is_zoo_animal(form_key) and _predator_is_hunting():
+		var zoo := GameState.zoo_animals
+		if zoo != null and is_instance_valid(zoo) and zoo.has_method("predator_hit"):
+			if zoo.predator_hit(form_key, _world_xz()):
+				return
+
+func _predator_is_hunting() -> bool:
+	return is_moving and _speed_ease > 0.2
+
+func _nearest_tree_center() -> Vector2:
+	var best := Vector2(-1, -1)
+	var best_d := 1.65
+	for t in MemphisLayout.tree_tiles():
+		var center := Vector2(t) + Vector2(0.5, 0.5)
+		var d := grid_pos.distance_to(center)
+		if d < best_d:
+			best_d = d
+			best = center
+	return best
+
+func _toggle_bear_perch() -> void:
+	if _bear_perched:
+		_descend_bear_perch()
+		return
+	var tree := _nearest_tree_center()
+	if tree.x < 0:
+		GameState.show_toast("No tree close enough to climb")
+		return
+	_stop_movement()
+	_move_target = Vector2(-1, -1)
+	_bear_perched = true
+	_bear_perch_pos = Vector3(tree.x, 0.88, tree.y)
+	position = _bear_perch_pos
+	GameState.show_toast("Perched on a tree")
+
+func _descend_bear_perch() -> void:
+	if not _bear_perched:
+		return
+	_bear_perched = false
+	grid_pos = Vector2(_bear_perch_pos.x, _bear_perch_pos.z)
+	position.y = 0.0
+	_bear_perch_pos = Vector3.ZERO
 
 ## Called by the world when an explosion goes off. Applies its lethal radius to
 ## THIS player only (client-local); aliens and vehicles nearby die.
@@ -1690,7 +1819,18 @@ func apply_death(reason: String, exploded: bool = false, killer_name: String = "
 		return
 	var died_form := form_key
 	var died_as_vehicle := FormDefs.is_vehicle(died_form)
+	var zoo_exhibit_form := ""
+	var zoo_exhibit_enc := Rect2i()
+	if FormDefs.is_zoo_animal(died_form):
+		zoo_exhibit_form = died_form
+		zoo_exhibit_enc = _claimed_zoo_enc
+		if zoo_exhibit_enc == Rect2i():
+			zoo_exhibit_enc = MemphisLayout.enclosure_for_form(died_form)
 	is_dead = true
+	_respawn_at_zoo = FormDefs.is_zoo_animal(died_form)
+	_claimed_zoo_form = ""
+	_claimed_zoo_enc = Rect2i()
+	_bear_perched = false
 	# Leave a blood splat for non-explosion deaths (squish, wreck, abduction, etc.).
 	if not exploded:
 		GameState.blood_splat_requested.emit(position)
@@ -1713,6 +1853,10 @@ func apply_death(reason: String, exploded: bool = false, killer_name: String = "
 		else:
 			_schedule_object_respawn(_active_object, _active_object.spawn_world_pos)
 	_active_object = null
+	if not zoo_exhibit_form.is_empty():
+		var zoo := GameState.zoo_animals
+		if zoo != null and is_instance_valid(zoo) and zoo.has_method("release_animal"):
+			zoo.release_animal(zoo_exhibit_form, zoo_exhibit_enc)
 	_shapeshifting = false
 	_shapeshift_candidate = null
 	_burst_t = 0.0
@@ -1735,6 +1879,10 @@ func _run_respawn_countdown() -> void:
 		GameState.show_toast("Respawning in %d…" % (RESPAWN_COUNTDOWN - i))
 		await get_tree().create_timer(1.0).timeout
 	var safe := _my_safe_house()
+	if _respawn_at_zoo:
+		_respawn_at_zoo = false
+		_respawn_at(MemphisLayout.zoo_respawn_tile())
+		return
 	if safe.is_empty():
 		_respawn_at_landfill()
 		return

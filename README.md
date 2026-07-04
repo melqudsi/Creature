@@ -151,7 +151,7 @@ Phase 4 + mobile input fixes (`build 2026-07-03i`):
 
 ---
 
-## Polish batch — UX, splash, admin (`build 2026-07-04f`, current)
+## Polish batch — UX, splash, admin (`build 2026-07-04f`)
 
 - **Boot splash** — custom art via `creature-godot/loading_splash2.jpg`; `export-web.ps1` converts to PNG for Godot and copies the JPG to repo-root `index.png` for a smaller web deploy.
 - **Loading UI** — web shell shows a bottom **Loading…** label + cyan progress bar above the splash (`#status-load-footer` in `custom_shell.html`).
@@ -160,6 +160,20 @@ Phase 4 + mobile input fixes (`build 2026-07-03i`):
 - **HUD** — larger region label, auto-hide move hint, narrower name bar.
 - **Gameplay** — pyramid rotation locked while shapeshifted; blood splat on all non-explosion deaths; money-combine crash fix; Shelby Farms trees; longer NPC vehicle stop time.
 - **Admin (MOE)** — test-mode tap-to-teleport, spawn 20 stacks, pain-test max defaults.
+
+---
+
+## Memphis Zoo redo (`build 2026-07-05f`, current)
+
+- **Egyptian-style entrance** — sloped pylons, colored bands, lintel sign, plaza silhouettes (inspired by the real Memphis Zoo gate; not a replica).
+- **Expanded grounds** — larger zoo footprint in Overton Park with two **open-air** tiger and grizzly pens (low 3-sided fences; south openings so players and animals can walk in/out).
+- **Exhibit animals** — client-local NPC tiger + bear wander their pens with **leg animations**.
+- **Shapeshift** — aliens **Become** the exhibit animals in-pen; pop out respawns the NPC back in its enclosure.
+- **Memphis Tiger** — runs at boosted-Altima speed (6.6 tiles/s); can eat aliens and the other exhibit animal while moving.
+- **Memphis Grizzly Bear** — slower; **Climb Tree** special perches on nearby trees; same predator rules.
+- **Death** — vehicles kill animals; animals respawn at the zoo plaza when eaten or killed.
+- **Entrance polish** — "MEMPHIS ZOO" beam sign now faces south correctly, sits centered on the beam face, and is slightly larger for readability.
+- **NPC heading fix** — roaming tiger/bear now rotate to face their movement direction reliably (player-controlled shapeshifts were already correct).
 
 ---
 

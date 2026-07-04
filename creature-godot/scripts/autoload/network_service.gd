@@ -528,6 +528,31 @@ func _boot_online() -> bool:
 func get_resume_profile() -> Dictionary:
 	return _resume_profile
 
+func _resume_profile_name() -> String:
+	if _resume_profile.is_empty():
+		return ""
+	return _clean_profile_name(str(_resume_profile.get("name", "")))
+
+## On explicit manual auth (Log in/Register), allow switching away from the
+## saved "Continue as X" session without requiring browser site-data clearing.
+func _ensure_manual_auth_session(target_name: String, force_switch: bool = false) -> bool:
+	var resume_name := _resume_profile_name()
+	var need_switch := force_switch and not resume_name.is_empty()
+	if not need_switch and not resume_name.is_empty() and not target_name.is_empty():
+		need_switch = resume_name != target_name
+	if need_switch:
+		_log("Manual auth switching session from '%s' to '%s'" % [resume_name, target_name if not target_name.is_empty() else "new profile"])
+		_session.clear()
+		_online = false
+		_resume_profile.clear()
+		if _uses_web_bridge():
+			_web_net().clearSessionJson()
+		if FileAccess.file_exists(SESSION_PATH):
+			DirAccess.remove_absolute(ProjectSettings.globalize_path(SESSION_PATH))
+	if not _online and not await _boot_online():
+		return false
+	return true
+
 ## Skip manual login when the session already has a creature row.
 func continue_resume_profile() -> Dictionary:
 	if _resume_profile.is_empty():
@@ -611,7 +636,7 @@ func register_profile(profile_name: String, color: Color, pattern: String) -> Di
 	if cleaned_name.is_empty():
 		_last_error = "Name required"
 		return {}
-	if not _online and not await _boot_online():
+	if not await _ensure_manual_auth_session(cleaned_name, true):
 		var local := GameConfig.default_player_data()
 		local["name"] = cleaned_name
 		local["color"] = color
@@ -658,7 +683,7 @@ func login_profile(profile_name: String, pattern: String) -> Dictionary:
 	if cleaned_name.is_empty():
 		_last_error = "Name required"
 		return {}
-	if not _online and not await _boot_online():
+	if not await _ensure_manual_auth_session(cleaned_name):
 		_last_error = "Offline — can't log in"
 		return {}
 	var existing := await fetch_creature_by_name(cleaned_name)

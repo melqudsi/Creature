@@ -196,6 +196,9 @@ func _on_form_changed(form_key: String) -> void:
 		FormDefs.HOUSE:
 			special_button.visible = true
 			special_button.text = "Claim Safe House"
+		FormDefs.MEMPHIS_BEAR:
+			special_button.visible = true
+			special_button.text = "Climb Tree"
 		_:
 			special_button.visible = false
 	if not alien:

@@ -1,4 +1,47 @@
-core changes
+
+
+------------ core game logic begin -------------
+
+
+backlog / issues:
+
+7/3
+- 
+
+
+----- Backlog-----
+- Server-authoritative combines/claims/kills Known tech debt. I'd keep deferring it until player count or cheating actually makes it hurt.
+- change re-spawn mechanic to avoid spawn camping
+
+-Recommendations for next steps: a minimap is now near-essential at this size (it's easy to get lost with no overview); after that, region-specific spawns (Altimas in South Memphis, carts at suburban big-boxes, buses Downtown) and landmarks per region. I'd also consider a small speed bonus for vehicles on roads to make the road network matter for gameplay, not just navigation.
+
+- add more combo money tiers beyond vault (need to add bigger vehicles/buildings first)
+- Sounds?
+- add delivery trucks (USPS, FEDEX, UPS, AMAZON)
+- automatically log a player off when they go idle for 40 minutes. (test later)
+- improve bbq trailer UX, let user know they are close enough to  house and maybe make NPC humans go to it and make user manually click "Take BBQ Order" to trigger sale instead of it being passive, maybe a make a mini game out of it.
+- give players ability to leave a note for other player when player near other player's safe house even if the other player is offline. other players get the note next time they login.
+- NPC vehicle stop time — decrease Patience more.
+
+- Human NPC
+- proper NPC vehicle pathing and stopping for each other, allow them to crash with each other
+
+
+------ COMPLETED ----- 
+7/3
+- Shelby farms could use some trees.
+- when a player get infront of an npc vehicle, the npc vehicle stops briefly then starts moving again, this gives the player some time to shapeshift into the vehicle, the npc vehicle stopping time needs to be increased a little bit.
+- entering the wrong dot pattern at login still logs user in successfully
+- when we ask a user to enter in a dot pattern, lets reword it slightly so they know they can swipe to connect the dots.  also in general lets change the dot pattern rule to be 4 dots minimum and allow players to choose to do a dot pattern with 4 or more dots.
+- make the current location text on bottom left bigger. and the instructions in bottom middle to auto disappear once player starts playing for a few seconds.
+- player name label box on top left is too long/wide. needs to be about half that width, or make it auto size.
+- Player no longer gets an option to shapeshift into the pyramid.
+- when players die in general, show the blood platter like when they get squished
+- on the onboarding screen that says Login or Register, if we see a valid session ID for them, we can add a button above the log in button that says something like "Continue as [player name]" so they can jump back in and not have to manually login every time.  also include bbq sale near tall buildings (found downtown) and other buildings like University of Memphis and krogers, not just general houses.
+- get rid of the whole "click to continue" bottom panel that appears on mobile browser when it first loads, we dont need it anymore.
+- pyramid rotates when a player shapeshifts into it, and rotates back to normal when player pops out of it, since players can't move while being the pyramid, they shouldn't be able to rotate it either.
+- when user clicks the X button on top right, it takes them to the login/register screen but i expected to see the "Continue as" button, lets be sure to not clear their session until they login as a different player.
+- wrong dot pattern still successfully logs user in
 6/30
 `- start zoomed all the way in
 - in WPA mode (shared to home screen on mobile), it opens in vertical mode fine, then when i tilt horizontal, it switches to horizontal mode in full screen just fine, then if i tilt it back to vertical, the screen keeps glitching and flashes really fast like maybe its trying to force it to stay in landscape mode but it can't do it.  i'm fine with allowing vertical mode, no need to force landscape if thats the issue.
@@ -23,12 +66,7 @@ core changes
 `- when typing name in spawn screen, then click away from the text box then return to the text box to edit what i typed, it starts the cursor at the start/before of existing text so i can only add text behind existing text and i have no way to put the cursor at the end so i can backspace or edit existing text or add to it. only happens in mobile
 `- make it where player named MOE is the only player that can see the admin button
 
------------- core game logic begin -------------
-`- i added a document named Multiplayer Alien Shapeshifting Prototype.pdf in the project root folder.  now that we have a good foundation, lets start developing the actual game logic, read the document and begin.
-
-
-backlog / issues:
-
+7/2
 - add better collision detection when placing money down (dont want it end up inside objects), this was an issue when a vault was placed inside an Altima, when player tries to shapeshift into Altima and move, it collides with vault and die and there is no way to recover or use the Altima nor the vault at this point.
 - when getting close to money and the "pick up" button appears, make it say pick up stack or money bag or whatever it is
 - and when dropping a stack near another stack to combine, make the label say combine instead of just drop so player knows whats about to happen, do same when combining other monies too
@@ -73,14 +111,7 @@ backlog / issues:
 `- make it where as a player, going behind buildings will turn the building (or object) translucent so player can see whats behind the building/object.
 
 
-- Server-authoritative combines/claims/kills Known tech debt. I'd keep deferring it until player count or cheating actually makes it hurt.
-- change re-spawn mechanic to avoid spawn camping
 
--Recommendations for next steps: a minimap is now near-essential at this size (it's easy to get lost with no overview); after that, region-specific spawns (Altimas in South Memphis, carts at suburban big-boxes, buses Downtown) and landmarks per region. I'd also consider a small speed bonus for vehicles on roads to make the road network matter for gameplay, not just navigation.
-
-- add more combo money tiers beyond vault (need to add bigger vehicles/buildings first)
-- Sounds?
-- add delivery trucks (USPS, FEDEX, UPS, AMAZON)
 
 *** Memphis Map regions and landmarks **
 below is a list of regions in Memphis i'd like to incorporate in the game. its time to start building out the map.  not looking to represent Memphis to scale, for reference, i'd like for a creature to be able to walk across one end to the other in about 2-3 minutes.  place the regions according to the real Memphis layout as possible, but doesn't have to be perfect, dont need detailed accurate geographic boundaries, looking for it to be simplistic. divide each region using actual major roads that exist in Memphis like poplar, i240/i40 loop, union, walnutgrove, riverside, front st, etc.  not looking to collect all major roads either, dont want it too crowded.  we can start here and we'll start populating the regions with neighborhoods, landmarks, which units spawn in which regions, etc. feel free to add slight elevation changes. feel free to make recommendations or ask questions before or during the build out.  include the Memphis Bridge but the map deadends west of it.  map also deadends at i40 east side.  you can retain the current map/world and incorporate it as part of south Memphis if it makes sense to do so.

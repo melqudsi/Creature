@@ -244,3 +244,18 @@ func abduct_near(world_pos: Vector3, radius_tiles: float) -> void:
 		tw.tween_property(node, "scale", Vector3(0.1, 0.1, 0.1), 2.2).set_ease(Tween.EASE_IN)
 		tw.chain().tween_callback(node.queue_free)
 		_spawn_vehicle(bool(v["is_bus"]))
+
+## True when any NPC vehicle moving fast enough would hit `world_pos`.
+func hits_position_at_speed(world_pos: Vector3, radius: float) -> bool:
+	var center := Vector2(world_pos.x, world_pos.z)
+	for v in _vehicles:
+		if float(v["cur_speed"]) <= SAFE_SPEED:
+			continue
+		var node: Node3D = v["node"]
+		if not is_instance_valid(node):
+			continue
+		var vehicle_r := 0.75 if v.get("is_bus", false) else 0.55
+		if center.distance_to(Vector2(node.position.x, node.position.z)) <= vehicle_r + radius:
+			return true
+	return false
+

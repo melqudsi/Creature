@@ -94,10 +94,10 @@ const SCATTER_SPECS: Array = [
 	{"rect": Rect2i(7, 27, 6, 16), "trees": 6},                   # Mud Island park
 ]
 
-## Overton Park: a hand-placed tree cluster in north Midtown.
+## Overton Park: trees east of the zoo (not inside the zoo footprint).
 const OVERTON_PARK_TREES: Array[Vector2i] = [
-	Vector2i(52, 21), Vector2i(54, 22), Vector2i(56, 21),
-	Vector2i(52, 23), Vector2i(55, 23), Vector2i(57, 22),
+	Vector2i(58, 21), Vector2i(60, 22), Vector2i(62, 21),
+	Vector2i(58, 23), Vector2i(61, 23), Vector2i(63, 22),
 ]
 
 # ---------------------------------------------------------------------------
@@ -109,7 +109,12 @@ const UOFM_RECT := Rect2i(56, 37, 7, 5)          # south of Poplar, east Midtown
 const UOFM_BUILDINGS: Array[Vector2i] = [
 	Vector2i(58, 38), Vector2i(61, 38), Vector2i(59, 40),
 ]
-const ZOO_RECT := Rect2i(47, 19, 5, 4)           # Overton Park, north Midtown
+const ZOO_RECT := Rect2i(46, 20, 11, 9)             # expanded north, still south of I-40
+const ZOO_GATE_TILE := Vector2i(51, 25)             # centered entrance wall/gate
+const TIGER_ENCLOSURE := Rect2i(47, 21, 4, 4)       # west pen — south opening to walkway
+const BEAR_ENCLOSURE := Rect2i(52, 21, 4, 4)        # east pen — south opening to walkway
+const ZOO_WALKWAY := Rect2i(51, 21, 1, 6)           # center lane between pens and gate
+const ZOO_RESPAWN_TILE := Vector2(51.0, 22.5)
 const SHELBY_RECT := Rect2i(96, 26, 13, 9)       # off Walnut Grove
 const SHELBY_LAKE_CENTER := Vector2(102.5, 30.5)
 const SHELBY_LAKE_RADIUS := 2.6
@@ -153,6 +158,74 @@ static func landmark_solid_tiles() -> Array[Vector2i]:
 		for site in KROGER_SITES:
 			out.append(site + d)
 	return out
+
+static func zoo_respawn_tile() -> Vector2:
+	return ZOO_RESPAWN_TILE
+
+static func enclosure_for_form(form_key: String) -> Rect2i:
+	if form_key == FormDefs.MEMPHIS_TIGER:
+		return TIGER_ENCLOSURE
+	if form_key == FormDefs.MEMPHIS_BEAR:
+		return BEAR_ENCLOSURE
+	return Rect2i()
+
+## Pen fences with explicit south-side openings so players/animals can pass.
+## Segments are in world tile coordinates (same space as ground quads).
+static func zoo_fence_segments() -> Array:
+	var segs: Array = []
+	for enc in [TIGER_ENCLOSURE, BEAR_ENCLOSURE]:
+		var x0 := float(enc.position.x)
+		var x1 := float(enc.end.x)
+		var y0 := float(enc.position.y)
+		var y1 := float(enc.end.y)
+		var gap_center := (x0 + x1) * 0.5
+		var gap_half := 0.45
+		# North full span.
+		segs.append([Vector3(x0, 0, y0), Vector3(x1, 0, y0)])
+		# West + east full spans.
+		segs.append([Vector3(x0, 0, y0), Vector3(x0, 0, y1)])
+		segs.append([Vector3(x1, 0, y0), Vector3(x1, 0, y1)])
+		# South split into two rails with a center opening.
+		segs.append([Vector3(x0, 0, y1), Vector3(gap_center - gap_half, 0, y1)])
+		segs.append([Vector3(gap_center + gap_half, 0, y1), Vector3(x1, 0, y1)])
+	# Center divider/walkway rail keeps the pens visually separate.
+	var wx := float(ZOO_WALKWAY.position.x)
+	var wy0 := float(ZOO_WALKWAY.position.y)
+	var wy1 := float(ZOO_WALKWAY.end.y)
+	segs.append([Vector3(wx, 0, wy0), Vector3(wx, 0, wy1)])
+	segs.append([Vector3(wx + 1.0, 0, wy0), Vector3(wx + 1.0, 0, wy1)])
+	return segs
+
+static func zoo_pen_posts() -> Array:
+	# Corner posts + opening-edge posts (no floating spheres).
+	var posts: Array = []
+	for enc in [TIGER_ENCLOSURE, BEAR_ENCLOSURE]:
+		var x0 := float(enc.position.x)
+		var x1 := float(enc.end.x)
+		var y0 := float(enc.position.y)
+		var y1 := float(enc.end.y)
+		var gap_center := (x0 + x1) * 0.5
+		var gap_half := 0.45
+		posts.append(Vector3(x0, 0, y0))
+		posts.append(Vector3(x1, 0, y0))
+		posts.append(Vector3(x0, 0, y1))
+		posts.append(Vector3(x1, 0, y1))
+		posts.append(Vector3(gap_center - gap_half, 0, y1))
+		posts.append(Vector3(gap_center + gap_half, 0, y1))
+	return posts
+
+static func zoo_enclosure_center(enc: Rect2i) -> Vector2:
+	return Vector2(enc.position) + Vector2(enc.size) * 0.5
+
+static func zoo_enclosure_contains(enc: Rect2i, tile: Vector2) -> bool:
+	return enc.has_point(Vector2i(int(floor(tile.x)), int(floor(tile.y))))
+
+static func zoo_enclosure_for_tile(tile: Vector2) -> Rect2i:
+	if zoo_enclosure_contains(TIGER_ENCLOSURE, tile):
+		return TIGER_ENCLOSURE
+	if zoo_enclosure_contains(BEAR_ENCLOSURE, tile):
+		return BEAR_ENCLOSURE
+	return Rect2i()
 
 static func lake_tiles() -> Array[Vector2i]:
 	var out: Array[Vector2i] = []

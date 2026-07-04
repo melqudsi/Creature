@@ -14,6 +14,8 @@ const BBQ_SMOKER := "bbq_smoker"
 const TREE := "tree"
 const PYRAMID := "pyramid"
 const HOUSE := "house"
+const MEMPHIS_TIGER := "memphis_tiger"
+const MEMPHIS_BEAR := "memphis_bear"
 
 const DEFAULT_FORM := ALIEN
 
@@ -37,6 +39,10 @@ const FORMS := {
 	# A walking house. Slow, uncrushable, claimable as a personal safe house
 	# (claimed = rooted in place until unclaimed).
 	HOUSE: {"display": "House", "speed": 0.4, "radius": 0.9, "kind": "building", "visual": "building"},
+	# Memphis Zoo predators — tiger runs at boosted-Altima speed; bear is slower
+	# but can perch on trees (creature.gd).
+	MEMPHIS_TIGER: {"display": "Memphis Tiger", "speed": 6.6, "radius": 0.32, "kind": "zoo_tiger", "visual": "tiger"},
+	MEMPHIS_BEAR: {"display": "Memphis Grizzly Bear", "speed": 1.1, "radius": 0.44, "kind": "zoo_bear", "visual": "bear"},
 }
 
 const DEATH_ALTIMA := "You got Altima'd."
@@ -48,6 +54,13 @@ const DEATH_HOUSE := "You crashed into a house."
 const DEATH_BUS := "MATA said move."
 const DEATH_SELF_DETONATE := "You detonated. On purpose. Respect."
 const DEATH_ABDUCTED := "You got abducted. Enjoy the mothership."
+const DEATH_TIGER := "The Memphis Tiger had you for lunch."
+const DEATH_BEAR := "The Memphis Grizzly Bear had you for lunch."
+const DEATH_ANIMAL_VEHICLE := "Roadkill at the zoo."
+const DEATH_ANIMAL_FIGHT := "Nature is metal at the Memphis Zoo."
+
+static func is_zoo_animal(key: String) -> bool:
+	return key == MEMPHIS_TIGER or key == MEMPHIS_BEAR
 
 static func is_valid(key: String) -> bool:
 	return FORMS.has(key)
@@ -206,6 +219,12 @@ static func resolve_player_death(my_key: String, other_kind: String) -> Dictiona
 				"mata_bus":
 					out.die = true
 					out.reason = DEATH_BUS
+				"zoo_tiger":
+					out.die = true
+					out.reason = DEATH_TIGER
+				"zoo_bear":
+					out.die = true
+					out.reason = DEATH_BEAR
 		"cart":
 			match other_kind:
 				"vehicle":
@@ -227,10 +246,18 @@ static func resolve_player_death(my_key: String, other_kind: String) -> Dictiona
 				"mata_bus":
 					out.die = true
 					out.reason = DEATH_BUS
+		"zoo_tiger", "zoo_bear":
+			match other_kind:
+				"vehicle", "mata_bus":
+					out.die = true
+					out.reason = DEATH_ANIMAL_VEHICLE
+				"zoo_tiger", "zoo_bear":
+					out.die = true
+					out.reason = DEATH_ANIMAL_FIGHT
 	return out
 
 static func explosion_kills(key: String) -> bool:
 	var k := kind(key)
 	# Propane included: a blast near a player-shaped tank sets THEM off too.
 	return k == "alien" or k == "vehicle" or k == "cart" or k == "mata_bus" \
-		or k == "smoker" or k == "propane"
+		or k == "smoker" or k == "propane" or k == "zoo_tiger" or k == "zoo_bear"

@@ -107,6 +107,10 @@ func _ready() -> void:
 	traffic.name = "Traffic"
 	add_child(traffic)
 	GameState.npc_traffic = traffic
+	var zoo := ZooAnimals.new()
+	zoo.name = "ZooAnimals"
+	add_child(zoo)
+	GameState.zoo_animals = zoo
 	# Propane tanks and other blasts ask the world to spawn an explosion here.
 	GameState.explosion_requested.connect(spawn_explosion)
 	GameState.money_combined.connect(spawn_money_combine_fx)
@@ -565,26 +569,8 @@ func _build_landmarks() -> void:
 	trail.scale = Vector3(1, 0.02, 1)
 	trail.position = Vector3(lake_wp.x, 0.036, lake_wp.z)
 	root.add_child(trail)
-	# Memphis Zoo: pen in Overton Park with a couple of "animals".
-	_add_ground_quad(MemphisLayout.ZOO_RECT, Color(0.45, 0.42, 0.3), 0.032, root, "Zoo")
-	_add_landmark_label("MEMPHIS ZOO", Vector2(49.5, 22.2), root)
-	var eleph := MeshInstance3D.new()
-	var eleph_mesh := SphereMesh.new()
-	eleph_mesh.radius = 0.38
-	eleph_mesh.height = 0.6
-	eleph.mesh = eleph_mesh
-	eleph.material_override = _quad_mat(Color(0.55, 0.55, 0.58))
-	eleph.position = Vector3(48.5, 0.3, 20.2)
-	root.add_child(eleph)
-	var hippo := MeshInstance3D.new()
-	var hippo_mesh := CapsuleMesh.new()
-	hippo_mesh.radius = 0.24
-	hippo_mesh.height = 0.8
-	hippo.mesh = hippo_mesh
-	hippo.material_override = _quad_mat(Color(0.5, 0.4, 0.45))
-	hippo.rotation_degrees = Vector3(90, 30, 0)
-	hippo.position = Vector3(50.6, 0.2, 21.0)
-	root.add_child(hippo)
+	# Memphis Zoo — Egyptian-style entrance, two open-air pens, exhibit animals.
+	_build_memphis_zoo(root)
 	# Memphis International Airport + FedEx hub: apron, runway, terminal, hub.
 	_add_ground_quad(MemphisLayout.AIRPORT_RECT, Color(0.5, 0.5, 0.52), 0.032, root, "Airport")
 	_add_ground_quad(MemphisLayout.AIRPORT_RUNWAY, Color(0.2, 0.2, 0.22), 0.04, root, "Runway")
@@ -612,6 +598,162 @@ func _build_landmarks() -> void:
 		_spawn_world_object("kroger", Vector3(wp.x, 0, wp.z), _buildings_root)
 		_add_ground_quad(Rect2i(site + Vector2i(-1, 1), Vector2i(5, 2)), Color(0.42, 0.42, 0.44), 0.032, root, "KrogerLot")
 		_add_landmark_label("KROGER", Vector2(float(site.x) + 1.0, float(site.y) + 2.6), root)
+
+func _build_memphis_zoo(parent: Node3D) -> void:
+	_add_ground_quad(MemphisLayout.ZOO_RECT, Color(0.42, 0.5, 0.32), 0.032, parent, "Zoo")
+	_add_ground_quad(MemphisLayout.ZOO_WALKWAY, Color(0.48, 0.44, 0.36), 0.033, parent, "ZooWalk")
+	_add_ground_quad(Rect2i(49, 26, 5, 3), Color(0.5, 0.46, 0.36), 0.033, parent, "ZooPlaza")
+	for enc in [MemphisLayout.TIGER_ENCLOSURE, MemphisLayout.BEAR_ENCLOSURE]:
+		_add_ground_quad(enc, Color(0.52, 0.46, 0.34), 0.034, parent, "ZooPen")
+	_add_landmark_label("TIGERS", Vector2(48.9, 24.2), parent)
+	_add_landmark_label("GRIZZLIES", Vector2(54.1, 24.2), parent)
+	_add_zoo_pen_props(parent)
+	_build_zoo_fences(parent)
+	_build_zoo_entrance(parent)
+
+func _add_zoo_pen_props(parent: Node3D) -> void:
+	var rock_mat := _quad_mat(Color(0.45, 0.42, 0.38))
+	var log_mat := _quad_mat(Color(0.42, 0.3, 0.2))
+	for center in [
+		Vector2(MemphisLayout.TIGER_ENCLOSURE.position) + Vector2(1.6, 1.4),
+		Vector2(MemphisLayout.BEAR_ENCLOSURE.position) + Vector2(1.8, 1.7),
+	]:
+		var rock := MeshInstance3D.new()
+		var sm := SphereMesh.new()
+		sm.radius = 0.18
+		sm.height = 0.22
+		rock.mesh = sm
+		rock.material_override = rock_mat
+		rock.position = Vector3(center.x, 0.11, center.y)
+		parent.add_child(rock)
+		var log := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = Vector3(0.35, 0.08, 0.16)
+		log.mesh = bm
+		log.material_override = log_mat
+		log.position = Vector3(center.x - 0.32, 0.05, center.y + 0.26)
+		log.rotation.y = 0.35
+		parent.add_child(log)
+
+func _build_zoo_fences(parent: Node3D) -> void:
+	var fence_mat := _quad_mat(Color(0.52, 0.44, 0.32))
+	_add_pen_fence(parent, MemphisLayout.TIGER_ENCLOSURE, fence_mat)
+	_add_pen_fence(parent, MemphisLayout.BEAR_ENCLOSURE, fence_mat)
+	# A short center divider keeps pens visually distinct but does not block the
+	# south openings.
+	_add_fence_segment(parent, Vector2(51.0, 23.0), Vector2(51.0, 26.2), fence_mat)
+
+func _add_pen_fence(parent: Node3D, rect: Rect2i, mat: StandardMaterial3D) -> void:
+	var x0 := float(rect.position.x)
+	var x1 := float(rect.end.x)
+	var y0 := float(rect.position.y)
+	var y1 := float(rect.end.y)
+	var gap_center := (x0 + x1) * 0.5
+	var gap_half := 0.45
+	# North + side rails.
+	_add_fence_segment(parent, Vector2(x0, y0), Vector2(x1, y0), mat)
+	_add_fence_segment(parent, Vector2(x0, y0), Vector2(x0, y1), mat)
+	_add_fence_segment(parent, Vector2(x1, y0), Vector2(x1, y1), mat)
+	# South split rails with a centered player/animal opening.
+	_add_fence_segment(parent, Vector2(x0, y1), Vector2(gap_center - gap_half, y1), mat)
+	_add_fence_segment(parent, Vector2(gap_center + gap_half, y1), Vector2(x1, y1), mat)
+	for p in [
+		Vector2(x0, y0), Vector2(x1, y0), Vector2(x0, y1), Vector2(x1, y1),
+		Vector2(gap_center - gap_half, y1), Vector2(gap_center + gap_half, y1)
+	]:
+		_add_fence_post(parent, p, mat)
+
+func _add_fence_segment(parent: Node3D, a: Vector2, b: Vector2, mat: StandardMaterial3D) -> void:
+	var d := b - a
+	var seg_len := d.length()
+	if seg_len < 0.04:
+		return
+	var rail := MeshInstance3D.new()
+	var box := BoxMesh.new()
+	box.size = Vector3(seg_len, 0.2, 0.045)
+	rail.mesh = box
+	rail.material_override = mat
+	var mid := (a + b) * 0.5
+	rail.position = Vector3(mid.x, 0.1, mid.y)
+	# Box length is along +X, so rotate from X-axis to segment direction.
+	rail.rotation.y = -atan2(d.y, d.x)
+	parent.add_child(rail)
+
+func _add_fence_post(parent: Node3D, p: Vector2, mat: StandardMaterial3D) -> void:
+	var pole := MeshInstance3D.new()
+	var pm := BoxMesh.new()
+	pm.size = Vector3(0.07, 0.26, 0.07)
+	pole.mesh = pm
+	pole.material_override = mat
+	pole.position = Vector3(p.x, 0.13, p.y)
+	parent.add_child(pole)
+
+func _build_zoo_entrance(parent: Node3D) -> void:
+	var gate := Vector2(MemphisLayout.ZOO_GATE_TILE)
+	var sand := _quad_mat(Color(0.76, 0.66, 0.46))
+	var band_red := _quad_mat(Color(0.6, 0.2, 0.12))
+	var band_teal := _quad_mat(Color(0.1, 0.4, 0.36))
+	const PYLON_SLANT := 0.28
+	const PYLON_H := 1.55
+	const PYLON_W := 0.85
+	const PYLON_D := 0.65
+	const CAP_H := 0.32
+	var pz := gate.y + 0.55
+	for side in [-1.0, 1.0]:
+		var px: float = gate.x + side * 1.35
+		var pylon := MeshInstance3D.new()
+		var body := BoxMesh.new()
+		body.size = Vector3(PYLON_W, PYLON_H, PYLON_D)
+		pylon.mesh = body
+		pylon.material_override = sand
+		pylon.position = Vector3(px, PYLON_H * 0.5, pz)
+		parent.add_child(pylon)
+		# Sloped cap — same outward angle on both pylons.
+		var cap := MeshInstance3D.new()
+		var cap_mesh := BoxMesh.new()
+		cap_mesh.size = Vector3(PYLON_W + 0.06, CAP_H, PYLON_D + 0.05)
+		cap.mesh = cap_mesh
+		cap.material_override = sand
+		cap.position = Vector3(px + side * 0.04, PYLON_H + CAP_H * 0.42, pz)
+		# Both top caps lean the same way (match real entrance styling).
+		cap.rotation.x = -PYLON_SLANT
+		parent.add_child(cap)
+		for row in 2:
+			var band := MeshInstance3D.new()
+			var bm := BoxMesh.new()
+			bm.size = Vector3(PYLON_W + 0.02, 0.07, PYLON_D + 0.02)
+			band.mesh = bm
+			band.material_override = band_red if row % 2 == 0 else band_teal
+			band.position = Vector3(px, 0.42 + row * 0.38, pz + 0.02)
+			parent.add_child(band)
+	# Lintel beam between pylons.
+	var lintel := MeshInstance3D.new()
+	var lintel_mesh := BoxMesh.new()
+	lintel_mesh.size = Vector3(2.05, 0.28, 0.5)
+	lintel.mesh = lintel_mesh
+	lintel.material_override = sand
+	lintel.position = Vector3(gate.x, PYLON_H + 0.05, pz)
+	parent.add_child(lintel)
+	# Sloped lintel caps matching pylon angle.
+	for side in [-1.0, 1.0]:
+		var lc := MeshInstance3D.new()
+		var lcm := BoxMesh.new()
+		lcm.size = Vector3(0.55, CAP_H, 0.52)
+		lc.mesh = lcm
+		lc.material_override = sand
+		lc.position = Vector3(gate.x + side * 1.05, PYLON_H + CAP_H * 0.42, pz)
+		lc.rotation.x = -PYLON_SLANT
+		parent.add_child(lc)
+	# Sign centered on the horizontal entrance beam above the opening.
+	var sign := Label3D.new()
+	sign.text = "MEMPHIS ZOO"
+	sign.font_size = 24
+	sign.pixel_size = 0.006
+	sign.modulate = Color(0.12, 0.32, 0.68)
+	sign.rotation_degrees = Vector3(0, 0, 0)
+	# Vertically center on the front beam face and keep slightly proud of it.
+	sign.position = Vector3(gate.x, PYLON_H + 0.02, pz + 0.26)
+	parent.add_child(sign)
 
 func _add_landmark_label(text: String, tile: Vector2, parent: Node3D) -> void:
 	var lbl := Label3D.new()
