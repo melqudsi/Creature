@@ -186,7 +186,7 @@ func _on_form_changed(form_key: String) -> void:
 		FormDefs.BBQ_SMOKER:
 			special_button.visible = true
 			special_button.text = "Smoke Cloud"
-		FormDefs.PROPANE:
+		FormDefs.PROPANE, FormDefs.BBQ_GRILL:
 			special_button.visible = true
 			special_button.text = "Detonate"
 		FormDefs.PYRAMID:

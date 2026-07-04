@@ -951,7 +951,7 @@ func _complete_npc_shapeshift() -> void:
 	var vpos: Vector3 = traffic.vehicle_world_pos(v)
 	var tile := Vector2(GameConfig.world_to_tile(vpos))
 	traffic.claim_vehicle(v)
-	var type_key := "bus" if is_bus else "altima"
+	var type_key := str(v.get("type_key", "bus" if is_bus else "altima"))
 	var wm := GameState.world_map
 	var obj: WorldObject = null
 	if wm and is_instance_valid(wm) and wm.has_method("materialize_claimed_vehicle"):
@@ -1071,7 +1071,7 @@ func pop_out() -> void:
 	apply_form(FormDefs.ALIEN)
 	GameState.show_toast("Popped out to alien")
 
-## Form specials: Altima speed burst; BBQ Smoker smoke cloud; Propane detonate.
+## Form specials: Altima speed burst; BBQ Smoker smoke cloud; explosive detonate.
 func use_special() -> void:
 	if not is_player or is_dead:
 		return
@@ -1084,7 +1084,7 @@ func use_special() -> void:
 			GameState.show_toast("Smoker recharging (%ds)" % int(ceil(_smoke_cd)))
 		else:
 			_deploy_smoke_cloud()
-	elif form_key == FormDefs.PROPANE:
+	elif form_key == FormDefs.PROPANE or form_key == FormDefs.BBQ_GRILL:
 		_detonate_propane()
 	elif form_key == FormDefs.PYRAMID:
 		if _abduct_cd > 0.0:

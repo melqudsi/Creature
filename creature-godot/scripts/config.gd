@@ -24,7 +24,7 @@ const DEFAULT_CREATURE_NAME := "Creature"
 
 ## Visible build stamp so a loaded build can be identified at a glance.
 ## Keep this in sync with the build-stamp string in web/custom_shell.html.
-const BUILD_ID := "build 2026-07-05f"
+const BUILD_ID := "build 2026-07-05g"
 
 ## Landfill Dump: the spawn/respawn zone (now inside South Memphis — old-world
 ## coords + OLD_WORLD_OFFSET). All new players and respawns appear here.
@@ -104,7 +104,6 @@ static func interactive_objects() -> Array:
 		# --- Landfill Dump starter objects ---
 		{"key": "altima", "tile": _old(Vector2(6, 20))},
 		{"key": "magnolia", "tile": _old(Vector2(2, 18))},
-		{"key": "propane", "tile": _old(Vector2(6, 22))},
 		{"key": "pothole", "tile": _old(Vector2(7, 19))},
 		{"key": "cart", "tile": _old(Vector2(2, 22))},
 		{"key": "cone", "tile": _old(Vector2(4, 23))},
@@ -112,7 +111,6 @@ static func interactive_objects() -> Array:
 		{"key": "smoker", "tile": _old(Vector2(12, 6))},
 		# --- Road / open-world traps (solo-testable) ---
 		{"key": "pothole", "tile": _old(Vector2(16, 12))},
-		{"key": "propane", "tile": _old(Vector2(21, 11))},
 		{"key": "magnolia", "tile": _old(Vector2(12, 9))},
 		{"key": "altima", "tile": _old(Vector2(24, 13))},
 	]
@@ -161,6 +159,48 @@ static func slice6_seed_objects() -> Array:
 		out.append({"key": "altima", "tile": s + Vector2(2, 1)})
 		out.append({"key": "cart", "tile": s + Vector2(0, 2)})
 		out.append({"key": "cart", "tile": s + Vector2(3, 1)})
+	return out
+
+## Slice 8: explosives/cars/trees distribution pass.
+## - Propane lives only in North Memphis and Midtown.
+## - BBQ grills are near a sparse subset of houses (not every house).
+## - Chargers are South Memphis-only.
+## - Magnolias are spread across the board as shapeshift targets.
+static func slice8_seed_objects() -> Array:
+	var out: Array = [
+		# Propane: North Memphis + Midtown only.
+		{"key": "propane", "tile": Vector2(23, 6), "free": true},
+		{"key": "propane", "tile": Vector2(45, 12), "free": true},
+		{"key": "propane", "tile": Vector2(42, 31), "free": true},
+		{"key": "propane", "tile": Vector2(63, 49), "free": true},
+		# Dodge Chargers: South Memphis only.
+		{"key": "charger", "tile": Vector2(34, 86), "free": true},
+		{"key": "charger", "tile": Vector2(57, 80), "free": true},
+		{"key": "charger", "tile": Vector2(84, 70), "free": true},
+		# Magnolia shapeshift targets across the larger map.
+		{"key": "magnolia", "tile": Vector2(22, 14), "free": true},
+		{"key": "magnolia", "tile": Vector2(52, 14), "free": true},
+		{"key": "magnolia", "tile": Vector2(83, 13), "free": true},
+		{"key": "magnolia", "tile": Vector2(123, 12), "free": true},
+		{"key": "magnolia", "tile": Vector2(27, 39), "free": true},
+		{"key": "magnolia", "tile": Vector2(55, 52), "free": true},
+		{"key": "magnolia", "tile": Vector2(88, 54), "free": true},
+		{"key": "magnolia", "tile": Vector2(128, 45), "free": true},
+		{"key": "magnolia", "tile": Vector2(31, 72), "free": true},
+		{"key": "magnolia", "tile": Vector2(76, 88), "free": true},
+		{"key": "magnolia", "tile": Vector2(120, 84), "free": true},
+		{"key": "magnolia", "tile": Vector2(148, 103), "free": true},
+	]
+	var houses := MemphisLayout.house_tiles()
+	var grill_count := 0
+	for i in houses.size():
+		if i % 5 != 1:
+			continue
+		var h := Vector2(houses[i])
+		out.append({"key": "bbq_grill", "tile": h + Vector2(1, 0), "free": true})
+		grill_count += 1
+		if grill_count >= 10:
+			break
 	return out
 
 ## Starter money piles (Slice 2) — merged into shared seed on first poll / upgrade.

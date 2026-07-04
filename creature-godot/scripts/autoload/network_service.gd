@@ -231,46 +231,53 @@ func _looks_like_missing_table(err: String) -> bool:
 ## Build the initial shared object set from the client config (tile coords).
 func _build_world_object_seed() -> Array:
 	var out: Array = []
-	for entry in GameConfig.interactive_objects():
-		var tile: Vector2 = entry["tile"]
-		out.append({"type": str(entry["key"]), "x": tile.x, "y": tile.y, "state": "idle"})
-	for entry in GameConfig.money_seed_objects():
-		var tile: Vector2 = entry["tile"]
-		out.append({"type": str(entry["key"]), "x": tile.x, "y": tile.y, "state": "idle"})
+	out.append_array(_seed_rows_from_entries(GameConfig.interactive_objects()))
+	out.append_array(_seed_rows_from_entries(GameConfig.money_seed_objects()))
 	out.append_array(_slice5_seed_rows())
 	out.append_array(_slice6_seed_rows())
+	out.append_array(_slice8_seed_rows())
 	return out
+
+func _seed_rows_from_entries(entries: Array) -> Array:
+	var out: Array = []
+	for entry in entries:
+		var tile: Vector2 = entry["tile"]
+		if entry.get("free", false):
+			tile = _free_seed_tile(tile)
+		out.append({"type": str(entry["key"]), "x": tile.x, "y": tile.y, "state": "idle"})
+	return out
+
+func _free_seed_tile(tile: Vector2) -> Vector2:
+	tile = GameConfig.safe_drop_tile(tile)
+	var ti := Vector2i(int(tile.x), int(tile.y))
+	if MemphisLayout.blocked_tiles().has(ti):
+		var open := GridNav.nearest_walkable(ti, ti, MemphisLayout.blocked_tiles(), {})
+		if open.x >= 0:
+			tile = Vector2(open)
+	return tile
 
 ## Slice 6 rows: parked Altimas + carts in the Kroger lots.
 func _slice6_seed_rows() -> Array:
-	var out: Array = []
-	for entry in GameConfig.slice6_seed_objects():
-		var tile: Vector2 = entry["tile"]
-		out.append({"type": str(entry["key"]), "x": tile.x, "y": tile.y, "state": "idle"})
-	return out
+	return _seed_rows_from_entries(GameConfig.slice6_seed_objects())
+
+func _slice8_seed_rows() -> Array:
+	return _seed_rows_from_entries(GameConfig.slice8_seed_objects())
 
 ## Slice 5 rows (road potholes, Midtown/Downtown BBQ trailers). Entries flagged
 ## "free" get nudged off blocked tiles (scattered houses/trees) at seed time.
 func _slice5_seed_rows() -> Array:
-	var out: Array = []
-	for entry in GameConfig.slice5_seed_objects():
-		var tile: Vector2 = entry["tile"]
-		if entry.get("free", false):
-			tile = GameConfig.safe_drop_tile(tile)
-			var ti := Vector2i(int(tile.x), int(tile.y))
-			if MemphisLayout.blocked_tiles().has(ti):
-				var open := GridNav.nearest_walkable(ti, ti, MemphisLayout.blocked_tiles(), {})
-				tile = Vector2(open)
-		out.append({"type": str(entry["key"]), "x": tile.x, "y": tile.y, "state": "idle"})
-	return out
+	return _seed_rows_from_entries(GameConfig.slice5_seed_objects())
 
 ## Top-up seed for worlds created before the current slice: if money/bus
 ## (Slice 2) or the BBQ smoker (Slice 3) are missing, append them once (no wipe).
 func _maybe_seed_slice2_objects(rows: Array) -> void:
 	if _slice2_seed_attempted or not _world_objects_available:
 		return
-	var found := _note_seed_types(rows, {"money": false, "bus": false, "smoker": false, "slice5": false, "slice6": false})
-	if found.money and found.bus and found.smoker and found.slice5 and found.slice6:
+	var found := _note_seed_types(rows, {
+		"money": false, "bus": false, "smoker": false, "slice5": false, "slice6": false,
+		"slice8": false, "slice8_grill": false, "slice8_charger": false,
+	})
+	if found.money and found.bus and found.smoker and found.slice5 and found.slice6 and found.slice8:
 		_slice2_seed_attempted = true
 		return
 	_slice2_seed_attempted = true
@@ -296,11 +303,13 @@ func _maybe_seed_slice2_objects(rows: Array) -> void:
 		payload.append_array(_slice5_seed_rows())
 	if not found.slice6:
 		payload.append_array(_slice6_seed_rows())
+	if not found.slice8:
+		payload.append_array(_slice8_seed_rows())
 	if payload.is_empty():
 		return
 	var created := await seed_world_objects(payload)
 	if not created.is_empty():
-		_log("Top-up seeded %d world objects (money/bus/smoker/slice5/slice6)" % created.size())
+		_log("Top-up seeded %d world objects (money/bus/smoker/slice5/slice6/slice8)" % created.size())
 
 func _note_seed_types(rows: Array, found: Dictionary) -> Dictionary:
 	for row in rows:
@@ -321,6 +330,12 @@ func _note_seed_types(rows: Array, found: Dictionary) -> Dictionary:
 			# Slice 6 marker: a cart outside the old world = Kroger lots seeded.
 			if float(row.get("y", 999.0)) < 70.0:
 				found.slice6 = true
+		elif t == "bbq_grill":
+			found.slice8_grill = true
+			found.slice8 = bool(found.get("slice8_charger", false))
+		elif t == "charger":
+			found.slice8_charger = true
+			found.slice8 = bool(found.get("slice8_grill", false))
 	return found
 
 func _note_world_row_columns(row: Dictionary) -> void:
@@ -428,7 +443,7 @@ func admin_delete_all_money() -> int:
 	return n
 
 ## ADMIN: nuke the ENTIRE shared world_objects table and re-seed it fresh from
-## the client config (interactive objects + money + bus). Heals any stuck rows
+## the full client seed list. Heals any stuck rows
 ## (orphaned possession/carry, duplicates, drifted positions).
 func admin_reset_world_objects() -> bool:
 	if not _online or not _world_objects_available:

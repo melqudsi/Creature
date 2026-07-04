@@ -163,7 +163,7 @@ Phase 4 + mobile input fixes (`build 2026-07-03i`):
 
 ---
 
-## Memphis Zoo redo (`build 2026-07-05f`, current)
+## Memphis Zoo redo (`build 2026-07-05f`)
 
 - **Egyptian-style entrance** — sloped pylons, colored bands, lintel sign, plaza silhouettes (inspired by the real Memphis Zoo gate; not a replica).
 - **Expanded grounds** — larger zoo footprint in Overton Park with two **open-air** tiger and grizzly pens (low 3-sided fences; south openings so players and animals can walk in/out).
@@ -174,6 +174,18 @@ Phase 4 + mobile input fixes (`build 2026-07-03i`):
 - **Death** — vehicles kill animals; animals respawn at the zoo plaza when eaten or killed.
 - **Entrance polish** — "MEMPHIS ZOO" beam sign now faces south correctly, sits centered on the beam face, and is slightly larger for readability.
 - **NPC heading fix** — roaming tiger/bear now rotate to face their movement direction reliably (player-controlled shapeshifts were already correct).
+
+---
+
+## Explosives, Chargers, and map-tree pass (`build 2026-07-05g`, current)
+
+- **Propane** — tank mesh is now red; fresh/reset seeds place propane only in **North Memphis** and **Midtown**.
+- **BBQ Grill** — new shapeshiftable explosive unit seeded near a sparse subset of houses. It uses the same red propane tank in its mesh, has a **Detonate** special, and moves faster than the propane tank.
+- **Dodge Charger With Temp Tags** — new South Memphis-only parked seed plus NPC traffic on **385** and **Winchester Rd**; faster and sleeker than the Rusty Altima with a distinct dark/red look.
+- **Charger polish** — wider body, larger wheels, rear temp tag, and angled windshield so the silhouette reads more like a sports car.
+- **Explosions** — propane/grill blasts now kill any player-controlled form caught in range, including future forms; vehicles that crash into propane/grills trigger the same explosion path.
+- **World seeds/reset** — admin **reset ALL world objects** now reseeds from the full current seed list, including new/future seed groups, so newly added units are included after a reset.
+- **Magnolias** — additional shapeshiftable magnolia trees are seeded across the full Memphis map.
 
 ---
 

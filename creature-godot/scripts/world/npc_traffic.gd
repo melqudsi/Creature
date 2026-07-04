@@ -1,7 +1,7 @@
 class_name NpcTraffic
 extends Node3D
 
-## Ambient NPC traffic: Altimas (mostly) and MATA buses driving both lanes of
+## Ambient NPC traffic: Altimas, Chargers, and MATA buses driving lanes of
 ## every road, u-turning at road ends. CLIENT-LOCAL — like kills, traffic is
 ## not synced between players (each client sees its own cars; only whether OUR
 ## player gets run over matters, matching the kill-matrix networking rule).
@@ -16,7 +16,9 @@ extends Node3D
 
 const TARGET_ALTIMAS := 26
 const TARGET_BUSES := 5
+const TARGET_CHARGERS := 6
 const ALTIMA_SPEED := 3.2
+const CHARGER_SPEED := 4.1
 const BUS_SPEED := 2.0
 ## Lanes sit half a tile either side of the divider on a 2-tile road.
 const LANE_OFFSET := 0.5
@@ -45,33 +47,39 @@ func _ready() -> void:
 		var horizontal: bool = rect.size.x >= rect.size.y
 		_roads.append({
 			"rect": rect,
+			"name": str(r.get("name", "")),
 			"horizontal": horizontal,
 			"length": rect.size.x if horizontal else rect.size.y,
 		})
 	for i in TARGET_ALTIMAS:
-		_spawn_vehicle(false)
+		_spawn_vehicle("altima")
 	for i in TARGET_BUSES:
-		_spawn_vehicle(true)
+		_spawn_vehicle("bus")
+	for i in TARGET_CHARGERS:
+		_spawn_vehicle("charger")
 
-func _spawn_vehicle(is_bus: bool) -> void:
+func _spawn_vehicle(type_key: String) -> void:
 	# Weight road choice by length so long roads get proportional traffic.
+	var road_pool := _roads_for_vehicle(type_key)
 	var total := 0
-	for r in _roads:
+	for r in road_pool:
 		total += int(r["length"])
 	var pick := randi_range(0, total - 1)
-	var road: Dictionary = _roads[0]
-	for r in _roads:
+	var road: Dictionary = road_pool[0]
+	for r in road_pool:
 		pick -= int(r["length"])
 		if pick < 0:
 			road = r
 			break
 	var dir := 1 if randf() < 0.5 else -1
+	var is_bus := type_key == "bus"
 	var v := {
-		"node": _make_node(is_bus),
+		"node": _make_node(type_key),
 		"road": road,
 		"dir": dir,
+		"type_key": type_key,
 		"is_bus": is_bus,
-		"speed": BUS_SPEED if is_bus else ALTIMA_SPEED,
+		"speed": _traffic_speed(type_key),
 		"cur_speed": 0.0,
 		"wait": 0.0,
 		"along": randf_range(1.0, float(road["length"]) - 1.0),
@@ -79,9 +87,29 @@ func _spawn_vehicle(is_bus: bool) -> void:
 	_vehicles.append(v)
 	_place(v, true)
 
-func _make_node(is_bus: bool) -> Node3D:
+func _roads_for_vehicle(type_key: String) -> Array[Dictionary]:
+	if type_key != "charger":
+		return _roads
+	var out: Array[Dictionary] = []
+	for r in _roads:
+		var name := str(r.get("name", ""))
+		if name == "385" or name == "Winchester Rd":
+			out.append(r)
+	return out if not out.is_empty() else _roads
+
+func _traffic_speed(type_key: String) -> float:
+	match type_key:
+		"bus":
+			return BUS_SPEED
+		"charger":
+			return CHARGER_SPEED
+		_:
+			return ALTIMA_SPEED
+
+func _make_node(type_key: String) -> Node3D:
 	var node := Node3D.new()
-	node.add_child(ObjectMesh.build("mata_bus" if is_bus else "altima"))
+	var visual := "mata_bus" if type_key == "bus" else type_key
+	node.add_child(ObjectMesh.build(visual))
 	add_child(node)
 	return node
 
@@ -164,7 +192,7 @@ func _player_in_path(v: Dictionary, player: Creature) -> bool:
 	else:
 		ahead = (player.position.z - node.position.z) * dir
 		lateral = absf(player.position.x - node.position.x)
-	var front := 0.75 if v["is_bus"] else 0.55
+	var front := _vehicle_radius(v)
 	return ahead > front * 0.5 and ahead < STOP_LOOKAHEAD * GameConfig.TILE_SIZE \
 		and lateral < STOP_LATERAL * GameConfig.TILE_SIZE
 
@@ -172,7 +200,7 @@ func _check_kill(v: Dictionary, player: Creature) -> void:
 	var node: Node3D = v["node"]
 	var d := Vector2(node.position.x, node.position.z).distance_to(
 		Vector2(player.position.x, player.position.z))
-	var vehicle_r := 0.75 if v["is_bus"] else 0.55
+	var vehicle_r := _vehicle_radius(v)
 	if d > vehicle_r + FormDefs.radius(player.form_key):
 		return
 	var other_kind := "mata_bus" if v["is_bus"] else "vehicle"
@@ -202,7 +230,13 @@ func claimable_vehicle(pos: Vector2) -> Dictionary:
 	return best
 
 func vehicle_display(v: Dictionary) -> String:
-	return "MATA Bus" if v.get("is_bus", false) else "Altima"
+	match str(v.get("type_key", "altima")):
+		"bus":
+			return "MATA Bus"
+		"charger":
+			return "Dodge Charger With Temp Tags"
+		_:
+			return "Altima"
 
 func vehicle_world_pos(v: Dictionary) -> Vector3:
 	var node: Node3D = v["node"]
@@ -221,7 +255,7 @@ func claim_vehicle(v: Dictionary) -> void:
 	var node: Node3D = v["node"]
 	if is_instance_valid(node):
 		node.queue_free()
-	_spawn_vehicle(bool(v["is_bus"]))
+	_spawn_vehicle(str(v.get("type_key", "bus" if bool(v.get("is_bus", false)) else "altima")))
 
 ## Pyramid abduction: vehicles near the beam get taken. Each rises into the sky
 ## (tween) and a replacement spawns elsewhere so traffic density holds.
@@ -243,7 +277,7 @@ func abduct_near(world_pos: Vector3, radius_tiles: float) -> void:
 		tw.tween_property(node, "rotation:y", node.rotation.y + TAU * 1.5, 2.2)
 		tw.tween_property(node, "scale", Vector3(0.1, 0.1, 0.1), 2.2).set_ease(Tween.EASE_IN)
 		tw.chain().tween_callback(node.queue_free)
-		_spawn_vehicle(bool(v["is_bus"]))
+		_spawn_vehicle(str(v.get("type_key", "bus" if bool(v.get("is_bus", false)) else "altima")))
 
 ## True when any NPC vehicle moving fast enough would hit `world_pos`.
 func hits_position_at_speed(world_pos: Vector3, radius: float) -> bool:
@@ -254,8 +288,11 @@ func hits_position_at_speed(world_pos: Vector3, radius: float) -> bool:
 		var node: Node3D = v["node"]
 		if not is_instance_valid(node):
 			continue
-		var vehicle_r := 0.75 if v.get("is_bus", false) else 0.55
+		var vehicle_r := _vehicle_radius(v)
 		if center.distance_to(Vector2(node.position.x, node.position.z)) <= vehicle_r + radius:
 			return true
 	return false
+
+func _vehicle_radius(v: Dictionary) -> float:
+	return 0.75 if v.get("is_bus", false) else 0.55
 

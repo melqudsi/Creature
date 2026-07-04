@@ -5,8 +5,8 @@
 
 backlog / issues:
 
-7/3
-- 
+7/4
+
 
 
 ----- Backlog-----
@@ -21,13 +21,39 @@ backlog / issues:
 - automatically log a player off when they go idle for 40 minutes. (test later)
 - improve bbq trailer UX, let user know they are close enough to  house and maybe make NPC humans go to it and make user manually click "Take BBQ Order" to trigger sale instead of it being passive, maybe a make a mini game out of it.
 - give players ability to leave a note for other player when player near other player's safe house even if the other player is offline. other players get the note next time they login.
-- NPC vehicle stop time — decrease Patience more.
+- NPC vehicle stop time — decrease Patience time.
+- university of Memphis has buildings that look like houses, change them to look more like university buildings/dorms.
+- players shapeshifted into pot hole and move in front of NPC vehicles, make it where NPC vehicles do not stop and crash when NPC vehicle drives over shapeshifted pothole, then npc vehicle respawns after an appropriate amount of seconds.  
+- when an npc vehicle crashes into a player shapeshifted into a propane tank or bbq grill, the npc vehicle should explode and respawn after some time.
 
 - Human NPC
+- Realtor (Steve), only bald human npc, will need to shapeshift into one in order to get more than one safe house.
+- Gangster
+
 - proper NPC vehicle pathing and stopping for each other, allow them to crash with each other
+
+- test adding audio
+- add sky and fake far terrain
+
+other future units
+- Planes
+- Tow Truck (North Memphis)
+- Golf Cart (in Germantown / Collierville)
+- Orange Mound Pit Bull (South Memphis)
+- Overton Park Squirrel
+- Peabody Duck
+- Train / Traintrack
 
 
 ------ COMPLETED ----- 
+7/4
+- change propane tank color to red instead of yellow
+- add new unit named "BBQ Grill", behaves like a propane tank but moves faster than propane tank when player shapeshits into it.  incorporate the same propane tank 3d object into its 3d design.  seed near houses but not every house.
+- seed propane tanks only in mid-town and north Memphis.
+- when the "reset all objects" button that already exists in admin is pressed, make sure it effects newly added units/objects and future units/objects.
+- add new unit "Dodge Charger With Temp Tags". new vehicle, faster than the Altima, only seeded in south Memphis, make it sleeker looking than the Altima.  
+- make sure propane tanks and bbq grills can kill any unit when explodes or vehicle crashes into them.
+- seed magnolia trees across the board
 7/3
 - Shelby farms could use some trees.
 - when a player get infront of an npc vehicle, the npc vehicle stops briefly then starts moving again, this gives the player some time to shapeshift into the vehicle, the npc vehicle stopping time needs to be increased a little bit.

@@ -829,10 +829,14 @@ func _object_cfg(key: String) -> Dictionary:
 			return {"kind": "building", "form_key": "", "visual": "bigbox", "radius": 1.2, "display_name": "Airport Terminal", "tint": Color(0.35, 0.4, 0.45)}
 		"altima":
 			return {"kind": "prop", "form_key": FormDefs.ALTIMA, "visual": "altima", "radius": 0.55, "display_name": "Rusty Altima"}
+		"charger":
+			return {"kind": "prop", "form_key": FormDefs.CHARGER, "visual": "charger", "radius": 0.55, "display_name": "Dodge Charger With Temp Tags"}
 		"magnolia":
 			return {"kind": "tree", "form_key": FormDefs.MAGNOLIA, "visual": "magnolia", "radius": 0.5, "display_name": "Small Tree"}
 		"propane":
 			return {"kind": "propane", "form_key": FormDefs.PROPANE, "visual": "propane", "radius": 0.45, "display_name": "Propane Tank"}
+		"bbq_grill":
+			return {"kind": "propane", "form_key": FormDefs.BBQ_GRILL, "visual": "bbq_grill", "radius": 0.5, "display_name": "BBQ Grill"}
 		"pothole":
 			return {"kind": "pothole", "form_key": FormDefs.POTHOLE, "visual": "pothole", "radius": 0.5, "display_name": "Pothole"}
 		"cart":

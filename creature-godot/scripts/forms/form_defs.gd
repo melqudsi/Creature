@@ -8,9 +8,11 @@ const ALTIMA := "altima"
 const MAGNOLIA := "magnolia_tree"
 const POTHOLE := "pothole"
 const PROPANE := "propane_tank"
+const BBQ_GRILL := "bbq_grill"
 const SHOPPING_CART := "shopping_cart"
 const MATA_BUS := "mata_bus"
 const BBQ_SMOKER := "bbq_smoker"
+const CHARGER := "dodge_charger_temp_tags"
 const TREE := "tree"
 const PYRAMID := "pyramid"
 const HOUSE := "house"
@@ -30,9 +32,11 @@ const FORMS := {
 	MAGNOLIA: {"display": "Magnolia Tree", "speed": 0.5, "radius": 0.5, "kind": "tree", "visual": "magnolia"},
 	POTHOLE: {"display": "Pothole", "speed": 0.45, "radius": 0.5, "kind": "pothole", "visual": "pothole"},
 	PROPANE: {"display": "Propane Tank", "speed": 0.8, "radius": 0.45, "kind": "propane", "visual": "propane"},
+	BBQ_GRILL: {"display": "BBQ Grill", "speed": 1.15, "radius": 0.5, "kind": "propane", "visual": "bbq_grill"},
 	SHOPPING_CART: {"display": "Shopping Cart", "speed": 1.6, "radius": 0.42, "kind": "cart", "visual": "cart"},
 	MATA_BUS: {"display": "MATA Bus", "speed": 1.3, "radius": 0.75, "kind": "mata_bus", "visual": "mata_bus"},
 	BBQ_SMOKER: {"display": "BBQ Smoker", "speed": 0.9, "radius": 0.5, "kind": "smoker", "visual": "smoker"},
+	CHARGER: {"display": "Dodge Charger With Temp Tags", "speed": 3.8, "radius": 0.55, "kind": "vehicle", "visual": "charger"},
 	TREE: {"display": "Tree", "speed": 0.5, "radius": 0.5, "kind": "tree", "visual": "tree"},
 	# The Pyramid does not move. The Pyramid abducts.
 	PYRAMID: {"display": "The Pyramid", "speed": 0.0, "radius": 2.2, "kind": "building", "visual": "pyramid"},
@@ -140,7 +144,7 @@ static func carry_check(form_key: String, carried_tiers: Array, new_tier: int) -
 			if count >= 1:
 				return fail.call("Alien can only carry one item")
 			return ok
-		if form_key == SHOPPING_CART or form_key == ALTIMA or form_key == BBQ_SMOKER:
+		if form_key == SHOPPING_CART or form_key == ALTIMA or form_key == CHARGER or form_key == BBQ_SMOKER:
 			if count >= 1:
 				return fail.call("%s can carry one bag OR stacks, not both" % display(form_key))
 			return ok
@@ -167,6 +171,10 @@ static func carry_check(form_key: String, carried_tiers: Array, new_tier: int) -
 			ALTIMA:
 				if stack_count >= 3:
 					return fail.call("Altima is full")
+				return ok
+			CHARGER:
+				if stack_count >= 3:
+					return fail.call("Charger is full")
 				return ok
 			BBQ_SMOKER:
 				if stack_count >= 2:
@@ -257,7 +265,6 @@ static func resolve_player_death(my_key: String, other_kind: String) -> Dictiona
 	return out
 
 static func explosion_kills(key: String) -> bool:
-	var k := kind(key)
-	# Propane included: a blast near a player-shaped tank sets THEM off too.
-	return k == "alien" or k == "vehicle" or k == "cart" or k == "mata_bus" \
-		or k == "smoker" or k == "propane" or k == "zoo_tiger" or k == "zoo_bear"
+	# Explosive props are crowd-control: any player-controlled form caught in
+	# the blast dies, including trees/houses/potholes and future forms.
+	return is_valid(key)

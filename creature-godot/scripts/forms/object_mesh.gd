@@ -21,12 +21,16 @@ static func build(visual: String, tint: Color = Color(0.6, 0.6, 0.6)) -> Node3D:
 			return _build_pothole()
 		"propane":
 			return _build_propane()
+		"bbq_grill":
+			return _build_bbq_grill()
 		"cart":
 			return _build_cart()
 		"mata_bus":
 			return _build_mata_bus()
 		"smoker":
 			return _build_smoker()
+		"charger":
+			return _build_charger()
 		"money_stack":
 			return _build_money_stack()
 		"money_bag":
@@ -113,22 +117,57 @@ static func _build_pothole() -> Node3D:
 	root.add_child(_mesh_node(hole_mesh, _mat(Color(0.02, 0.02, 0.02), 1.0), Vector3(0, 0.07, 0)))
 	return root
 
-static func _build_propane() -> Node3D:
+static func _build_propane(tank_color: Color = Color(0.82, 0.06, 0.04)) -> Node3D:
 	var root := Node3D.new()
+	var tank_mat := _mat(tank_color, 0.5, 0.2)
 	var tank_mesh := CylinderMesh.new()
 	tank_mesh.top_radius = 0.22
 	tank_mesh.bottom_radius = 0.22
 	tank_mesh.height = 0.5
-	root.add_child(_mesh_node(tank_mesh, _mat(Color(0.85, 0.82, 0.2), 0.5, 0.2), Vector3(0, 0.28, 0)))
+	root.add_child(_mesh_node(tank_mesh, tank_mat, Vector3(0, 0.28, 0)))
 	var dome := SphereMesh.new()
 	dome.radius = 0.22
 	dome.height = 0.3
-	root.add_child(_mesh_node(dome, _mat(Color(0.85, 0.82, 0.2), 0.5, 0.2), Vector3(0, 0.53, 0)))
+	root.add_child(_mesh_node(dome, tank_mat, Vector3(0, 0.53, 0)))
 	var valve := CylinderMesh.new()
 	valve.top_radius = 0.06
 	valve.bottom_radius = 0.06
 	valve.height = 0.12
 	root.add_child(_mesh_node(valve, _mat(Color(0.5, 0.1, 0.08), 0.6, 0.3), Vector3(0, 0.66, 0)))
+	return root
+
+static func _build_bbq_grill() -> Node3D:
+	var root := Node3D.new()
+	var steel := _mat(Color(0.06, 0.06, 0.065), 0.55, 0.25)
+	var hot := _mat(Color(0.78, 0.18, 0.06), 0.7)
+	var bowl := BoxMesh.new()
+	bowl.size = Vector3(0.75, 0.28, 0.48)
+	root.add_child(_mesh_node(bowl, steel, Vector3(0, 0.42, 0)))
+	var lid := BoxMesh.new()
+	lid.size = Vector3(0.7, 0.16, 0.43)
+	root.add_child(_mesh_node(lid, steel, Vector3(0, 0.64, -0.03)))
+	var handle := BoxMesh.new()
+	handle.size = Vector3(0.38, 0.05, 0.05)
+	root.add_child(_mesh_node(handle, hot, Vector3(0, 0.76, -0.16)))
+	for x in [-0.24, 0.0, 0.24]:
+		var grate := BoxMesh.new()
+		grate.size = Vector3(0.04, 0.03, 0.44)
+		root.add_child(_mesh_node(grate, _mat(Color(0.78, 0.78, 0.75), 0.35, 0.35), Vector3(x, 0.58, 0)))
+	for x in [-0.3, 0.3]:
+		for z in [-0.18, 0.18]:
+			var leg := CylinderMesh.new()
+			leg.top_radius = 0.025
+			leg.bottom_radius = 0.025
+			leg.height = 0.42
+			root.add_child(_mesh_node(leg, steel, Vector3(x, 0.21, z)))
+	var tank := _build_propane()
+	tank.name = "AttachedPropaneTank"
+	tank.scale = Vector3(0.52, 0.52, 0.52)
+	tank.position = Vector3(0.52, 0.04, 0.02)
+	root.add_child(tank)
+	var shelf := BoxMesh.new()
+	shelf.size = Vector3(0.22, 0.04, 0.38)
+	root.add_child(_mesh_node(shelf, _mat(Color(0.18, 0.18, 0.17), 0.7), Vector3(-0.52, 0.48, 0)))
 	return root
 
 static func _build_cart() -> Node3D:
@@ -253,6 +292,43 @@ static func _build_mata_bus() -> Node3D:
 			wheel.bottom_radius = 0.17
 			wheel.height = 0.12
 			var w := _mesh_node(wheel, wheel_mat, Vector3(wx, 0.17, wz))
+			w.rotation_degrees = Vector3(0, 0, 90)
+			root.add_child(w)
+	return root
+
+static func _build_charger() -> Node3D:
+	var root := Node3D.new()
+	var body_mat := _mat(Color(0.08, 0.08, 0.1), 0.32, 0.45)
+	var trim_mat := _mat(Color(0.55, 0.08, 0.06), 0.42, 0.2)
+	var glass_mat := _mat(Color(0.04, 0.09, 0.13), 0.2, 0.5)
+	var body := BoxMesh.new()
+	body.size = Vector3(0.68, 0.24, 1.22)
+	root.add_child(_mesh_node(body, body_mat, Vector3(0, 0.24, 0)))
+	var hood := BoxMesh.new()
+	hood.size = Vector3(0.66, 0.08, 0.44)
+	root.add_child(_mesh_node(hood, trim_mat, Vector3(0, 0.38, 0.32)))
+	var cabin := BoxMesh.new()
+	cabin.size = Vector3(0.54, 0.18, 0.4)
+	root.add_child(_mesh_node(cabin, glass_mat, Vector3(0, 0.47, -0.13)))
+	var windshield := BoxMesh.new()
+	windshield.size = Vector3(0.52, 0.055, 0.28)
+	var ws := _mesh_node(windshield, glass_mat, Vector3(0, 0.5, 0.12))
+	ws.rotation.x = 0.48
+	root.add_child(ws)
+	var rear := BoxMesh.new()
+	rear.size = Vector3(0.7, 0.08, 0.25)
+	root.add_child(_mesh_node(rear, trim_mat, Vector3(0, 0.36, -0.46)))
+	var tag := BoxMesh.new()
+	tag.size = Vector3(0.26, 0.09, 0.025)
+	root.add_child(_mesh_node(tag, _mat(Color(0.95, 0.9, 0.62), 0.75), Vector3(0, 0.29, -0.625)))
+	var wheel_mat := _mat(Color(0.025, 0.025, 0.03), 0.85)
+	for wx in [-0.36, 0.36]:
+		for wz in [-0.38, 0.4]:
+			var wheel := CylinderMesh.new()
+			wheel.top_radius = 0.14
+			wheel.bottom_radius = 0.14
+			wheel.height = 0.1
+			var w := _mesh_node(wheel, wheel_mat, Vector3(wx, 0.14, wz))
 			w.rotation_degrees = Vector3(0, 0, 90)
 			root.add_child(w)
 	return root
