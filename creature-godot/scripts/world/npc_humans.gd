@@ -364,6 +364,29 @@ func _animate(h: Dictionary, _delta: float) -> void:
 # Deaths (anything lethal)
 # ---------------------------------------------------------------------------
 
+func predator_hit(predator_form: String, pos: Vector2) -> bool:
+	for h in _humans.duplicate():
+		var node: Node3D = h["node"]
+		if not is_instance_valid(node):
+			continue
+		var d := pos.distance_to(Vector2(node.position.x, node.position.z))
+		if d <= FormDefs.radius(predator_form) + FormDefs.radius(FormDefs.HUMAN):
+			_kill_human(h)
+			return true
+	return false
+
+## A moving player vehicle or MATA bus ran over a pedestrian.
+func squish_hit(vehicle_key: String, pos: Vector2) -> bool:
+	for h in _humans.duplicate():
+		var node: Node3D = h["node"]
+		if not is_instance_valid(node):
+			continue
+		var d := pos.distance_to(Vector2(node.position.x, node.position.z))
+		if d <= FormDefs.radius(vehicle_key) + FormDefs.radius(FormDefs.HUMAN):
+			_kill_human(h)
+			return true
+	return false
+
 func _check_kills() -> void:
 	var traffic := GameState.npc_traffic
 	if traffic != null and is_instance_valid(traffic) and traffic.has_method("hits_position_at_speed"):
@@ -374,18 +397,10 @@ func _check_kills() -> void:
 	var player := GameState.player_creature
 	if player == null or not is_instance_valid(player) or player.is_dead or player.is_spawning:
 		return
-	var lethal_player: bool = player.is_moving and (FormDefs.is_vehicle(player.form_key) \
-		or FormDefs.is_zoo_animal(player.form_key))
-	if not lethal_player:
-		return
-	var my := Vector2(player.position.x, player.position.z)
-	for h in _humans.duplicate():
-		var node: Node3D = h["node"]
-		if not is_instance_valid(node):
-			continue
-		var d := my.distance_to(Vector2(node.position.x, node.position.z))
-		if d <= FormDefs.radius(player.form_key) + FormDefs.radius(FormDefs.HUMAN):
-			_kill_human(h)
+	if player.is_moving and FormDefs.is_vehicle(player.form_key):
+		squish_hit(player.form_key, Vector2(player.position.x, player.position.z))
+	elif player.is_moving and FormDefs.is_zoo_animal(player.form_key):
+		predator_hit(player.form_key, Vector2(player.position.x, player.position.z))
 
 func _on_explosion(world_pos: Vector3, radius: float) -> void:
 	var center := Vector2(world_pos.x, world_pos.z)

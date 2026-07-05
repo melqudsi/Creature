@@ -72,6 +72,14 @@ const DEATH_HUMAN_EATEN := "Something ate you. It wasn't from around here."
 static func is_zoo_animal(key: String) -> bool:
 	return key == MEMPHIS_TIGER or key == MEMPHIS_BEAR
 
+## Soft targets a hunting tiger/bear can run down (players + NPC humans).
+static func predator_eats_kind(victim_kind: String) -> bool:
+	return victim_kind == "alien" or victim_kind == "human" or victim_kind == "cart"
+
+## Soft targets a moving vehicle or MATA bus can squish.
+static func squish_victim_kind(victim_kind: String) -> bool:
+	return predator_eats_kind(victim_kind)
+
 static func is_valid(key: String) -> bool:
 	return FORMS.has(key)
 
@@ -247,6 +255,12 @@ static func resolve_player_death(my_key: String, other_kind: String) -> Dictiona
 				"mata_bus":
 					out.die = true
 					out.reason = DEATH_BUS
+				"zoo_tiger":
+					out.die = true
+					out.reason = DEATH_TIGER
+				"zoo_bear":
+					out.die = true
+					out.reason = DEATH_BEAR
 		"propane":
 			match other_kind:
 				"vehicle", "mata_bus":

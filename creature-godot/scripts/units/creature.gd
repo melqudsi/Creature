@@ -1861,15 +1861,29 @@ func _resolve_contacts() -> void:
 			# A remote player did this — credit them in the kill feed.
 			apply_death(res.reason, res.explode, c.creature_name)
 			return
-	# Player wearing a zoo predator form can eat exhibit animals and other players.
+	# Player wearing a zoo predator form can eat exhibit animals, humans, and
+	# other players (victims resolve their own deaths on their client when a
+	# moving remote predator contacts them — see resolve_player_death above).
 	if FormDefs.is_zoo_animal(form_key) and _predator_is_hunting():
 		var zoo := GameState.zoo_animals
 		if zoo != null and is_instance_valid(zoo) and zoo.has_method("predator_hit"):
 			if zoo.predator_hit(form_key, _world_xz()):
 				return
+		var hum := GameState.npc_humans
+		if hum != null and is_instance_valid(hum) and hum.has_method("predator_hit"):
+			if hum.predator_hit(form_key, _world_xz()):
+				GameState.show_toast("You ate a human")
+				return
+	# Moving vehicles and MATA buses squish NPC humans (player victims resolve
+	# through the remote-creature loop above).
+	if is_moving and FormDefs.is_vehicle(form_key):
+		var hum := GameState.npc_humans
+		if hum != null and is_instance_valid(hum) and hum.has_method("squish_hit"):
+			if hum.squish_hit(form_key, _world_xz()):
+				return
 
 func _predator_is_hunting() -> bool:
-	return is_moving and _speed_ease > 0.2
+	return is_moving
 
 func _nearest_tree_center() -> Vector2:
 	var best := Vector2(-1, -1)

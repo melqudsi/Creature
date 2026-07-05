@@ -169,15 +169,15 @@ Phase 4 + mobile input fixes (`build 2026-07-03i`):
 - **Expanded grounds** — larger zoo footprint in Overton Park with two **open-air** tiger and grizzly pens (low 3-sided fences; south openings so players and animals can walk in/out).
 - **Exhibit animals** — client-local NPC tiger + bear wander their pens with **leg animations**.
 - **Shapeshift** — aliens **Become** the exhibit animals in-pen; pop out respawns the NPC back in its enclosure.
-- **Memphis Tiger** — runs at boosted-Altima speed (6.6 tiles/s); can eat aliens and the other exhibit animal while moving.
-- **Memphis Grizzly Bear** — slower; **Climb Tree** special perches on nearby trees; same predator rules.
+- **Memphis Tiger** — runs at boosted-Altima speed (6.6 tiles/s); can eat aliens, human-disguised players, shopping carts, NPC humans, and the other exhibit animal while moving.
+- **Memphis Grizzly Bear** — slower; **Climb Tree** special perches on nearby trees; same predator eat rules (while moving).
 - **Death** — vehicles kill animals; animals respawn at the zoo plaza when eaten or killed.
 - **Entrance polish** — "MEMPHIS ZOO" beam sign now faces south correctly, sits centered on the beam face, and is slightly larger for readability.
 - **NPC heading fix** — roaming tiger/bear now rotate to face their movement direction reliably (player-controlled shapeshifts were already correct).
 
 ---
 
-## Traffic hazards, campus, money floor (`build 2026-07-05j`, current)
+## Traffic hazards, campus, money floor (`build 2026-07-05j`)
 
 - **Impatient drivers** — NPC vehicle patience at a full stop cut from 8.5s to **4s** before they drive through whoever's blocking the lane.
 - **Pothole trap** — NPC vehicles never brake for a player shapeshifted into a pothole (nobody sees a hole in the road); driving over one **wrecks the vehicle** (wreck FX + toast), and a replacement spawns ~12s later.
@@ -195,6 +195,13 @@ Phase 4 + mobile input fixes (`build 2026-07-03i`):
 - **Fully mortal** — humans die to NPC vehicles, moving player vehicles/buses, moving player tiger/bear, and explosions. Every squish/eat leaves a **blood splat**; a replacement human reseeds elsewhere after ~14s (shapeshift claims backfill in ~4s) so the population holds.
 - **Become / Eat** — an alien next to a human gets the usual **Become Human** prompt (you wear that NPC's exact outfit; new `human` form, 1.2x speed, dies to everything lethal) plus a new **Eat Human** button.
 - **Alien-only name tags** — remote players now show their name floating overhead **only while in alien form**; any disguise (vehicle, object, zoo animal, human) hides the tag so disguises actually work against other players.
+
+---
+
+## Predator eats & bus squish (`build 2026-07-05l`, current)
+
+- **Tiger / bear players** — while moving, zoo-predator players can run down **other players** (aliens, human-disguised players, shopping carts) and **NPC humans**; victims resolve on their own client via the kill matrix. Exhibit tigers/bears remain edible too. Hunt gate is **moving** (not a speed burst), so slow bear shuffles still count.
+- **MATA bus squish** — a moving **MATA bus** (player-driven or NPC traffic) squishes **aliens**, **human-disguised players**, **shopping carts**, and **NPC humans**. Parked buses remain harmless.
 
 ---
 
