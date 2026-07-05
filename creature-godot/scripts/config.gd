@@ -24,7 +24,7 @@ const DEFAULT_CREATURE_NAME := "Creature"
 
 ## Visible build stamp so a loaded build can be identified at a glance.
 ## Keep this in sync with the build-stamp string in web/custom_shell.html.
-const BUILD_ID := "build 2026-07-05j"
+const BUILD_ID := "build 2026-07-05k"
 
 ## Landfill Dump: the spawn/respawn zone (now inside South Memphis — old-world
 ## coords + OLD_WORLD_OFFSET). All new players and respawns appear here.
@@ -53,7 +53,7 @@ const SMOKE_CLOUD_RADIUS_TILES := 3.0
 const OLD_WORLD_TREES: Array[Vector2i] = [
 	Vector2i(3, 3), Vector2i(7, 4), Vector2i(12, 2), Vector2i(18, 5),
 	Vector2i(25, 3), Vector2i(29, 8), Vector2i(5, 10), Vector2i(10, 13),
-	Vector2i(16, 11), Vector2i(22, 14), Vector2i(28, 17), Vector2i(4, 19),
+	Vector2i(16, 11), Vector2i(22, 14), Vector2i(28, 17),
 	Vector2i(13, 21), Vector2i(20, 20), Vector2i(27, 22), Vector2i(30, 14),
 ]
 
@@ -101,10 +101,8 @@ static func landfill_spawn_tile() -> Vector2:
 ## in world_map.gd for what each key does.
 static func interactive_objects() -> Array:
 	return [
-		# --- Landfill Dump starter objects ---
+		# --- Landfill Dump starter objects (spawn zone stays clear of hazards) ---
 		{"key": "altima", "tile": _old(Vector2(6, 20))},
-		{"key": "magnolia", "tile": _old(Vector2(2, 18))},
-		{"key": "pothole", "tile": _old(Vector2(7, 19))},
 		{"key": "cart", "tile": _old(Vector2(2, 22))},
 		{"key": "cone", "tile": _old(Vector2(4, 23))},
 		{"key": "bus", "tile": _old(Vector2(29, 21))},
@@ -277,6 +275,15 @@ static func world_to_tile(world: Vector3) -> Vector2i:
 ## True while a tile is inside the Landfill Dump spawn zone.
 static func is_in_landfill(tile: Vector2) -> bool:
 	return LANDFILL_RECT.has_point(Vector2i(int(floor(tile.x)), int(floor(tile.y))))
+
+## Shared-world rows that should not live in the spawn zone (legacy seeds).
+static func is_landfill_junk_row(row: Dictionary) -> bool:
+	var t := str(row.get("type", ""))
+	if t != "pothole" and t != "magnolia" and t != "propane" and t != "tree":
+		return false
+	var x := float(row.get("x", -999.0))
+	var y := float(row.get("y", -999.0))
+	return is_in_landfill(Vector2(x, y))
 
 ## Map a world/tile position to a human-readable region name for the HUD.
 ## Sub-zones (The Dump / BBQ Corner / Bus Stop) win over the big Memphis regions.

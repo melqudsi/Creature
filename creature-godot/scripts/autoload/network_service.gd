@@ -44,6 +44,8 @@ var _world_objects_checked := false
 var _world_objects_missing_logged := false
 var _owner_name_column_available := false
 var _slice2_seed_attempted := false
+## One-time purge of pothole/tree/propane rows left in The Dump by old seeds.
+var _landfill_cleanup_attempted := false
 ## Smart money floor (Slice 9): next Time.get_ticks_msec() the auto top-up may run.
 var _money_topup_next_ms := 0
 var _jwt_refresh_t := 0.0
@@ -206,6 +208,7 @@ func _poll_world_objects() -> void:
 				return
 	else:
 		await _maybe_seed_slice2_objects(rows)
+	rows = await _maybe_cleanup_landfill_junk(rows)
 	if _world_map and is_instance_valid(_world_map) and _world_map.has_method("sync_world_objects"):
 		_world_map.sync_world_objects(rows)
 	await _maybe_topup_money_stacks(rows)
@@ -313,6 +316,38 @@ func _maybe_seed_slice2_objects(rows: Array) -> void:
 	var created := await seed_world_objects(payload)
 	if not created.is_empty():
 		_log("Top-up seeded %d world objects (money/bus/smoker/slice5/slice6/slice8)" % created.size())
+
+	if not created.is_empty():
+		_log("Top-up seeded %d world objects (money/bus/smoker/slice5/slice6/slice8)" % created.size())
+
+## Legacy landfill seeds placed potholes/trees/propane in the spawn zone; strip
+## them from shared worlds once (admin reset also omits them going forward).
+func _maybe_cleanup_landfill_junk(rows: Array) -> Array:
+	if _landfill_cleanup_attempted or not _online or not _world_objects_available:
+		return rows
+	_landfill_cleanup_attempted = true
+	var purge_ids: Array[String] = []
+	for row in rows:
+		if typeof(row) != TYPE_DICTIONARY:
+			continue
+		if not GameConfig.is_landfill_junk_row(row):
+			continue
+		var id := str(row.get("id", ""))
+		if not id.is_empty():
+			purge_ids.append(id)
+	if purge_ids.is_empty():
+		return rows
+	for id in purge_ids:
+		await delete_world_object(id)
+	_log("Removed %d stale object(s) from The Dump (pothole/tree/propane)" % purge_ids.size())
+	var kept: Array = []
+	for row in rows:
+		if typeof(row) != TYPE_DICTIONARY:
+			continue
+		if purge_ids.has(str(row.get("id", ""))):
+			continue
+		kept.append(row)
+	return kept
 
 # ---------------------------------------------------------------------------
 # Smart money floor (Slice 9): keep a minimum number of loose stacks in play.
