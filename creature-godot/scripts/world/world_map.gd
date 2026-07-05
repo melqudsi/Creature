@@ -111,6 +111,10 @@ func _ready() -> void:
 	zoo.name = "ZooAnimals"
 	add_child(zoo)
 	GameState.zoo_animals = zoo
+	var humans := NpcHumans.new()
+	humans.name = "Pedestrians"
+	add_child(humans)
+	GameState.npc_humans = humans
 	# Propane tanks and other blasts ask the world to spawn an explosion here.
 	GameState.explosion_requested.connect(spawn_explosion)
 	GameState.money_combined.connect(spawn_money_combine_fx)
@@ -545,7 +549,7 @@ func _build_landmarks() -> void:
 	_add_landmark_label("UNIVERSITY OF MEMPHIS", Vector2(59.5, 41.5), root)
 	for t in MemphisLayout.UOFM_BUILDINGS:
 		var wp := GameConfig.tile_to_world(Vector2(t))
-		_spawn_world_object("building", Vector3(wp.x, 0, wp.z), _buildings_root)
+		_spawn_world_object("campus_hall", Vector3(wp.x, 0, wp.z), _buildings_root)
 	# Shelby Farms: park green, one lake, walking trail ring around it.
 	_add_ground_quad(MemphisLayout.SHELBY_RECT, Color(0.34, 0.56, 0.3), 0.032, root, "ShelbyFarms")
 	_add_landmark_label("SHELBY FARMS", Vector2(102.5, 34.2), root)
@@ -811,6 +815,8 @@ func _object_cfg(key: String) -> Dictionary:
 			return {"kind": "tree", "form_key": FormDefs.TREE, "visual": "tree", "radius": 0.5, "display_name": "Tree"}
 		"building":
 			return {"kind": "building", "form_key": "", "visual": "building", "radius": 0.9, "display_name": "House"}
+		"campus_hall":
+			return {"kind": "building", "form_key": "", "visual": "campus", "radius": 0.9, "display_name": "University Hall"}
 		"house_decor":
 			# Claimable scenery: Becoming one converts it into a shared "house" row.
 			return {"kind": "building", "form_key": FormDefs.HOUSE, "visual": "building", "radius": 0.9, "display_name": "House"}

@@ -41,6 +41,8 @@ static func build(visual: String, tint: Color = Color(0.6, 0.6, 0.6)) -> Node3D:
 			return _build_cone()
 		"building":
 			return _build_building()
+		"campus":
+			return _build_campus_hall()
 		"tower":
 			return _build_tower()
 		"pyramid":
@@ -51,6 +53,8 @@ static func build(visual: String, tint: Color = Color(0.6, 0.6, 0.6)) -> Node3D:
 			return _build_tiger()
 		"bear":
 			return _build_bear()
+		"human":
+			return build_human(random_human_params())
 		_:
 			return _build_trash()
 
@@ -207,6 +211,50 @@ static func _build_building() -> Node3D:
 	door_mesh.size = Vector3(0.28, 0.45, 0.04)
 	root.add_child(_mesh_node(door_mesh, _mat(Color(0.23, 0.13, 0.07)), Vector3(0, 0.225, -0.65)))
 	root.rotation.y = [0.0, PI * 0.5, PI, PI * 1.5][randi() % 4]
+	return root
+
+## University of Memphis hall/dorm: multi-story red-brick block with limestone
+## trim, rows of window panes, a flat parapet roof, and a columned entrance —
+## reads as campus architecture, not a suburban house.
+static func _build_campus_hall() -> Node3D:
+	var root := Node3D.new()
+	var brick := _mat(Color(0.52, 0.26, 0.18), 0.9)
+	var limestone := _mat(Color(0.83, 0.8, 0.72), 0.85)
+	var glass := _mat(Color(0.16, 0.22, 0.32), 0.25, 0.25)
+	var h := randf_range(1.5, 1.9)
+	var body := BoxMesh.new()
+	body.size = Vector3(1.55, h, 1.2)
+	root.add_child(_mesh_node(body, brick, Vector3(0, h * 0.5, 0)))
+	# Limestone base course + parapet cap.
+	var base_band := BoxMesh.new()
+	base_band.size = Vector3(1.62, 0.16, 1.27)
+	root.add_child(_mesh_node(base_band, limestone, Vector3(0, 0.08, 0)))
+	var parapet := BoxMesh.new()
+	parapet.size = Vector3(1.62, 0.12, 1.27)
+	root.add_child(_mesh_node(parapet, limestone, Vector3(0, h + 0.06, 0)))
+	# Window rows on the front and back faces (slightly proud of the brick).
+	var rows := 2 if h < 1.7 else 3
+	for r in rows:
+		var wy := 0.42 + float(r) * ((h - 0.6) / float(maxi(rows - 1, 1)))
+		for c in 4:
+			var wx := -0.57 + float(c) * 0.38
+			for side in [-1.0, 1.0]:
+				var pane := BoxMesh.new()
+				pane.size = Vector3(0.22, 0.3, 0.03)
+				root.add_child(_mesh_node(pane, glass, Vector3(wx, wy, side * 0.605)))
+	# Columned entrance: two limestone columns + a small pediment on -Z.
+	for side in [-1.0, 1.0]:
+		var col := CylinderMesh.new()
+		col.top_radius = 0.045
+		col.bottom_radius = 0.05
+		col.height = 0.5
+		root.add_child(_mesh_node(col, limestone, Vector3(side * 0.2, 0.25, -0.68)))
+	var pediment := BoxMesh.new()
+	pediment.size = Vector3(0.56, 0.1, 0.2)
+	root.add_child(_mesh_node(pediment, limestone, Vector3(0, 0.55, -0.66)))
+	var door := BoxMesh.new()
+	door.size = Vector3(0.26, 0.4, 0.04)
+	root.add_child(_mesh_node(door, _mat(Color(0.12, 0.24, 0.45), 0.5), Vector3(0, 0.2, -0.61)))
 	return root
 
 ## Downtown office tower: tall box with window bands, randomized height/shade.
@@ -503,6 +551,151 @@ static func _build_bear() -> Node3D:
 		leg.name = def[0]
 		root.add_child(leg)
 	return root
+
+# ---------------------------------------------------------------------------
+# Humans (Slice 9): parameterized so seeded NPCs come in randomized variations.
+# Bipeds face -Z at yaw 0 (same convention as the quadrupeds / quadruped_yaw).
+# ---------------------------------------------------------------------------
+
+const HUMAN_SKIN_TONES: Array = [
+	Color(0.94, 0.80, 0.68), Color(0.87, 0.68, 0.52), Color(0.72, 0.52, 0.36),
+	Color(0.55, 0.38, 0.26), Color(0.42, 0.28, 0.18),
+]
+const HUMAN_SHIRT_COLORS: Array = [
+	Color(0.85, 0.2, 0.2), Color(0.2, 0.4, 0.85), Color(0.15, 0.6, 0.3),
+	Color(0.9, 0.75, 0.15), Color(0.6, 0.25, 0.7), Color(0.9, 0.5, 0.15),
+	Color(0.92, 0.92, 0.9), Color(0.15, 0.15, 0.18), Color(0.95, 0.55, 0.75),
+]
+const HUMAN_PANTS_COLORS: Array = [
+	Color(0.2, 0.28, 0.48), Color(0.12, 0.12, 0.14), Color(0.62, 0.55, 0.4),
+	Color(0.35, 0.35, 0.38), Color(0.3, 0.2, 0.14),
+]
+const HUMAN_SHOE_COLORS: Array = [
+	Color(0.92, 0.92, 0.92), Color(0.1, 0.1, 0.12), Color(0.75, 0.15, 0.15),
+	Color(0.25, 0.3, 0.55),
+]
+const HUMAN_HAIR_COLORS: Array = [
+	Color(0.08, 0.06, 0.05), Color(0.3, 0.18, 0.08), Color(0.78, 0.62, 0.28),
+	Color(0.5, 0.2, 0.1),
+]
+
+static func random_human_params() -> Dictionary:
+	var female := randf() < 0.5
+	return {
+		"female": female,
+		# Roughly a third of the women hit the town in a crop top + short skirt.
+		"skimpy": female and randf() < 0.35,
+		"skin": HUMAN_SKIN_TONES.pick_random(),
+		"shirt": HUMAN_SHIRT_COLORS.pick_random(),
+		"pants": HUMAN_PANTS_COLORS.pick_random(),
+		"shoes": HUMAN_SHOE_COLORS.pick_random(),
+		"hair": HUMAN_HAIR_COLORS.pick_random(),
+	}
+
+## Limb pivot: a Node3D at the joint (hip/shoulder) whose children hang below,
+## so rotation.x swings the whole limb naturally (walk cycle / panic wave).
+static func _limb(pivot_pos: Vector3, length: float, thick: float, mat: StandardMaterial3D) -> Node3D:
+	var pivot := Node3D.new()
+	pivot.position = pivot_pos
+	var seg := CylinderMesh.new()
+	seg.top_radius = thick
+	seg.bottom_radius = thick * 0.85
+	seg.height = length
+	pivot.add_child(_mesh_node(seg, mat, Vector3(0, -length * 0.5, 0)))
+	return pivot
+
+static func build_human(p: Dictionary) -> Node3D:
+	var root := Node3D.new()
+	var female: bool = p.get("female", false)
+	var skimpy: bool = p.get("skimpy", false)
+	var skin := _mat(p.get("skin", HUMAN_SKIN_TONES[0]) as Color, 0.85)
+	var shirt := _mat(p.get("shirt", HUMAN_SHIRT_COLORS[0]) as Color, 0.9)
+	var pants := _mat(p.get("pants", HUMAN_PANTS_COLORS[0]) as Color, 0.9)
+	var shoes := _mat(p.get("shoes", HUMAN_SHOE_COLORS[0]) as Color, 0.7)
+	var hair := _mat(p.get("hair", HUMAN_HAIR_COLORS[0]) as Color, 0.95)
+
+	var hip_y := 0.34
+	var shoulder_y := 0.60
+	var torso_w := 0.20 if female else 0.26
+
+	# Legs pivot at the hip. Skimpy outfit = bare legs, otherwise pants-colored.
+	var leg_mat := skin if skimpy else pants
+	for side in [-1.0, 1.0]:
+		var leg := _limb(Vector3(side * 0.06, hip_y, 0), 0.30, 0.038, leg_mat)
+		leg.name = "LegL" if side < 0.0 else "LegR"
+		var shoe := BoxMesh.new()
+		shoe.size = Vector3(0.07, 0.045, 0.11)
+		leg.add_child(_mesh_node(shoe, shoes, Vector3(0, -0.315, -0.015)))
+		root.add_child(leg)
+
+	# Torso. Skimpy = bare midriff + crop top + short skirt; otherwise one shirt.
+	if skimpy:
+		var midriff := BoxMesh.new()
+		midriff.size = Vector3(torso_w * 0.9, 0.10, 0.12)
+		root.add_child(_mesh_node(midriff, skin, Vector3(0, hip_y + 0.05, 0)))
+		var crop := BoxMesh.new()
+		crop.size = Vector3(torso_w, 0.15, 0.13)
+		root.add_child(_mesh_node(crop, shirt, Vector3(0, hip_y + 0.185, 0)))
+		var skirt := BoxMesh.new()
+		skirt.size = Vector3(torso_w + 0.06, 0.09, 0.17)
+		root.add_child(_mesh_node(skirt, pants, Vector3(0, hip_y - 0.03, 0)))
+	else:
+		var torso := BoxMesh.new()
+		torso.size = Vector3(torso_w, 0.26, 0.13)
+		root.add_child(_mesh_node(torso, shirt, Vector3(0, hip_y + 0.13, 0)))
+
+	# Arms pivot at the shoulder (sleeve + skin hand).
+	for side in [-1.0, 1.0]:
+		var arm := _limb(Vector3(side * (torso_w * 0.5 + 0.035), shoulder_y, 0), 0.26, 0.032,
+			skin if skimpy else shirt)
+		arm.name = "ArmL" if side < 0.0 else "ArmR"
+		var hand := SphereMesh.new()
+		hand.radius = 0.034
+		hand.height = 0.068
+		arm.add_child(_mesh_node(hand, skin, Vector3(0, -0.27, 0)))
+		root.add_child(arm)
+
+	# Head + nose (nose marks the -Z facing side).
+	var head := SphereMesh.new()
+	head.radius = 0.085
+	head.height = 0.17
+	root.add_child(_mesh_node(head, skin, Vector3(0, 0.71, 0)))
+	var nose := BoxMesh.new()
+	nose.size = Vector3(0.025, 0.03, 0.03)
+	root.add_child(_mesh_node(nose, skin, Vector3(0, 0.71, -0.09)))
+
+	# Hair: shared male cut (short cap) vs shared female cut (cap + long back).
+	var cap := SphereMesh.new()
+	cap.radius = 0.09
+	cap.height = 0.1
+	root.add_child(_mesh_node(cap, hair, Vector3(0, 0.755, 0.008)))
+	if female:
+		var mane := BoxMesh.new()
+		mane.size = Vector3(0.15, 0.2, 0.05)
+		root.add_child(_mesh_node(mane, hair, Vector3(0, 0.64, 0.08)))
+	return root
+
+## Walk / panic animation for the biped rig built above.
+## amount 0..1 scales the swing; panic raises both arms and waves them.
+static func animate_biped(root: Node3D, phase: float, amount: float, panic := false) -> void:
+	if root == null:
+		return
+	var swing := sin(phase) * 0.7 * amount
+	for limb_name in ["LegL", "LegR", "ArmL", "ArmR"]:
+		var limb := root.get_node_or_null(limb_name) as Node3D
+		if limb == null:
+			continue
+		var left: bool = limb_name.ends_with("L")
+		var is_arm: bool = limb_name.begins_with("Arm")
+		if is_arm and panic:
+			# Arms straight up, waving side to side in alternating phase.
+			limb.rotation.x = PI * 0.95
+			limb.rotation.z = sin(phase * 1.6 + (0.0 if left else PI)) * 0.3
+			continue
+		limb.rotation.z = 0.0
+		# Opposite legs swing together; arms counter-swing their own side's leg.
+		var flip := 1.0 if left else -1.0
+		limb.rotation.x = swing * flip * (-0.65 if is_arm else 1.0)
 
 static func _build_trash() -> Node3D:
 	var root := Node3D.new()

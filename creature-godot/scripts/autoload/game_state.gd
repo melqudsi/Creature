@@ -40,6 +40,8 @@ var world_map: Node = null
 var npc_traffic: Node = null
 ## Memphis Zoo exhibit animals (client-local wander + shapeshift targets).
 var zoo_animals: Node = null
+## Ambient NPC pedestrians (client-local; shapeshift/eat targets, Slice 9).
+var npc_humans: Node = null
 ## Solid tiles (water/trees/houses/towers) as a Dictionary (Vector2i -> true)
 ## for O(1) pathfinding lookups — the Memphis map has thousands of them.
 var blocked_tiles: Dictionary = {}

@@ -44,6 +44,8 @@ var _world_objects_checked := false
 var _world_objects_missing_logged := false
 var _owner_name_column_available := false
 var _slice2_seed_attempted := false
+## Smart money floor (Slice 9): next Time.get_ticks_msec() the auto top-up may run.
+var _money_topup_next_ms := 0
 var _jwt_refresh_t := 0.0
 var _heartbeat_t := 0.0
 var _refresh_in_flight := false
@@ -206,6 +208,7 @@ func _poll_world_objects() -> void:
 		await _maybe_seed_slice2_objects(rows)
 	if _world_map and is_instance_valid(_world_map) and _world_map.has_method("sync_world_objects"):
 		_world_map.sync_world_objects(rows)
+	await _maybe_topup_money_stacks(rows)
 
 ## GET all shared world objects. Returns {ok, missing, rows}; `missing` is true
 ## when the table doesn't exist yet (so the caller can degrade gracefully).
@@ -310,6 +313,58 @@ func _maybe_seed_slice2_objects(rows: Array) -> void:
 	var created := await seed_world_objects(payload)
 	if not created.is_empty():
 		_log("Top-up seeded %d world objects (money/bus/smoker/slice5/slice6/slice8)" % created.size())
+
+# ---------------------------------------------------------------------------
+# Smart money floor (Slice 9): keep a minimum number of loose stacks in play.
+# ---------------------------------------------------------------------------
+
+## Minimum idle (uncarried, uncombined) money stacks scattered on the board.
+const MONEY_STACK_FLOOR := 12
+## How often each client re-evaluates the floor.
+const MONEY_TOPUP_INTERVAL_MS := 60_000
+
+## Combines, vault hoarding, and safe-house stockpiling steadily drain loose
+## stacks from the map; this reseeds the difference at random open tiles so
+## fresh players always find starter money. Throttled + jittered per client,
+## with a fresh recount before seeding, so two clients rarely double-seed.
+func _maybe_topup_money_stacks(rows: Array) -> void:
+	if not _online or not _world_objects_available:
+		return
+	var now := Time.get_ticks_msec()
+	if _money_topup_next_ms == 0:
+		# First check is deferred + jittered so clients that boot together
+		# don't all evaluate the floor on the same poll.
+		_money_topup_next_ms = now + randi_range(15_000, 45_000)
+		return
+	if now < _money_topup_next_ms:
+		return
+	_money_topup_next_ms = now + MONEY_TOPUP_INTERVAL_MS + randi_range(0, 30_000)
+	if _count_idle_money_stacks(rows) >= MONEY_STACK_FLOOR:
+		return
+	# Below the floor: recount from a FRESH fetch to close the race window
+	# (another client may have just topped up).
+	var recheck := await fetch_world_objects()
+	if not recheck.get("ok", false):
+		return
+	var count := _count_idle_money_stacks(recheck.get("rows", []))
+	if count >= MONEY_STACK_FLOOR:
+		return
+	var payload: Array = []
+	for i in MONEY_STACK_FLOOR - count:
+		var tile := GameConfig.random_open_tile()
+		payload.append({"type": "money_stack", "x": tile.x, "y": tile.y, "state": "idle"})
+	var created := await seed_world_objects(payload)
+	if not created.is_empty():
+		_log("Money floor: auto-seeded %d stacks (%d -> %d)" % [created.size(), count, MONEY_STACK_FLOOR])
+
+func _count_idle_money_stacks(rows: Array) -> int:
+	var n := 0
+	for row in rows:
+		if typeof(row) != TYPE_DICTIONARY:
+			continue
+		if str(row.get("type", "")) == "money_stack" and str(row.get("state", "idle")) == "idle":
+			n += 1
+	return n
 
 func _note_seed_types(rows: Array, found: Dictionary) -> Dictionary:
 	for row in rows:

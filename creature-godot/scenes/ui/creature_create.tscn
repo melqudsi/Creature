@@ -38,10 +38,21 @@ grow_vertical = 2
 [node name="Title" type="Label" parent="Panel"]
 layout_mode = 0
 offset_left = 20.0
-offset_top = 16.0
+offset_top = 10.0
 offset_right = 460.0
-offset_bottom = 44.0
+offset_bottom = 54.0
+theme_override_font_sizes/font_size = 36
 text = "CREATURE"
+horizontal_alignment = 1
+
+[node name="AuthorLabel" type="Label" parent="Panel"]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 58.0
+offset_right = 460.0
+offset_bottom = 82.0
+theme_override_font_sizes/font_size = 16
+text = "a game by Moe Elqudsi"
 horizontal_alignment = 1
 
 [node name="BackBtn" type="Button" parent="Panel"]
@@ -69,7 +80,7 @@ text = "LOG IN"
 [node name="RegisterModeBtn" type="Button" parent="Panel/ModeRow"]
 custom_minimum_size = Vector2(220, 56)
 layout_mode = 2
-text = "REGISTER"
+text = "NEW PLAYER"
 
 [node name="NameEdit" type="LineEdit" parent="Panel"]
 visible = false
@@ -151,3 +162,13 @@ offset_bottom = 620.0
 text = ""
 horizontal_alignment = 1
 autowrap_mode = 2
+
+[node name="AlphaLabel" type="Label" parent="Panel"]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 622.0
+offset_right = 460.0
+offset_bottom = 646.0
+theme_override_font_sizes/font_size = 14
+text = "Alpha release"
+horizontal_alignment = 1

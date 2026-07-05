@@ -11,14 +11,21 @@ extends Control
 @onready var pickup_button: Button = $ActionBar/PickUpButton
 @onready var drop_button: Button = $ActionBar/DropButton
 @onready var steal_button: Button = $ActionBar/StealButton
+@onready var eat_button: Button = $ActionBar/EatButton
 @onready var region_label: Label = $RegionLabel
 @onready var move_hint: Label = $MoveHint
 @onready var top_bar: Panel = $TopBar
+
+const HELP_TEXT := "You crash landed on Earth. Place called Memphis. Lucky you.\nTap to move around and explore the area.\nShape shift into stuff by getting close to them.\nDon't forget to collect Money Stacks and combine them.\nGood luck, have fun, and don't die"
+const HELP_GOLD := Color(1.0, 0.76, 0.16)
 
 var _last_region := ""
 var _move_hint_deadline := 0
 ## Slice 7: respawn-destination choice (safe house vs The Dump), built in code.
 var _respawn_panel: VBoxContainer
+var _help_button: Button
+var _help_panel: Panel
+var _help_label: Label
 
 var _pain_test: Node
 var _main: Node
@@ -37,6 +44,7 @@ func _ready() -> void:
 	admin_button.pressed.connect(_toggle_admin_panel)
 	if exit_button:
 		exit_button.pressed.connect(_on_exit_pressed)
+	_build_help_overlay()
 	_build_admin_panel()
 	_setup_action_buttons()
 	GameState.player_stats_changed.connect(_refresh_stats)
@@ -57,6 +65,81 @@ func _ready() -> void:
 	_apply_safe_area()
 	for delay in [0.5, 1.5, 3.0]:
 		get_tree().create_timer(delay).timeout.connect(_apply_safe_area)
+
+func _build_help_overlay() -> void:
+	_help_button = Button.new()
+	_help_button.name = "HelpButton"
+	_help_button.text = "?"
+	_help_button.custom_minimum_size = Vector2(52, 52)
+	_help_button.focus_mode = Control.FOCUS_NONE
+	_help_button.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	_help_button.offset_left = -26.0
+	_help_button.offset_top = 12.0
+	_help_button.offset_right = 26.0
+	_help_button.offset_bottom = 64.0
+	_help_button.add_theme_color_override("font_color", HELP_GOLD)
+	_help_button.add_theme_color_override("font_hover_color", HELP_GOLD)
+	_help_button.add_theme_color_override("font_pressed_color", HELP_GOLD)
+	_help_button.add_theme_font_size_override("font_size", 30)
+	_style_help_button()
+	_help_button.button_down.connect(_show_help_text)
+	_help_button.button_up.connect(_hide_help_text)
+	add_child(_help_button)
+
+	_help_panel = Panel.new()
+	_help_panel.name = "HelpPanel"
+	_help_panel.visible = false
+	_help_panel.set_anchors_preset(Control.PRESET_CENTER)
+	_help_panel.offset_left = -280.0
+	_help_panel.offset_top = -130.0
+	_help_panel.offset_right = 280.0
+	_help_panel.offset_bottom = 130.0
+	_help_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var panel_style := StyleBoxFlat.new()
+	panel_style.bg_color = Color(0.02, 0.03, 0.045, 0.88)
+	panel_style.border_color = HELP_GOLD
+	panel_style.set_border_width_all(2)
+	panel_style.set_corner_radius_all(12)
+	_help_panel.add_theme_stylebox_override("panel", panel_style)
+	add_child(_help_panel)
+
+	_help_label = Label.new()
+	_help_label.text = HELP_TEXT
+	_help_label.modulate = Color(1.0, 0.96, 0.82)
+	_help_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_help_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_help_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_help_label.add_theme_font_size_override("font_size", 22)
+	_help_label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_help_label.offset_left = 22.0
+	_help_label.offset_top = 18.0
+	_help_label.offset_right = -22.0
+	_help_label.offset_bottom = -18.0
+	_help_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_help_panel.add_child(_help_label)
+
+func _style_help_button() -> void:
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = Color(0.03, 0.035, 0.045, 0.92)
+	normal.border_color = HELP_GOLD
+	normal.set_border_width_all(2)
+	normal.set_corner_radius_all(26)
+	var hover := normal.duplicate() as StyleBoxFlat
+	hover.bg_color = Color(0.08, 0.07, 0.04, 0.95)
+	var pressed := normal.duplicate() as StyleBoxFlat
+	pressed.bg_color = Color(0.16, 0.11, 0.02, 0.98)
+	for state in ["normal", "disabled", "focus"]:
+		_help_button.add_theme_stylebox_override(state, normal)
+	_help_button.add_theme_stylebox_override("hover", hover)
+	_help_button.add_theme_stylebox_override("pressed", pressed)
+
+func _show_help_text() -> void:
+	if _help_panel:
+		_help_panel.visible = true
+
+func _hide_help_text() -> void:
+	if _help_panel:
+		_help_panel.visible = false
 
 ## Shift the full-rect HUD root inward by the browser's safe-area insets
 ## (notch, rounded corners, home indicator). CSS px are converted to design
@@ -136,6 +219,10 @@ func _update_money_buttons(c: Creature) -> void:
 		var steal_text: String = c.steal_label()
 		if steal_button.text != steal_text:
 			steal_button.text = steal_text
+	# Eat Human appears next to Become Human when an alien stands by an NPC.
+	var can_eat: bool = c.has_method("can_eat_human_now") and c.can_eat_human_now()
+	if eat_button and eat_button.visible != can_eat:
+		eat_button.visible = can_eat
 	# The house special toggles between Claim/Unclaim as state changes.
 	if c.form_key == FormDefs.HOUSE:
 		var house_text: String = c.house_special_label()
@@ -149,18 +236,21 @@ func _setup_action_buttons() -> void:
 	pickup_button.visible = false
 	drop_button.visible = false
 	steal_button.visible = false
+	eat_button.visible = false
 	become_button.focus_mode = Control.FOCUS_NONE
 	special_button.focus_mode = Control.FOCUS_NONE
 	pop_button.focus_mode = Control.FOCUS_NONE
 	pickup_button.focus_mode = Control.FOCUS_NONE
 	drop_button.focus_mode = Control.FOCUS_NONE
 	steal_button.focus_mode = Control.FOCUS_NONE
+	eat_button.focus_mode = Control.FOCUS_NONE
 	become_button.pressed.connect(_on_become_pressed)
 	special_button.pressed.connect(_on_special_pressed)
 	pop_button.pressed.connect(_on_pop_pressed)
 	pickup_button.pressed.connect(_on_pickup_pressed)
 	drop_button.pressed.connect(_on_drop_pressed)
 	steal_button.pressed.connect(_on_steal_pressed)
+	eat_button.pressed.connect(_on_eat_pressed)
 
 func _player_form() -> String:
 	var c = GameState.player_creature
@@ -234,6 +324,12 @@ func _on_steal_pressed() -> void:
 	if c and is_instance_valid(c) and c.has_method("steal_from_nearest"):
 		c.steal_from_nearest()
 
+func _on_eat_pressed() -> void:
+	GameState.note_player_input()
+	var c = GameState.player_creature
+	if c and is_instance_valid(c) and c.has_method("eat_nearest_human"):
+		c.eat_nearest_human()
+
 # ---------------------------------------------------------------------------
 # Respawn destination choice (Slice 7): shown after the death countdown when
 # the player owns a claimed safe house.
@@ -292,11 +388,15 @@ func _on_exit_pressed() -> void:
 func consumes_pointer_at(screen_pos: Vector2) -> bool:
 	if exit_button and exit_button.get_global_rect().has_point(screen_pos):
 		return true
+	if _help_button and _help_button.get_global_rect().has_point(screen_pos):
+		return true
+	if _help_panel and _help_panel.visible and _help_panel.get_global_rect().has_point(screen_pos):
+		return true
 	if admin_button.visible and admin_button.get_global_rect().has_point(screen_pos):
 		return true
 	if _admin_panel and _admin_panel.visible and _admin_panel.get_global_rect().has_point(screen_pos):
 		return true
-	for btn in [become_button, special_button, pop_button, pickup_button, drop_button, steal_button]:
+	for btn in [become_button, special_button, pop_button, pickup_button, drop_button, steal_button, eat_button]:
 		if btn and btn.visible and btn.get_global_rect().has_point(screen_pos):
 			return true
 	if _respawn_panel and _respawn_panel.visible and _respawn_panel.get_global_rect().has_point(screen_pos):

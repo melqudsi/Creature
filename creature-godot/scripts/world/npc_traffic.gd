@@ -28,7 +28,9 @@ const STOP_LOOKAHEAD := 2.4
 ## Lateral distance from the lane line that still counts as "in the way".
 const STOP_LATERAL := 0.8
 ## How long a vehicle waits at a full stop before driving through the player.
-const PATIENCE_SEC := 8.5
+const PATIENCE_SEC := 4.0
+## How long after a crash (pothole / propane ram) before a replacement spawns.
+const CRASH_RESPAWN_SEC := 12.0
 const ACCEL := 2.6         # tiles/s^2 pulling away
 const BRAKE := 7.0         # tiles/s^2 stopping (must out-brake STOP_LOOKAHEAD)
 ## Below this speed a vehicle is harmless and claimable (matches the
@@ -180,7 +182,11 @@ func _process(delta: float) -> void:
 			_check_kill(v, player)
 
 ## True when the player stands within the vehicle's forward stopping zone.
+## Drivers never brake for a pothole — nobody sees a hole in the road until
+## it's too late (a player-pothole in the lane wrecks them in _check_kill).
 func _player_in_path(v: Dictionary, player: Creature) -> bool:
+	if FormDefs.kind(player.form_key) == "pothole":
+		return false
 	var node: Node3D = v["node"]
 	var road: Dictionary = v["road"]
 	var dir := float(v["dir"])
@@ -203,12 +209,49 @@ func _check_kill(v: Dictionary, player: Creature) -> void:
 	var vehicle_r := _vehicle_radius(v)
 	if d > vehicle_r + FormDefs.radius(player.form_key):
 		return
+	# Driving over a player-pothole wrecks the VEHICLE, not the pothole.
+	if FormDefs.kind(player.form_key) == "pothole":
+		GameState.show_toast("A %s hit your pothole!" % vehicle_display(v))
+		_crash_vehicle(v, false)
+		return
 	var other_kind := "mata_bus" if v["is_bus"] else "vehicle"
 	var res := FormDefs.resolve_player_death(player.form_key, other_kind)
 	if res.die:
 		if res.explode:
 			GameState.explosion_requested.emit(player.position, Creature.EXPLOSION_RADIUS)
 		player.apply_death(res.reason, res.explode)
+		# Ramming a player-propane/BBQ-grill takes the vehicle with it (the
+		# explosion FX just played, so no extra wreck prop).
+		if res.explode:
+			_crash_vehicle(v, true)
+
+## A moving NPC vehicle hit something fatal (player pothole / propane / grill):
+## play the wreck FX (unless an explosion already covered it), remove it, and
+## respawn a replacement elsewhere after a pause so traffic density holds.
+func _crash_vehicle(v: Dictionary, exploded: bool) -> void:
+	var idx := _vehicles.find(v)
+	if idx < 0:
+		return
+	_vehicles.remove_at(idx)
+	var node: Node3D = v["node"]
+	var type_key := str(v.get("type_key", "altima"))
+	if is_instance_valid(node):
+		if not exploded:
+			GameState.vehicle_wreck_requested.emit(node.position, _form_key_for_type(type_key))
+		node.queue_free()
+	var timer := get_tree().create_timer(CRASH_RESPAWN_SEC)
+	timer.timeout.connect(func() -> void:
+		if is_instance_valid(self):
+			_spawn_vehicle(type_key))
+
+func _form_key_for_type(type_key: String) -> String:
+	match type_key:
+		"bus":
+			return FormDefs.MATA_BUS
+		"charger":
+			return FormDefs.CHARGER
+		_:
+			return FormDefs.ALTIMA
 
 # ---------------------------------------------------------------------------
 # Claiming (shapeshift into a stopped NPC vehicle)

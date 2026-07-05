@@ -74,7 +74,11 @@ var _nearby_zoo_animal: Dictionary = {}      # closest claimable zoo exhibit ani
 var _shapeshift_zoo: Dictionary = {}         # zoo animal we're mid-transform into
 var _claimed_zoo_form := ""                  # form key to respawn on pop-out
 var _claimed_zoo_enc: Rect2i = Rect2i()
-var _form_mesh_root: Node3D = null           # quadruped mesh for leg animation
+var _nearby_human: Dictionary = {}           # closest claimable NPC human (Slice 9)
+var _shapeshift_human: Dictionary = {}       # NPC human we're mid-transform into
+var _human_look: Dictionary = {}             # outfit params worn while in human form
+var _name_tag: Label3D = null                # remote player's overhead name (alien only)
+var _form_mesh_root: Node3D = null           # quadruped/biped mesh for leg animation
 var _bear_perched := false
 var _bear_perch_pos := Vector3.ZERO
 var _respawn_at_zoo := false
@@ -213,11 +217,21 @@ func apply_form(key: String) -> void:
 		_add_alien_eyes()
 	else:
 		_form_mesh_root = null
-		var mesh := ObjectMesh.build(FormDefs.visual(form_key), creature_color)
+		var mesh: Node3D
+		if form_key == FormDefs.HUMAN:
+			# Wear the claimed NPC's exact outfit (falls back to a random one
+			# for remote players, whose look isn't synced).
+			if _human_look.is_empty():
+				_human_look = ObjectMesh.random_human_params()
+			mesh = ObjectMesh.build_human(_human_look)
+		else:
+			_human_look = {}
+			mesh = ObjectMesh.build(FormDefs.visual(form_key), creature_color)
 		body_root.add_child(mesh)
-		if FormDefs.is_zoo_animal(form_key):
+		if FormDefs.is_zoo_animal(form_key) or form_key == FormDefs.HUMAN:
 			_form_mesh_root = mesh
 	_reset_body_pose()
+	_update_name_tag()
 	if is_player and creature_id != "preview" and creature_id != "portrait":
 		GameState.form_changed.emit(form_key)
 		if not creature_id.is_empty():
@@ -226,6 +240,28 @@ func apply_form(key: String) -> void:
 
 func is_alien_form() -> bool:
 	return FormDefs.is_alien(form_key)
+
+## Overhead name for OTHER players — shown only while they're in alien form.
+## Any disguise (vehicle, object, zoo animal, human) hides who's piloting it.
+func _update_name_tag() -> void:
+	var show := is_remote and is_alien_form() \
+		and creature_id != "preview" and creature_id != "portrait"
+	if not show:
+		if _name_tag and is_instance_valid(_name_tag):
+			_name_tag.visible = false
+		return
+	if _name_tag == null or not is_instance_valid(_name_tag):
+		_name_tag = Label3D.new()
+		_name_tag.name = "NameTag"
+		_name_tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		_name_tag.font_size = 30
+		_name_tag.outline_size = 8
+		_name_tag.modulate = Color(0.95, 0.98, 1.0)
+		_name_tag.outline_modulate = Color(0.05, 0.08, 0.12, 0.85)
+		_name_tag.position = Vector3(0, 0.85, 0)
+		add_child(_name_tag)
+	_name_tag.text = creature_name
+	_name_tag.visible = true
 
 ## Server id of the shared object this player is currently wearing ("" if none).
 ## Used by the world-object sync as the LOCAL authority so a just-possessed /
@@ -450,7 +486,10 @@ func _apply_quadruped_animation(delta: float, moving: bool) -> void:
 		return
 	if not moving:
 		_walk_phase += delta * 2.0
-	ObjectMesh.animate_quadruped(_form_mesh_root, _walk_phase, 1.0 if moving else 0.12)
+	if form_key == FormDefs.HUMAN:
+		ObjectMesh.animate_biped(_form_mesh_root, _walk_phase, 1.0 if moving else 0.08)
+	else:
+		ObjectMesh.animate_quadruped(_form_mesh_root, _walk_phase, 1.0 if moving else 0.12)
 
 func _update_transform(snap: bool, delta: float) -> void:
 	if creature_id == "preview":
@@ -466,7 +505,8 @@ func _update_transform(snap: bool, delta: float) -> void:
 	if not is_asleep and is_moving and _move_dir.length_squared() > 0.0001:
 		if FormDefs.speed_mult(form_key) > 0.0:
 			var target_rot := atan2(_move_dir.x, _move_dir.y)
-			if FormDefs.is_zoo_animal(form_key):
+			# Quadrupeds and the human biped model -Z as "forward".
+			if FormDefs.is_zoo_animal(form_key) or form_key == FormDefs.HUMAN:
 				target_rot += PI
 			rotation.y = lerp_angle(rotation.y, target_rot, 0.18 if snap else delta * 14.0)
 	elif form_key == FormDefs.PYRAMID:
@@ -646,6 +686,7 @@ func apply_remote_state(row: Dictionary) -> void:
 	var new_name := str(row.get("name", creature_name)).substr(0, GameConfig.NAME_MAX_LEN)
 	if new_name != creature_name:
 		creature_name = new_name
+		_update_name_tag()
 	var needs_rebuild := false
 	var new_level := int(row.get("size_level", size_level))
 	if new_level != size_level:
@@ -748,6 +789,7 @@ func _scan_shapeshift_target() -> void:
 	_nearby_object = null
 	_nearby_npc = {}
 	_nearby_zoo_animal = {}
+	_nearby_human = {}
 	# Can only Become while an alien (pop out first to change form).
 	if is_alien_form():
 		var my := _world_xz()
@@ -775,7 +817,12 @@ func _scan_shapeshift_target() -> void:
 			var zoo := GameState.zoo_animals
 			if zoo != null and is_instance_valid(zoo) and zoo.has_method("claimable_animal"):
 				_nearby_zoo_animal = zoo.claimable_animal(my)
-	var can := _nearby_object != null or not _nearby_npc.is_empty() or not _nearby_zoo_animal.is_empty()
+		if _nearby_object == null and _nearby_npc.is_empty() and _nearby_zoo_animal.is_empty():
+			var hum := GameState.npc_humans
+			if hum != null and is_instance_valid(hum) and hum.has_method("claimable_human"):
+				_nearby_human = hum.claimable_human(my)
+	var can := _nearby_object != null or not _nearby_npc.is_empty() \
+		or not _nearby_zoo_animal.is_empty() or not _nearby_human.is_empty()
 	var display := ""
 	if _nearby_object != null:
 		display = FormDefs.display(_nearby_object.form_key)
@@ -783,6 +830,8 @@ func _scan_shapeshift_target() -> void:
 		display = GameState.npc_traffic.vehicle_display(_nearby_npc)
 	elif not _nearby_zoo_animal.is_empty():
 		display = GameState.zoo_animals.animal_display(_nearby_zoo_animal)
+	elif not _nearby_human.is_empty():
+		display = GameState.npc_humans.human_display(_nearby_human)
 	if can != _last_prompt_can or display != _last_prompt_name:
 		_last_prompt_can = can
 		_last_prompt_name = display
@@ -800,6 +849,15 @@ func _update_shapeshift_progress(delta: float) -> void:
 			_shapeshift_t = 0.0
 			_shapeshift_zoo = {}
 			return
+	elif not _shapeshift_human.is_empty():
+		var hum := GameState.npc_humans
+		if hum == null or not is_instance_valid(hum) \
+				or _nearby_human != _shapeshift_human \
+				or not hum.is_human_claimable(_shapeshift_human):
+			_shapeshifting = false
+			_shapeshift_t = 0.0
+			_shapeshift_human = {}
+			return
 	elif not _shapeshift_npc.is_empty():
 		if _nearby_npc != _shapeshift_npc or not GameState.npc_traffic.is_vehicle_claimable(_shapeshift_npc):
 			_shapeshifting = false
@@ -814,6 +872,8 @@ func _update_shapeshift_progress(delta: float) -> void:
 	if _shapeshift_t >= SHAPESHIFT_TIME:
 		if not _shapeshift_zoo.is_empty():
 			_complete_zoo_shapeshift()
+		elif not _shapeshift_human.is_empty():
+			_complete_human_shapeshift()
 		elif not _shapeshift_npc.is_empty():
 			_complete_npc_shapeshift()
 		else:
@@ -827,14 +887,22 @@ func begin_shapeshift() -> void:
 		_shapeshift_candidate = _nearby_object
 		_shapeshift_npc = {}
 		_shapeshift_zoo = {}
+		_shapeshift_human = {}
 	elif not _nearby_npc.is_empty():
 		_shapeshift_candidate = null
 		_shapeshift_npc = _nearby_npc
 		_shapeshift_zoo = {}
+		_shapeshift_human = {}
 	elif not _nearby_zoo_animal.is_empty():
 		_shapeshift_candidate = null
 		_shapeshift_npc = {}
 		_shapeshift_zoo = _nearby_zoo_animal
+		_shapeshift_human = {}
+	elif not _nearby_human.is_empty():
+		_shapeshift_candidate = null
+		_shapeshift_npc = {}
+		_shapeshift_zoo = {}
+		_shapeshift_human = _nearby_human
 	else:
 		return
 	_shapeshifting = true
@@ -1009,6 +1077,44 @@ func _complete_zoo_shapeshift() -> void:
 	apply_form(form_key_claimed)
 	_revalidate_carried_for_form()
 	GameState.show_toast("You became a %s" % FormDefs.display(form_key_claimed))
+
+## Claiming an NPC human (Slice 9): the pedestrian vanishes (a replacement
+## spawns elsewhere) and we wear their exact look. Client-local like zoo
+## animals — no shared world object is created.
+func _complete_human_shapeshift() -> void:
+	var h := _shapeshift_human
+	_shapeshifting = false
+	_shapeshift_t = 0.0
+	_shapeshift_human = {}
+	_shapeshift_candidate = null
+	var hum := GameState.npc_humans
+	if hum == null or not is_instance_valid(hum) or not hum.is_human_claimable(h):
+		return
+	_stop_movement()
+	_move_target = Vector2(-1, -1)
+	var hpos: Vector3 = hum.human_world_pos(h)
+	position = hpos
+	grid_pos = Vector2(GameConfig.world_to_tile(hpos))
+	_human_look = hum.human_params(h)
+	hum.claim_human(h)
+	_active_object = null
+	apply_form(FormDefs.HUMAN)
+	_revalidate_carried_for_form()
+	GameState.show_toast("You became a Human. Blend in.")
+
+## HUD "Eat Human" support: only an alien standing next to an NPC human.
+func can_eat_human_now() -> bool:
+	return is_player and not is_dead and is_alien_form() and not _nearby_human.is_empty()
+
+func eat_nearest_human() -> void:
+	if not can_eat_human_now():
+		return
+	var hum := GameState.npc_humans
+	if hum == null or not is_instance_valid(hum) or not hum.has_method("eat_human"):
+		return
+	if hum.eat_human(_nearby_human):
+		_nearby_human = {}
+		GameState.show_toast("You ate a human. Nutritious.")
 
 ## Re-link a shared object we already possess on the server (session restore:
 ## the player reloaded while shapeshifted, so the local _active_object reference

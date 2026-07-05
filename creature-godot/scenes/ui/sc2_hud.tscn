@@ -135,6 +135,12 @@ grow_vertical = 0
 alignment = 2
 theme_override_constants/separation = 10
 
+[node name="EatButton" type="Button" parent="ActionBar"]
+custom_minimum_size = Vector2(188, 56)
+layout_mode = 2
+visible = false
+text = "Eat Human"
+
 [node name="StealButton" type="Button" parent="ActionBar"]
 custom_minimum_size = Vector2(188, 56)
 layout_mode = 2

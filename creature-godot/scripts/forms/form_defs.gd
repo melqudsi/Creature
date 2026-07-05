@@ -18,6 +18,7 @@ const PYRAMID := "pyramid"
 const HOUSE := "house"
 const MEMPHIS_TIGER := "memphis_tiger"
 const MEMPHIS_BEAR := "memphis_bear"
+const HUMAN := "human"
 
 const DEFAULT_FORM := ALIEN
 
@@ -47,6 +48,9 @@ const FORMS := {
 	# but can perch on trees (creature.gd).
 	MEMPHIS_TIGER: {"display": "Memphis Tiger", "speed": 6.6, "radius": 0.32, "kind": "zoo_tiger", "visual": "tiger"},
 	MEMPHIS_BEAR: {"display": "Memphis Grizzly Bear", "speed": 1.1, "radius": 0.44, "kind": "zoo_bear", "visual": "bear"},
+	# Human disguise (Slice 9). Slightly quicker than the alien worm, but soft:
+	# dies to vehicles, buses, zoo predators, and explosions like anyone else.
+	HUMAN: {"display": "Human", "speed": 1.2, "radius": 0.3, "kind": "human", "visual": "human"},
 }
 
 const DEATH_ALTIMA := "You got Altima'd."
@@ -62,6 +66,8 @@ const DEATH_TIGER := "The Memphis Tiger had you for lunch."
 const DEATH_BEAR := "The Memphis Grizzly Bear had you for lunch."
 const DEATH_ANIMAL_VEHICLE := "Roadkill at the zoo."
 const DEATH_ANIMAL_FIGHT := "Nature is metal at the Memphis Zoo."
+const DEATH_HUMAN_VEHICLE := "Jaywalking in Memphis. Bold."
+const DEATH_HUMAN_EATEN := "Something ate you. It wasn't from around here."
 
 static func is_zoo_animal(key: String) -> bool:
 	return key == MEMPHIS_TIGER or key == MEMPHIS_BEAR
@@ -262,6 +268,20 @@ static func resolve_player_death(my_key: String, other_kind: String) -> Dictiona
 				"zoo_tiger", "zoo_bear":
 					out.die = true
 					out.reason = DEATH_ANIMAL_FIGHT
+		"human":
+			match other_kind:
+				"vehicle":
+					out.die = true
+					out.reason = DEATH_HUMAN_VEHICLE
+				"mata_bus":
+					out.die = true
+					out.reason = DEATH_BUS
+				"zoo_tiger":
+					out.die = true
+					out.reason = DEATH_TIGER
+				"zoo_bear":
+					out.die = true
+					out.reason = DEATH_BEAR
 	return out
 
 static func explosion_kills(key: String) -> bool:

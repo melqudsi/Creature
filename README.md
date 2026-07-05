@@ -177,7 +177,28 @@ Phase 4 + mobile input fixes (`build 2026-07-03i`):
 
 ---
 
-## Explosives, Chargers, and map-tree pass (`build 2026-07-05g`, current)
+## Traffic hazards, campus, money floor (`build 2026-07-05j`, current)
+
+- **Impatient drivers** — NPC vehicle patience at a full stop cut from 8.5s to **4s** before they drive through whoever's blocking the lane.
+- **Pothole trap** — NPC vehicles never brake for a player shapeshifted into a pothole (nobody sees a hole in the road); driving over one **wrecks the vehicle** (wreck FX + toast), and a replacement spawns ~12s later.
+- **Propane/grill ram** — an NPC vehicle that rams a player-propane/BBQ-grill now dies in the blast too: the explosion plays, the vehicle is removed, and a replacement spawns ~12s later.
+- **U of M campus halls** — the three campus buildings swapped from generic houses to a dedicated multi-story hall/dorm mesh (red brick, limestone trim, window rows, columned entrance).
+- **Smart money floor** — clients keep a minimum of **12 idle money stacks** on the board: every ~60s (jittered, with a fresh recount to avoid double-seeding between clients) the shortfall is reseeded at random open Downtown/Midtown tiles (`network_service.gd::_maybe_topup_money_stacks`).
+
+---
+
+## Human NPCs (`build 2026-07-05i`)
+
+- **Human pedestrians** — ~40 client-local NPC humans (`npc_humans.gd`) with randomized gender, skin tone, shirt/pants/shoe colors, and shared-per-gender hairstyles; ~a third of the women wear a crop top + short skirt variant. Procedural biped rig with hip/shoulder limb pivots (`object_mesh.gd::build_human/animate_biped`) drives a proper walk cycle.
+- **Sidewalk pathing** — humans walk the sidewalk lanes flanking every street; at a lane end (or on a random whim) they hop to a crossing sidewalk, turn around, or detour into open ground before rejoining. ~30% are full-time open-ground roamers. Calm humans never path onto roads.
+- **Panic mode** — an **alien-form** creature inside a human's forward vision cone (~4.5 tiles, 140°) sends them sprinting away with both arms waving overhead; sneak up from behind and they never see you. Panicked humans ignore road avoidance and can get squished by traffic (which doesn't brake for them). Players disguised as vehicles/objects/humans trigger nothing.
+- **Fully mortal** — humans die to NPC vehicles, moving player vehicles/buses, moving player tiger/bear, and explosions. Every squish/eat leaves a **blood splat**; a replacement human reseeds elsewhere after ~14s (shapeshift claims backfill in ~4s) so the population holds.
+- **Become / Eat** — an alien next to a human gets the usual **Become Human** prompt (you wear that NPC's exact outfit; new `human` form, 1.2x speed, dies to everything lethal) plus a new **Eat Human** button.
+- **Alien-only name tags** — remote players now show their name floating overhead **only while in alien form**; any disguise (vehicle, object, zoo animal, human) hides the tag so disguises actually work against other players.
+
+---
+
+## Explosives, Chargers, and map-tree pass (`build 2026-07-05g`)
 
 - **Propane** — tank mesh is now red; fresh/reset seeds place propane only in **North Memphis** and **Midtown**.
 - **BBQ Grill** — new shapeshiftable explosive unit seeded near a sparse subset of houses. It uses the same red propane tank in its mesh, has a **Detonate** special, and moves faster than the propane tank.
@@ -237,6 +258,82 @@ flowchart TB
 | **Godot** | `creature-godot/` (web export at **repo root** → GitHub Pages) | Supabase session + position save + **1.5s poll for other players** | SC2-inspired 3D RTS | **Deployed** — current game |
 
 Godot shares the Supabase **project** with the web client and polls the same `creatures` table (~1.5s) to show other players as remote worms. Web and Godot are separate codebases pivoting toward a new game direction.
+
+---
+
+## Godot Implementation Notes
+
+These notes consolidate the Godot-specific implementation details into this root README so there is one source of truth.
+
+### Slice Internals
+
+- **Forms and world objects** — `FormDefs` owns per-form speed/radius/kind/visual, carry rules, explosion lethality, and the kill matrix. `ObjectMesh` builds the shared procedural meshes used by both world props and shapeshifted players. `WorldObject` stores the shared object state (`object_id`, `type_key`, `spawn_tile`, money ownership, safe-house ownership).
+- **Object possession sync** — `world_objects` positions are tile/grid coords, same as `creatures.x/y`. Becoming an object marks its row `possessed`, hiding the standalone prop so the possessing player’s synced form is not duplicated. Pop-out releases the row back to `idle` at the drop tile.
+- **Client-local kills** — a client only decides whether its own player dies. Remote blast damage and remote melee death are not server-authoritative in this prototype.
+- **Remote death movement** — remote creatures snap instead of interpolate when a server position jump exceeds `REMOTE_SNAP_TILES`; this keeps dead players from visibly walking back to the dump.
+- **Form scale** — object forms cancel the creature root’s `_body_scale` on `body_root` via `_form_body_scale()`, so a shapeshifted object matches its source prop at 1:1 scale.
+- **Money internals** — carried money is `state='carried'` plus `possessed_by=<carrier uid>`. `Creature.carried_object_ids()` is local authority so carried props do not flicker on stale polls. Combining remains client-local; `_local_authority` and `_tombstones` in `world_map.gd` protect recent local changes from in-flight rows.
+- **Smoke and abductions** — smoke clouds and Pyramid abductions reuse transient `world_objects` rows. `WorldMap` intercepts those row types during sync and registers temporary effects instead of creating normal `WorldObject` props.
+- **Traffic claiming** — stopped NPC traffic is client-local until claimed. Claiming despawns the local NPC and creates a shared possessed `world_objects` row (`altima`, `bus`, or `charger`) so the vehicle persists after pop-out.
+- **Safe houses** — safe-house ownership is stored in `owner_name` segments like `home:x,y|safe:NAME`; `WorldObject.parse_safe_owner()` and `WorldMap.safe_house_for()` keep the HUD and respawn choice in sync.
+- **Admin reset** — `NetworkService.admin_reset_world_objects()` deletes the shared table contents and reseeds from `_build_world_object_seed()`, which aggregates the current seed groups. Add future seed groups there so reset and top-up behavior stay complete.
+
+### Godot Run
+
+Requirements: **Godot 4.7+** (Forward+) and the shared Supabase project with anonymous auth enabled.
+
+Open `creature-godot/project.godot` in Godot and press **F5**.
+
+Boot chain:
+
+```text
+main.gd _ready()
+  -> await NetworkService.boot()              # auth + load existing session profile
+  -> show onboarding if no profile exists     # login/register/continue
+  -> _begin_world() -> world_map.spawn_player()
+  -> NetworkService.start_creature_poll(...)  # when online
+  -> camera follow
+```
+
+Boot is silent on success. Offline boot toasts **"Could not reach server — starting locally"**.
+
+> **Engine-virtual naming gotcha:** world entry is `_begin_world()`, not `_enter_world()`. `_enter_world` is a `Node3D` engine virtual that Godot auto-invokes on tree entry, before boot/onboarding. Never name game methods after engine virtuals (`_ready`, `_process`, `_enter_world`, `_exit_world`, `_input`, etc.) unless intentionally overriding them.
+
+### Godot Export Settings
+
+| Setting | Value |
+|---------|-------|
+| Export path | `../index.html` (repo root for GitHub Pages) |
+| Custom HTML shell | `res://web/custom_shell.html` |
+| COI headers | Off (`ensure_cross_origin_isolation_headers=false`) |
+| Thread support | Off (`variant/thread_support=false`) |
+| PWA orientation | Any (`orientation=0`) |
+
+Godot can silently reserialize export settings. After export, verify COI headers off, orientation any, thread support off, and restore unrelated `project.godot` churn if needed.
+
+### Godot Key Files
+
+| File | Role |
+|------|------|
+| `creature-godot/scripts/forms/form_defs.gd` | Forms, speeds/radii, kind/visual, carry rules, kill matrix |
+| `creature-godot/scripts/forms/object_mesh.gd` | Procedural meshes shared by forms and world props |
+| `creature-godot/scripts/world/world_object.gd` | Shared/interactive object node, money labels, safe-house metadata |
+| `creature-godot/scripts/world/world_map.gd` | Map build, object config/spawn/sync, explosions, transient FX |
+| `creature-godot/scripts/world/npc_traffic.gd` | Client-local traffic, braking, claiming stopped vehicles |
+| `creature-godot/scripts/world/zoo_animals.gd` | Client-local tiger/bear exhibit animals, wandering, claiming, respawn |
+| `creature-godot/scripts/world/npc_humans.gd` | Client-local pedestrians: sidewalk/roam AI, panic, deaths, become/eat |
+| `creature-godot/scripts/autoload/network_service.gd` | Supabase auth/REST, world-object seed/top-up/reset, web bridge |
+| `creature-godot/scripts/autoload/game_state.gd` | Shared runtime state, registries, signals |
+| `creature-godot/scripts/main.gd` | Boot/onboarding/world entry, input forwarding |
+| `creature-godot/scripts/units/creature.gd` | Player/remote forms, movement, shapeshift, contacts, specials, death |
+| `creature-godot/scripts/world/grid_nav.gd` | A* pathfinding and obstacle avoidance |
+| `creature-godot/scripts/camera/rts_camera.gd` | Tap-to-move, pinch/mouse zoom, camera follow |
+| `creature-godot/scripts/ui/creature_create.gd` | Login/register/continue onboarding |
+| `creature-godot/scripts/ui/pattern_pad.gd` | 3x3 pattern-lock input |
+| `creature-godot/scripts/ui/sc2_hud.gd` | HUD buttons, region label, admin panel/logs, respawn choice |
+| `creature-godot/web/custom_shell.html` | PWA shell, splash/loading UI, `CreatureNet` fetch/localStorage bridge |
+| `creature-godot/export-web.ps1` | Web export helper and splash conversion |
+| `creature-godot/export_presets.cfg` | Web export preset |
 
 ---
 
@@ -425,8 +522,6 @@ Top-right **admin** button in [`scripts/ui/sc2_hud.gd`](creature-godot/scripts/u
 
 Onboarding: [`scripts/ui/creature_create.gd`](creature-godot/scripts/ui/creature_create.gd), [`scenes/ui/creature_create.tscn`](creature-godot/scenes/ui/creature_create.tscn).
 
-Details: [`creature-godot/README.md`](creature-godot/README.md)
-
 ### Run in editor
 
 Open `creature-godot/project.godot` → **F5**.
@@ -459,7 +554,7 @@ Or from the editor:
 
 ### Build stamp + PWA cache-busting
 
-- `GameConfig.BUILD_ID` (currently **`build 2026-07-04f`**) is shown bottom-right in the web shell and on the onboarding screen so users can confirm they loaded a fresh build. **Bump this string on every new build you ship** (and match the `#build-stamp` literal in `creature-godot/web/custom_shell.html`) whenever you re-export the web build.
+- `GameConfig.BUILD_ID` (currently **`build 2026-07-05g`**) is shown bottom-right in the web shell and on the onboarding screen so users can confirm they loaded a fresh build. **Bump this string on every new build you ship** (and match the `#build-stamp` literal in `creature-godot/web/custom_shell.html`) whenever you re-export the web build.
 - Godot's default service worker is cache-first and never `skipWaiting()`s, which caused the recurring "old cached build keeps loading" bug. `custom_shell.html` now runs `setupServiceWorkerAutoUpdate()`: on reload it calls `registration.update()`, and on `updatefound` posts `'update'` to the new worker → `controllerchange` triggers a one-time reload. It is skipped on the dev-server path (which already unregisters SWs).
 
 | Export setting | Value | Why |
@@ -663,4 +758,3 @@ Use `class_name Creature` and typed references. Generic `Node3D` + `grid_pos` ca
 
 - [Supabase multiplayer pattern](docs/supabase-multiplayer-guide.md)
 - [Godot porting notes](creature-godot/docs/godot-porting-notes.md)
-- [Godot client README](creature-godot/README.md) — export steps, dev mode, PWA

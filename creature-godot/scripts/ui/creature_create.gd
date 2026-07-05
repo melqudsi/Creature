@@ -20,6 +20,7 @@ signal profile_ready
 @onready var action_btn: Button = $Panel/ActionBtn
 @onready var back_btn: Button = $Panel/BackBtn
 @onready var title_label: Label = $Panel/Title
+@onready var author_label: Label = $Panel/AuthorLabel
 @onready var status_label: Label = $Panel/StatusLabel
 
 const MIN_PATTERN_DOTS := 4
@@ -56,6 +57,8 @@ func _set_mode(mode: String) -> void:
 	pattern_pad.clear()
 	var choosing := mode == "choose"
 	mode_row.visible = choosing
+	if author_label:
+		author_label.visible = choosing
 	back_btn.visible = not choosing
 	name_edit.visible = not choosing
 	pattern_label.visible = not choosing
@@ -67,13 +70,13 @@ func _set_mode(mode: String) -> void:
 	match mode:
 		"choose":
 			title_label.text = "CREATURE"
-			_set_status("Log in, or register a new creature.")
+			_set_status("")
 			_refresh_continue_button()
 		"register":
-			title_label.text = "REGISTER"
+			title_label.text = "NEW PLAYER"
 			pattern_label.text = "CHOOSE A PATTERN (4+ DOTS)"
 			pattern_note.text = "Swipe across the dots to connect them — you'll enter this pattern to log in"
-			action_btn.text = "REGISTER"
+			action_btn.text = "OK"
 			_set_status("")
 			_position_pattern_block(true)
 			call_deferred("_focus_name_field")
