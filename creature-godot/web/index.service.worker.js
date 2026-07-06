@@ -6,7 +6,7 @@
 /** @type {string} */
 const CACHE_VERSION = '1783073946|27592060';
 /** @type {string} */
-const CACHE_PREFIX = 'Creature RTS-sw-cache-';
+const CACHE_PREFIX = 'CREATURE-sw-cache-';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
 /** @type {string} */
 const OFFLINE_URL = 'index.offline.html';

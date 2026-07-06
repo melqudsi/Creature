@@ -353,8 +353,9 @@ func _maybe_cleanup_landfill_junk(rows: Array) -> Array:
 # Smart money floor (Slice 9): keep a minimum number of loose stacks in play.
 # ---------------------------------------------------------------------------
 
-## Minimum idle (uncarried, uncombined) money stacks scattered on the board.
-const MONEY_STACK_FLOOR := 12
+## Minimum idle stacks world-wide AND per region (see _maybe_topup_money_stacks).
+const MONEY_STACK_FLOOR := 36
+const MONEY_PER_REGION_FLOOR := 2
 ## How often each client re-evaluates the floor.
 const MONEY_TOPUP_INTERVAL_MS := 60_000
 
@@ -374,23 +375,42 @@ func _maybe_topup_money_stacks(rows: Array) -> void:
 	if now < _money_topup_next_ms:
 		return
 	_money_topup_next_ms = now + MONEY_TOPUP_INTERVAL_MS + randi_range(0, 30_000)
-	if _count_idle_money_stacks(rows) >= MONEY_STACK_FLOOR:
-		return
-	# Below the floor: recount from a FRESH fetch to close the race window
-	# (another client may have just topped up).
+	# Fresh fetch so we don't double-seed against another client.
 	var recheck := await fetch_world_objects()
 	if not recheck.get("ok", false):
 		return
-	var count := _count_idle_money_stacks(recheck.get("rows", []))
-	if count >= MONEY_STACK_FLOOR:
-		return
+	rows = recheck.get("rows", [])
 	var payload: Array = []
-	for i in MONEY_STACK_FLOOR - count:
+	# Keep at least a couple of loose stacks in every playable region.
+	for entry in GameConfig.money_spawn_regions():
+		var rect: Rect2i = entry["rect"]
+		var regional := _count_idle_money_stacks_in_rect(rows, rect)
+		for _i in maxi(0, MONEY_PER_REGION_FLOOR - regional):
+			var tile := GameConfig.random_open_tile_in_rect(rect)
+			payload.append({"type": "money_stack", "x": tile.x, "y": tile.y, "state": "idle"})
+	# Global floor on top — still reseed if the whole map is dry.
+	var count := _count_idle_money_stacks(rows)
+	for _i in maxi(0, MONEY_STACK_FLOOR - count):
 		var tile := GameConfig.random_open_tile()
 		payload.append({"type": "money_stack", "x": tile.x, "y": tile.y, "state": "idle"})
+	if payload.is_empty():
+		return
 	var created := await seed_world_objects(payload)
 	if not created.is_empty():
-		_log("Money floor: auto-seeded %d stacks (%d -> %d)" % [created.size(), count, MONEY_STACK_FLOOR])
+		_log("Money floor: auto-seeded %d stacks (global %d, target %d+regional)" \
+			% [created.size(), count, MONEY_STACK_FLOOR])
+
+func _count_idle_money_stacks_in_rect(rows: Array, rect: Rect2i) -> int:
+	var n := 0
+	for row in rows:
+		if typeof(row) != TYPE_DICTIONARY:
+			continue
+		if str(row.get("type", "")) != "money_stack" or str(row.get("state", "idle")) != "idle":
+			continue
+		var ti := Vector2i(int(floor(float(row.get("x", 0.0)))), int(floor(float(row.get("y", 0.0)))))
+		if rect.has_point(ti):
+			n += 1
+	return n
 
 func _count_idle_money_stacks(rows: Array) -> int:
 	var n := 0
@@ -478,13 +498,13 @@ func carry_world_object(object_id: String, user_id: String, owner_name: String =
 	var patch := {"state": "carried", "possessed_by": user_id}
 	if _owner_name_column_available and not owner_name.is_empty():
 		patch["owner_name"] = owner_name
-	update_world_object(object_id, patch)
+	await update_world_object(object_id, patch)
 
 func drop_money_object(object_id: String, x: float, y: float, owner_name: String) -> void:
 	var patch := {"state": "idle", "possessed_by": null, "x": x, "y": y}
 	if _owner_name_column_available:
 		patch["owner_name"] = owner_name if not owner_name.is_empty() else null
-	update_world_object(object_id, patch)
+	await update_world_object(object_id, patch)
 
 func create_world_object(fields: Dictionary) -> Dictionary:
 	if not _online or not _world_objects_available:

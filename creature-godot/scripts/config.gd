@@ -24,7 +24,7 @@ const DEFAULT_CREATURE_NAME := "Creature"
 
 ## Visible build stamp so a loaded build can be identified at a glance.
 ## Keep this in sync with the build-stamp string in web/custom_shell.html.
-const BUILD_ID := "build 2026-07-05l"
+const BUILD_ID := "build 2026-07-06c"
 
 ## Landfill Dump: the spawn/respawn zone (now inside South Memphis — old-world
 ## coords + OLD_WORLD_OFFSET). All new players and respawns appear here.
@@ -37,10 +37,9 @@ const BUS_STOP_RECT := Rect2i(46, 98, 6, 6)
 
 ## BBQ Smoker economy (Slice 3). The smoker only generates money while a player
 ## is possessing it AND it's parked near a house — an active, defendable choice,
-## not a passive faucet. The world stack cap keeps the map from flooding.
+## not a passive faucet.
 const SMOKER_GEN_INTERVAL_SEC := 18.0
 const SMOKER_NEAR_HOUSE_TILES := 3.0
-const MONEY_STACK_WORLD_CAP := 20
 
 ## Smoke cloud special (BBQ Smoker): synced to everyone as a temporary
 ## world_objects row; hides remote players + loose money inside the radius.
@@ -201,34 +200,49 @@ static func slice8_seed_objects() -> Array:
 			break
 	return out
 
-## Starter money piles (Slice 2) — merged into shared seed on first poll / upgrade.
+## Starter money piles (Slice 2) — a few stacks in every playable region.
 static func money_seed_objects() -> Array:
-	return [
-		{"key": "money_stack", "tile": _old(Vector2(3, 20))},
-		{"key": "money_stack", "tile": _old(Vector2(5, 19))},
-		{"key": "money_stack", "tile": _old(Vector2(14, 8))},
-		{"key": "money_stack", "tile": _old(Vector2(18, 15))},
-		{"key": "money_stack", "tile": _old(Vector2(22, 12))},
-	]
+	var out: Array = []
+	for entry in money_spawn_regions():
+		var rect: Rect2i = entry["rect"]
+		for _i in 2:
+			out.append({"key": "money_stack", "tile": random_open_tile_in_rect(rect)})
+	return out
 
-static func _old(tile: Vector2) -> Vector2:
-	return tile + Vector2(OLD_WORLD_OFFSET)
+## Playable Memphis regions where money should appear (river + bridge excluded).
+static func money_spawn_regions() -> Array:
+	var out: Array = []
+	for r in MemphisLayout.REGIONS:
+		var name := str(r.get("name", ""))
+		if name == "Mississippi River" or name == "Hernando de Soto Bridge":
+			continue
+		out.append({"name": name, "rect": r["rect"] as Rect2i})
+	return out
 
-## A random walkable tile for admin money spawns. Confined to the inner loop
-## (Downtown + Midtown) so spawned stacks land where the action is, not out in
-## Collierville with no minimap to find them.
-static func random_open_tile() -> Vector2:
-	var rect := Rect2i(16, 20, 52, 36)
+## Pick a walkable tile inside one region rect.
+static func random_open_tile_in_rect(rect: Rect2i) -> Vector2:
 	var blocked := MemphisLayout.blocked_tiles()
-	for _attempt in 40:
+	for _attempt in 48:
 		var ti := Vector2i(
 			randi_range(rect.position.x, rect.end.x - 1),
 			randi_range(rect.position.y, rect.end.y - 1)
 		)
-		if blocked.has(ti):
+		if blocked.has(ti) or MemphisLayout.is_water(ti):
 			continue
 		return Vector2(ti)
-	return LANDFILL_CENTER + Vector2(2, 0)
+	var center := rect.get_center()
+	return Vector2(center)
+
+## A random walkable tile anywhere on the map (used for admin spawns / top-up).
+static func random_open_tile() -> Vector2:
+	var regions := money_spawn_regions()
+	if regions.is_empty():
+		return LANDFILL_CENTER + Vector2(2, 0)
+	var entry: Dictionary = regions.pick_random()
+	return random_open_tile_in_rect(entry["rect"] as Rect2i)
+
+static func _old(tile: Vector2) -> Vector2:
+	return tile + Vector2(OLD_WORLD_OFFSET)
 
 ## Clamp a drop/scatter position to the map AND keep it out of the river —
 ## money flung into the water would be unreachable forever.

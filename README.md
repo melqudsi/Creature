@@ -12,7 +12,7 @@ Multiplayer **alien shapeshifting** sandbox (pivot). Players spawn as aliens at 
 
 The Phase-1 fun loop from the PDF is built in the Godot client:
 
-- **Forms & shapeshifting** — `alien` (default worm) plus `altima`, `magnolia_tree`, `pothole`, `propane_tank`. Stand near an interactive object → **Become** (1s hold) → your body becomes that object with its speed/collision/kill rules. **Pop Out** returns you to alien and drops the object where you're standing. Forms are defined centrally in [`creature-godot/scripts/forms/form_defs.gd`](creature-godot/scripts/forms/form_defs.gd); shared procedural meshes in [`scripts/forms/object_mesh.gd`](creature-godot/scripts/forms/object_mesh.gd). A shapeshifted form renders at the **same 1:1 size** as its source world prop.
+- **Forms & shapeshifting** — `alien` (default worm) plus `altima`, `magnolia_tree`, `pothole`, `propane_tank`. Stand near an interactive object → **Become** (1s hold) → your body becomes that object with its speed/collision/kill rules. **Pop Out** returns you to alien; the object **stays where you parked it** and you step off beside it (rooted pyramid/safe house: structure stays put, alien steps aside). Forms are defined centrally in [`creature-godot/scripts/forms/form_defs.gd`](creature-godot/scripts/forms/form_defs.gd); shared procedural meshes in [`scripts/forms/object_mesh.gd`](creature-godot/scripts/forms/object_mesh.gd). A shapeshifted form renders at the **same 1:1 size** as its source world prop.
 - **Landfill Dump** — spawn/respawn zone (bottom-left) with starter junk. `GameConfig.LANDFILL_RECT` / `LANDFILL_CENTER`.
 - **Kill/collision matrix** — Altima squishes aliens; tree/pothole/building/propane wreck an Altima; propane explodes (bright, visible blast + light) with a lethal radius. Death shows a funny line and respawns you at the dump. **Kills are CLIENT-LOCAL:** each client only ever decides whether *its own* player dies (remote blast damage is not synced in Slice 1).
 - **World-object shared state (Supabase)** — interactive objects live in a shared `public.world_objects` table so all clients agree on them. Becoming an object marks it `possessed` (hidden as a standalone prop for everyone → no duplicate); popping out releases it `idle` at your current spot so it **persists for everyone, even across disconnect**. The client **degrades gracefully** if the table doesn't exist yet (falls back to client-local placement, logs a notice).
@@ -42,10 +42,10 @@ Until `migration-world-objects.sql` is run, interactive objects stay client-loca
 Physical, persistent, synced **money** plus two **transport forms** (Steps 3 & 4 of the PDF). Money objects reuse the same `public.world_objects` table as Slice 1 — new `type` values (`money_stack`, `money_bag`, `vault`), no new table.
 
 - **Three money tiers** — Stack (T1) → Bag (T2) → Vault (T3), distinct procedural meshes (`ObjectMesh`).
-- **Pick up / drop** — HUD **Pick Up** / **Drop** buttons (shown when eligible/carrying). Carried money floats attached to your model and slows you down (heavier tiers = slower).
+- **Pick up / drop** — HUD **Pick Up** / **Drop** buttons (shown when eligible/carrying). Carried money floats attached to your model (no speed penalty).
 - **Per-form carrying** (`FormDefs.carry_check()`) — **Alien**: one stack or one bag. **Shopping Cart**: up to 4 stacks or one bag. **Altima**: 3 stacks or one bag. **MATA Bus**: up to 3 bags or one vault (only vault hauler).
 - **Combining** — dropping two matching tiers close together merges them (Stack+Stack=Bag, Bag+Bag=Vault) with a green sparkle; the combiner becomes owner.
-- **Ownership + stealing** — bags/vaults show a floating **"NAME's Money Bag / Vault"** label. Haul someone else's bag/vault into the **claim zone** (the Landfill Dump) and drop it to steal ownership. Stacks stay ownerless.
+- **Ownership + stealing** — bags/vaults show a floating **"NAME's Money Bag / Vault"** label. Stacks stay ownerless. **Pick up** or **Steal** someone else's bag/vault and it re-brands to you immediately (Slice 7 — `pick_up_nearest()` / `steal_from_nearest()` PATCH `owner_name` on carry). **Landfill claim zone** is a fallback: drop a bag/vault you still don't own inside the Landfill Dump and it steals on drop. **Combine always stamps the combiner's name** on the result; drop PATCHes are awaited before combine so server rows don't lag behind with the old owner.
 - **Drop on death** — dying scatters carried money at the death spot (owner labels preserved) — the revenge/steal loop.
 - **New forms + kill matrix** — **Shopping Cart** and **MATA Bus** are shapeshiftable (`cart` / `bus` props). Bus crushes alien/altima/cart when *moving*; dies at buildings/trees and to propane; shrugs off potholes. Every death has a killer-specific message.
 - **Squish FX** — squished aliens/carts leave a fading blood splat (client-local).
@@ -73,7 +73,7 @@ Physical, persistent, synced **money** plus two **transport forms** (Steps 3 & 4
 Step 6 of the PDF (the last Phase-1 system) plus the Step-5 leftover. Money now ENTERS the economy instead of just circulating:
 
 - **BBQ Smoker** — new shapeshiftable prop seeded at the new **BBQ Corner** region (near the houses at the top of the map; the HUD region label knows it, and **Bus Stop** too). Slow (0.6x), can't kill anything, dies to a **moving bus** or explosions — but an Altima **can't** kill it (per the PDF it's vulnerable to *theft*, not squishing: raiders must stop and grab).
-- **Money generation** — the smoker earns a **money stack every ~18s ONLY while player-possessed AND parked near a house** (`SMOKER_GEN_INTERVAL_SEC`, `SMOKER_NEAR_HOUSE_TILES`). Parked in the open it toasts "Park near houses to sell BBQ". Going AFK-asleep stops the earning (no idle farming). Generation is capped at **20 loose stacks world-wide** (`MONEY_STACK_WORLD_CAP`) — at cap it toasts "Market's flooded — combine some money first", pushing players toward the combine loop.
+- **Money generation** — the smoker earns a **money stack every ~18s ONLY while player-possessed AND parked near a house** (`SMOKER_GEN_INTERVAL_SEC`, `SMOKER_NEAR_HOUSE_TILES`). Parked in the open it toasts "Park near houses to sell BBQ". Going AFK-asleep stops the earning (no idle farming). There is no world-wide cap on loose stacks.
 - **Smoke Cloud special** — 10s cloud on a 20s cooldown, synced to all players via a temporary `smoke_cloud` world-object row (no schema change). Remote players and loose money inside the ~3-tile radius are **invisible to everyone else**; the deployer deletes the row when it ends, and any client cleans up stale clouds from a deployer who died/disconnected (row age via `updated_at`).
 - **Carrying** — smoker hauls 1 bag or up to 2 stacks (a raider can't kill the owner AND drive off with everything in one trip).
 - **Explosion money scatter (Step 5 gap)** — explosions now fling nearby loose money 1.5–3 tiles outward to synced positions. Scattered, never destroyed (design rule).
@@ -108,7 +108,7 @@ Game-feel batch from the July feature list (Phase 1 of 4 — see the todo phases
 - **Contextual money buttons** — Pick Up/Drop buttons now name the item and telegraph combines: "Pick Up Money Bag", "Combine → Vault" (`creature.gd::pickup_label()/drop_label()`). Carried loot renders full-size overhead instead of shrunken.
 - **Death rework** — on death the camera zooms in on the corpse, a short pause + red "Respawning in 3/2/1…" countdown plays before the respawn at The Dump (`apply_death` → `_run_respawn_countdown`).
 - **Kill feed for everyone** — deaths broadcast a transient `kill_event` row through `world_objects` (message in `owner_name`, victim uid in `possessed_by` so the victim isn't double-toasted). Every other client toasts it once (`_kill_events_seen`) and any client garbage-collects rows older than 20s. No schema change.
-- **Propane detonate** — possessing a propane tank turns the special button into **Detonate**: kills the player ("You detonated. On purpose. Respect.") and triggers the normal chain-reaction explosion. Propane players also die when a vehicle rams them (propane added to `explosion_kills`).
+- **Propane detonate** — possessing a propane tank turns the special button into **Detonate**: kills the player ("You detonated. On purpose. Respect.") and triggers the normal explosion (with chain reaction — see `build 2026-07-06c`). Propane players also die when a **moving vehicle** rams them.
 - **Explosion money demotion** — combined money near a blast splits down one tier (vault → 2 bags, bag → 2 stacks; bags keep the owner) and the pieces fling outward to free tiles; loose stacks just scatter (`world_map.gd::_demote_money/_fling_money`).
 - **Movement feel** — ease-in/ease-out on start/stop (`_move_ease`), prop speed bump (pothole 0.45, magnolia 0.5, propane 0.8, smoker 0.9, bus 1.3, cart 1.6), Altima burst 2.2x, and vehicles get **+35% on roads** (`ROAD_SPEED_MULT`).
 - **Pinch-zoom tap fix** — legacy release-gating removed; mobile now issues move on finger down with emulated-mouse dedupe (see Slice 7).
@@ -177,13 +177,30 @@ Phase 4 + mobile input fixes (`build 2026-07-03i`):
 
 ---
 
+## Gameplay polish batch (`build 2026-07-06c`, current)
+
+July 6 pass — speed, money, explosions, pop-out, and ownership fixes:
+
+- **Form speeds** — MATA bus **2.2**, pothole **0.85**, magnolia/tree **0.9**, BBQ grill **2.0** (was slower across the board).
+- **Browser tab title** — **CREATURE** everywhere (`project.godot`, PWA manifest, web shell/service worker).
+- **Money economy** — removed the world-wide loose-stack cap (`MONEY_STACK_WORLD_CAP`); smoker generation no longer stops at a flood limit. Floor raised to **36 global + 2 per region**; seed/top-up uses all playable Memphis regions, not just Downtown/Midtown.
+- **Carry speed** — carrying money no longer slows movement.
+- **Money ownership** — pickup/steal PATCHes `owner_name` immediately; combine always stamps the combiner and **awaits drop PATCHes** before merging so vault labels don't lag behind with the victim's name.
+- **Human NPC facing** — sidewalk/roam humans now lerp-rotate to face travel direction (`npc_humans.gd::_update_facing()`); lane-based facing during sidewalk walks.
+- **Explosions (synced + lethal)** — blasts broadcast via transient `explosion` world-object rows so every client applies the same lethal radius to **their own player**, **NPC traffic**, **NPC humans**, and **zoo exhibit animals**. Alien-form players die in blast range.
+- **Explosion chain reaction** — propane tanks and BBQ grills inside a blast radius **domino-detonate** (idle props consumed + respawn ~3s later; shapeshifted propane/grill players die). Capped at 32 blasts per wave.
+- **Propane contact rule** — walking into a propane tank or BBQ grill as an alien (or other non-vehicle) **does not** detonate it. Only **moving vehicles/buses** ramming them (plus chain blasts and manual **Detonate**) trigger explosions.
+- **Pop out** — non-rooted forms: the object **stays at its parked tile/rotation**; only the alien relocates to a free tile beside it. Position sync flushes immediately after pop-out.
+
+---
+
 ## Traffic hazards, campus, money floor (`build 2026-07-05j`)
 
 - **Impatient drivers** — NPC vehicle patience at a full stop cut from 8.5s to **4s** before they drive through whoever's blocking the lane.
 - **Pothole trap** — NPC vehicles never brake for a player shapeshifted into a pothole (nobody sees a hole in the road); driving over one **wrecks the vehicle** (wreck FX + toast), and a replacement spawns ~12s later.
 - **Propane/grill ram** — an NPC vehicle that rams a player-propane/BBQ-grill now dies in the blast too: the explosion plays, the vehicle is removed, and a replacement spawns ~12s later.
 - **U of M campus halls** — the three campus buildings swapped from generic houses to a dedicated multi-story hall/dorm mesh (red brick, limestone trim, window rows, columned entrance).
-- **Smart money floor** — clients keep a minimum of **12 idle money stacks** on the board: every ~60s (jittered, with a fresh recount to avoid double-seeding between clients) the shortfall is reseeded at random open Downtown/Midtown tiles (`network_service.gd::_maybe_topup_money_stacks`).
+- **Smart money floor** — clients keep a minimum of **36 idle money stacks** world-wide plus **2 per playable region** (every Memphis region except the river/bridge): every ~60s (jittered, with a fresh recount to avoid double-seeding between clients) the shortfall is reseeded at random open tiles in the short region (`network_service.gd::_maybe_topup_money_stacks`). Initial world seed also places **2 stacks per region**.
 
 ---
 
@@ -198,7 +215,7 @@ Phase 4 + mobile input fixes (`build 2026-07-03i`):
 
 ---
 
-## Predator eats & bus squish (`build 2026-07-05l`, current)
+## Predator eats & bus squish (`build 2026-07-05l`)
 
 - **Tiger / bear players** — while moving, zoo-predator players can run down **other players** (aliens, human-disguised players, shopping carts) and **NPC humans**; victims resolve on their own client via the kill matrix. Exhibit tigers/bears remain edible too. Hunt gate is **moving** (not a speed burst), so slow bear shuffles still count.
 - **MATA bus squish** — a moving **MATA bus** (player-driven or NPC traffic) squishes **aliens**, **human-disguised players**, **shopping carts**, and **NPC humans**. Parked buses remain harmless.
@@ -275,7 +292,7 @@ These notes consolidate the Godot-specific implementation details into this root
 ### Slice Internals
 
 - **Forms and world objects** — `FormDefs` owns per-form speed/radius/kind/visual, carry rules, explosion lethality, and the kill matrix. `ObjectMesh` builds the shared procedural meshes used by both world props and shapeshifted players. `WorldObject` stores the shared object state (`object_id`, `type_key`, `spawn_tile`, money ownership, safe-house ownership).
-- **Object possession sync** — `world_objects` positions are tile/grid coords, same as `creatures.x/y`. Becoming an object marks its row `possessed`, hiding the standalone prop so the possessing player’s synced form is not duplicated. Pop-out releases the row back to `idle` at the drop tile.
+- **Object possession sync** — `world_objects` positions are tile/grid coords, same as `creatures.x/y`. Becoming an object marks its row `possessed`, hiding the standalone prop so the possessing player’s synced form is not duplicated. Pop-out releases the row back to `idle` at the **object's parked tile** (alien steps aside).
 - **Client-local kills** — a client only decides whether its own player dies. Remote blast damage and remote melee death are not server-authoritative in this prototype.
 - **Remote death movement** — remote creatures snap instead of interpolate when a server position jump exceeds `REMOTE_SNAP_TILES`; this keeps dead players from visibly walking back to the dump.
 - **Form scale** — object forms cancel the creature root’s `_body_scale` on `body_root` via `_form_body_scale()`, so a shapeshifted object matches its source prop at 1:1 scale.
@@ -561,7 +578,7 @@ Or from the editor:
 
 ### Build stamp + PWA cache-busting
 
-- `GameConfig.BUILD_ID` (currently **`build 2026-07-05g`**) is shown bottom-right in the web shell and on the onboarding screen so users can confirm they loaded a fresh build. **Bump this string on every new build you ship** (and match the `#build-stamp` literal in `creature-godot/web/custom_shell.html`) whenever you re-export the web build.
+- `GameConfig.BUILD_ID` (currently **`build 2026-07-06c`**) is shown bottom-right in the web shell and on the onboarding screen so users can confirm they loaded a fresh build. **Bump this string on every new build you ship** (and match the `#build-stamp` literal in `creature-godot/web/custom_shell.html`) whenever you re-export the web build.
 - Godot's default service worker is cache-first and never `skipWaiting()`s, which caused the recurring "old cached build keeps loading" bug. `custom_shell.html` now runs `setupServiceWorkerAutoUpdate()`: on reload it calls `registration.update()`, and on `updatefound` posts `'update'` to the new worker → `controllerchange` triggers a one-time reload. It is skipped on the dev-server path (which already unregisters SWs).
 
 | Export setting | Value | Why |
@@ -677,6 +694,7 @@ Use `class_name Creature` and typed references. Generic `Node3D` + `grid_pos` ca
 - [x] Admin button visible/openable only for the player named `MOE`
 - [x] Slice 6 — tree shapeshift, Memphis landmarks, Pyramid abduction special
 - [x] Slice 7 — pattern-lock login/register, safe houses, steal, respawn choice, exit/idle logout, pyramid resize, vehicle wreck FX, decoupled position sync, mobile tap-to-move fixes (`build 2026-07-03i`)
+- [x] Gameplay polish — form speed bumps, CREATURE tab title, all-region money seed/floor, no carry slowdown, synced lethal explosions + chain reaction, propane vehicle-only contact, pop-out object-stays fix, money ownership on pickup/combine (`build 2026-07-06c`)
 
 ---
 

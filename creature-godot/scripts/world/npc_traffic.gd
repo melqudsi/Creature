@@ -253,6 +253,15 @@ func _form_key_for_type(type_key: String) -> String:
 		_:
 			return FormDefs.ALTIMA
 
+func explosion_hit(world_pos: Vector3, radius: float) -> void:
+	var center := Vector2(world_pos.x, world_pos.z)
+	for v in _vehicles.duplicate():
+		var node: Node3D = v["node"]
+		if not is_instance_valid(node):
+			continue
+		if center.distance_to(Vector2(node.position.x, node.position.z)) <= radius:
+			_crash_vehicle(v, true)
+
 # ---------------------------------------------------------------------------
 # Claiming (shapeshift into a stopped NPC vehicle)
 # ---------------------------------------------------------------------------

@@ -739,19 +739,7 @@ func _current_speed() -> float:
 	if FormDefs.is_vehicle(form_key) \
 			and MemphisLayout.is_road(Vector2i(int(floor(grid_pos.x)), int(floor(grid_pos.y)))):
 		mult *= ROAD_SPEED_MULT
-	mult *= _carry_speed_factor()
 	return GameConfig.MOVE_TILES_PER_SEC * mult
-
-## Carrying money makes you "heavier and harder to move" — the heavier the loot
-## (bag > stack, vault heaviest), the bigger the slowdown.
-func _carry_speed_factor() -> float:
-	if _carried.is_empty():
-		return 1.0
-	_prune_carried()
-	var weight := 0.0
-	for entry in _carried:
-		weight += FormDefs.tier_weight(int(entry.get("tier", 0)))
-	return clampf(1.0 / (1.0 + 0.35 * weight), 0.2, 1.0)
 
 ## Drop stale carried entries whose world object was freed (e.g. another client
 ## combined/deleted the shared row). Without this the phantom weight slows the
@@ -1127,7 +1115,7 @@ func adopt_possessed_object(obj: WorldObject) -> void:
 	obj.consume()
 
 ## Called by the HUD "Pop Out" button. Returns to alien; the worn object
-## reappears next to us.
+## stays put and the alien steps off beside it.
 func pop_out() -> void:
 	if not is_player or is_dead or is_alien_form():
 		return
@@ -1138,23 +1126,25 @@ func pop_out() -> void:
 	var was_rooted := was_pyramid or (form_key == FormDefs.HOUSE \
 		and _active_object and is_instance_valid(_active_object) \
 		and not _active_object.safe_owner.is_empty())
-	var drop_tile := GameConfig.safe_drop_tile(grid_pos + Vector2(0.9, 0.0))
+	var step := Vector2(1.2, 0.6) if was_rooted else Vector2(0.9, 0.0)
+	var out_tile := GameState.free_drop_tile(grid_pos + step)
 	if _active_object and is_instance_valid(_active_object):
 		if was_rooted:
-			# Stays exactly where it stood; the alien steps off instead.
 			_active_object.respawn_at(_active_object.spawn_world_pos)
 			if not was_pyramid and not _active_object.object_id.is_empty():
 				_note_local_authority(_active_object.object_id)
 				NetworkService.release_world_object(_active_object.object_id,
 					_active_object.spawn_tile.x, _active_object.spawn_tile.y)
 		else:
-			# Drop the object just beside us at our CURRENT location and leave it
-			# there. In shared mode this writes the new position + idle state to
-			# the server, so it persists for everyone (survives our disconnect).
-			_active_object.respawn_at(GameConfig.tile_to_world(drop_tile))
+			# Object stays where we parked it; only the alien relocates.
+			var here := grid_pos
+			var here_world := GameConfig.tile_to_world(here)
+			_active_object.respawn_at(here_world)
+			_active_object.spawn_world_pos = here_world
+			_active_object.spawn_tile = here
 			if not _active_object.object_id.is_empty():
 				_note_local_authority(_active_object.object_id)
-				NetworkService.release_world_object(_active_object.object_id, drop_tile.x, drop_tile.y)
+				NetworkService.release_world_object(_active_object.object_id, here.x, here.y)
 	_active_object = null
 	if not _claimed_zoo_form.is_empty():
 		var zoo := GameState.zoo_animals
@@ -1163,18 +1153,17 @@ func pop_out() -> void:
 		_claimed_zoo_form = ""
 		_claimed_zoo_enc = Rect2i()
 	_bear_perched = false
-	if was_rooted:
-		# Step out of the rooted structure's tile onto open ground.
-		var out_tile := GameState.free_drop_tile(grid_pos + Vector2(1.2, 0.6))
-		position = GameConfig.tile_to_world(out_tile)
-		grid_pos = out_tile
+	grid_pos = out_tile
+	position = GameConfig.tile_to_world(out_tile)
+	_update_transform(true, 0.0)
 	# Carried loot stays with the vehicle we popped out of — the alien walks
 	# away empty-handed (a cart's stacks stay AT the cart, not on the alien).
 	if not _carried.is_empty():
-		_drop_carried_entries(_carried.duplicate(), drop_tile)
+		_drop_carried_entries(_carried.duplicate(), out_tile)
 		_carried.clear()
 		update_carried_display([])
 	apply_form(FormDefs.ALIEN)
+	_sync_player_position(true)
 	GameState.show_toast("Popped out to alien")
 
 ## Form specials: Altima speed burst; BBQ Smoker smoke cloud; explosive detonate.
@@ -1332,8 +1321,7 @@ func _deploy_smoke_cloud() -> void:
 		NetworkService.delete_world_object(id)
 
 ## The smoker only earns while PARKED NEAR HOUSES — an active, defendable spot
-## (BBQ Corner is built for it), not a passive money faucet. A world-wide cap on
-## loose stacks keeps the map from flooding.
+## (BBQ Corner is built for it), not a passive money faucet.
 func _update_smoker_economy(delta: float) -> void:
 	if form_key != FormDefs.BBQ_SMOKER:
 		_smoker_gen_t = 0.0
@@ -1352,19 +1340,7 @@ func _update_smoker_economy(delta: float) -> void:
 	if _smoker_gen_t < GameConfig.SMOKER_GEN_INTERVAL_SEC:
 		return
 	_smoker_gen_t = 0.0
-	if _count_world_stacks() >= GameConfig.MONEY_STACK_WORLD_CAP:
-		GameState.show_toast("Market's flooded — combine some money first")
-		return
 	_generate_money_stack()
-
-## Every money-stack object in the local world (idle AND carried both count
-## toward the economy cap).
-func _count_world_stacks() -> int:
-	var n := 0
-	for obj in GameState.world_objects:
-		if is_instance_valid(obj) and obj.tier == FormDefs.TIER_STACK:
-			n += 1
-	return n
 
 ## Spawn a fresh stack on a tile right beside the smoker (synced when online).
 func _generate_money_stack() -> void:
@@ -1602,6 +1578,9 @@ func on_money_stolen(object_id: String, thief_name: String) -> void:
 ## claim ownership if we hauled someone's bag/vault into a claim zone, then try to
 ## combine matching tiers that land close together.
 func drop_all() -> void:
+	await _drop_all_impl()
+
+func _drop_all_impl() -> void:
 	if _carried.is_empty():
 		return
 	var base_tile := grid_pos
@@ -1630,11 +1609,11 @@ func drop_all() -> void:
 		if not obj.object_id.is_empty():
 			_note_local_authority(obj.object_id)
 			# Preserve the existing owner label when we aren't claiming.
-			NetworkService.drop_money_object(obj.object_id, drop_tile.x, drop_tile.y, obj.owner_name)
+			await NetworkService.drop_money_object(obj.object_id, drop_tile.x, drop_tile.y, obj.owner_name)
 		dropped.append(obj)
 	_carried.clear()
 	update_carried_display([])
-	_run_combines(dropped)
+	await _run_combines(dropped)
 
 ## Small fan-out so multiple dropped items don't stack on the exact same spot.
 func _drop_offset(index: int) -> Vector2:
@@ -1726,6 +1705,8 @@ func _combine_pair(a: WorldObject, b: WorldObject) -> void:
 	var mid_tile := GameState.free_drop_tile(Vector2(GameConfig.world_to_tile(mid_world)))
 	mid_world = GameConfig.tile_to_world(mid_tile)
 	var type_key := _money_type_key(new_tier)
+	# Combiner always owns the result (design rule). Stolen bags should already
+	# carry our name from pickup/steal, but never inherit the victim's label.
 	var owner := creature_name
 	_remove_money_object(a)
 	_remove_money_object(b)
@@ -1734,13 +1715,19 @@ func _combine_pair(a: WorldObject, b: WorldObject) -> void:
 	var new_id := ""
 	if NetworkService.is_online():
 		var fields := {"type": type_key, "x": mid_tile.x, "y": mid_tile.y, "state": "idle"}
-		if new_tier >= FormDefs.TIER_BAG:
+		if new_tier >= FormDefs.TIER_BAG and not owner.is_empty():
 			fields["owner_name"] = owner
 		var created := await NetworkService.create_world_object(fields)
 		new_id = str(created.get("id", ""))
+		if not new_id.is_empty() and new_tier >= FormDefs.TIER_BAG and not owner.is_empty():
+			var row_owner := str(created.get("owner_name", "")).strip_edges()
+			if row_owner != owner:
+				await NetworkService.update_world_object(new_id, {"owner_name": owner})
 	# Spawn locally right away for snappy feedback (matched by id on the next poll).
 	if GameState.world_map and is_instance_valid(GameState.world_map) and GameState.world_map.has_method("spawn_money_object"):
 		GameState.world_map.spawn_money_object(type_key, mid_world, owner, new_id)
+	if not new_id.is_empty():
+		_note_local_authority(new_id)
 
 func _money_type_key(tier: int) -> String:
 	match tier:
@@ -1828,6 +1815,11 @@ func _resolve_contacts() -> void:
 		if d > my_r + obj.radius:
 			continue
 		var res := FormDefs.resolve_player_death(form_key, obj.kind)
+		# Propane / BBQ grills detonate only when rammed by a moving vehicle or
+		# bus — not when an alien (or other form) walks into them.
+		if res.explode and obj.kind == "propane":
+			if not FormDefs.is_vehicle(form_key) or not is_moving:
+				continue
 		if res.die:
 			if res.explode:
 				GameState.explosion_requested.emit(obj.position, EXPLOSION_RADIUS)

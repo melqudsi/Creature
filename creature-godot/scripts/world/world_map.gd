@@ -45,6 +45,14 @@ var _scenery_trees: Dictionary = {}   # Vector2i -> WorldObject
 var _tree_homes_done: Dictionary = {} # row id -> true
 var _pyramid_obj: WorldObject = null
 var _abductions_seen: Dictionary = {}
+## Explosion sync rows already played (transient world_objects type "explosion").
+var _explosions_seen: Dictionary = {}
+## Chain-reaction guard for the current blast wave (object/creature keys).
+var _explosion_chain_guard: Dictionary = {}
+var _explosion_chain_depth: int = 0
+var _explosion_chain_count: int = 0
+const EXPLOSION_CHAIN_MAX := 32
+const EXPLOSIVE_RESPAWN_DELAY := 3.0
 
 ## Slice 7: scenery houses by tile (claimable like trees), retired house home
 ## tiles, per-player carried loot rows from the latest poll (drives the Steal
@@ -962,6 +970,22 @@ func sync_world_objects(rows: Array) -> void:
 				note_deleted(id)
 				NetworkService.delete_world_object(id)
 			continue
+		# Explosions: transient rows broadcast blast position + radius so every
+		# client applies lethal radius to their own player and local NPCs.
+		if type_key == "explosion":
+			if not _explosions_seen.has(id):
+				_explosions_seen[id] = true
+				# The caster already ran the full blast (FX + scatter); remotes
+				# only need damage + FX from the synced row.
+				if str(row.get("possessed_by", "")) != my_uid:
+					var rad := float(_row_owner_name(row))
+					if rad <= 0.0:
+						rad = Creature.EXPLOSION_RADIUS
+					spawn_explosion(GameConfig.tile_to_world(tile), rad, true)
+			if _row_age_sec(row) > 12.0:
+				note_deleted(id)
+				NetworkService.delete_world_object(id)
+			continue
 		# A claimed scenery tree entered the shared world: hide the original
 		# scenery tree at its home tile (encoded in owner_name) for everyone.
 		if type_key == "tree" and not _tree_homes_done.has(id):
@@ -1445,10 +1469,30 @@ func _activate_shared_objects() -> void:
 	_fallback_interactive.clear()
 
 ## Spawn a big, bright, clearly-visible explosion FX and apply its lethal radius
-## to the local player (client-local; cross-client blast damage is NOT synced in
-## Slice 1). A fireball sphere + a quick white flash shell + an OmniLight burst so
-## it reads at a glance even in daylight and at any zoom.
-func spawn_explosion(world_pos: Vector3, radius: float) -> void:
+## to the local player and client-local NPCs. Nearby propane tanks / BBQ grills
+## (and players wearing those forms) chain-detonate into further blasts.
+## `from_sync` is true when another client's broadcast row triggered this —
+## skip re-broadcast but still scatter money and propagate the chain locally.
+func spawn_explosion(world_pos: Vector3, radius: float, from_sync: bool = false) -> void:
+	if _explosion_chain_depth == 0:
+		_explosion_chain_guard.clear()
+		_explosion_chain_count = 0
+	_explosion_chain_depth += 1
+	_explosion_chain_count += 1
+	if _explosion_chain_count > EXPLOSION_CHAIN_MAX:
+		_explosion_chain_depth -= 1
+		return
+	_play_explosion_fx(world_pos, radius)
+	_apply_explosion_hits(world_pos, radius)
+	_scatter_money(world_pos, maxf(radius * 1.6, 3.0))
+	if not from_sync:
+		_broadcast_explosion(world_pos, radius)
+	_propagate_explosion_chain(world_pos, radius)
+	_explosion_chain_depth -= 1
+	if _explosion_chain_depth == 0:
+		_explosion_chain_guard.clear()
+
+func _play_explosion_fx(world_pos: Vector3, radius: float) -> void:
 	var origin := world_pos + Vector3(0, 0.5, 0)
 	var peak := maxf(radius, 1.5)
 
@@ -1508,13 +1552,108 @@ func spawn_explosion(world_pos: Vector3, radius: float) -> void:
 		flash.queue_free()
 		light.queue_free())
 
+func _apply_explosion_hits(world_pos: Vector3, radius: float) -> void:
 	var player := GameState.player_creature
 	if player and is_instance_valid(player) and player.has_method("apply_explosion"):
 		player.apply_explosion(world_pos, radius)
+	var hum := GameState.npc_humans
+	if hum != null and is_instance_valid(hum) and hum.has_method("explosion_hit"):
+		hum.explosion_hit(world_pos, radius)
+	var zoo := GameState.zoo_animals
+	if zoo != null and is_instance_valid(zoo) and zoo.has_method("explosion_hit"):
+		zoo.explosion_hit(world_pos, radius)
+	var traffic := GameState.npc_traffic
+	if traffic != null and is_instance_valid(traffic) and traffic.has_method("explosion_hit"):
+		traffic.explosion_hit(world_pos, radius)
 
-	# Blasts scatter nearby loose money — never destroy it (design rule). Only
-	# the client that spawned the explosion runs this, so there's no PATCH race.
-	_scatter_money(world_pos, maxf(radius * 1.6, 3.0))
+## Detonate idle propane / BBQ props and shapeshifted players inside `radius`.
+func _propagate_explosion_chain(center: Vector3, radius: float) -> void:
+	var origin := Vector2(center.x, center.z)
+	var pending: Array = []
+	for obj in GameState.world_objects:
+		if not is_instance_valid(obj) or obj.consumed:
+			continue
+		if not FormDefs.is_explosive_kind(obj.kind):
+			continue
+		var key := _explosion_chain_key_for_object(obj)
+		if _explosion_chain_guard.has(key):
+			continue
+		var opos := Vector2(obj.position.x, obj.position.z)
+		if origin.distance_to(opos) > radius + obj.radius:
+			continue
+		pending.append({"kind": "world", "key": key, "pos": obj.position, "obj": obj})
+	for cid in GameState.creatures:
+		var c: Creature = GameState.creatures[cid]
+		if c == null or not is_instance_valid(c) or c.is_dead or c.is_spawning:
+			continue
+		if not FormDefs.is_explosive_kind(FormDefs.kind(c.form_key)):
+			continue
+		var ckey := _explosion_chain_key_for_creature(cid)
+		if _explosion_chain_guard.has(ckey):
+			continue
+		var cpos := Vector2(c.position.x, c.position.z)
+		if origin.distance_to(cpos) > radius + FormDefs.radius(c.form_key):
+			continue
+		pending.append({"kind": "creature", "key": ckey, "pos": c.position, "creature": c})
+	for entry in pending:
+		_explosion_chain_guard[entry["key"]] = true
+		if str(entry["kind"]) == "world":
+			_consume_explosive_object(entry["obj"])
+		else:
+			_detonate_explosive_creature(entry["creature"])
+		spawn_explosion(entry["pos"], Creature.EXPLOSION_RADIUS, true)
+
+func _explosion_chain_key_for_object(obj: WorldObject) -> String:
+	if not obj.object_id.is_empty():
+		return "obj:%s" % obj.object_id
+	var t := Vector2i(int(floor(obj.position.x)), int(floor(obj.position.z)))
+	return "obj:local:%d,%d" % [t.x, t.y]
+
+func _explosion_chain_key_for_creature(creature_id: String) -> String:
+	return "creature:%s" % creature_id
+
+func _consume_explosive_object(obj: WorldObject) -> void:
+	if obj == null or not is_instance_valid(obj) or obj.consumed:
+		return
+	var respawn_pos := obj.spawn_world_pos if obj.spawn_world_pos != Vector3.ZERO else obj.position
+	obj.consume()
+	if not obj.object_id.is_empty():
+		note_local_authority(obj.object_id, EXPLOSIVE_RESPAWN_DELAY)
+	else:
+		_schedule_explosive_respawn(obj, respawn_pos)
+
+func _detonate_explosive_creature(c: Creature) -> void:
+	if c == null or not is_instance_valid(c) or c.is_dead:
+		return
+	if c.is_player and c.has_method("apply_death"):
+		c.apply_death(FormDefs.DEATH_PROPANE, true)
+
+func _schedule_explosive_respawn(obj: WorldObject, pos: Vector3) -> void:
+	if obj == null or not is_instance_valid(obj):
+		return
+	var timer := get_tree().create_timer(EXPLOSIVE_RESPAWN_DELAY)
+	timer.timeout.connect(func() -> void:
+		if is_instance_valid(obj):
+			obj.respawn_at(pos))
+
+func _broadcast_explosion(world_pos: Vector3, radius: float) -> void:
+	if not NetworkService.is_online():
+		return
+	var tile := Vector2(GameConfig.world_to_tile(world_pos))
+	var created: Dictionary = await NetworkService.create_world_object({
+		"type": "explosion",
+		"x": tile.x,
+		"y": tile.y,
+		"state": "idle",
+		"owner_name": str(radius),
+		"possessed_by": NetworkService.get_user_id(),
+	})
+	var id := str(created.get("id", ""))
+	if id.is_empty():
+		return
+	await get_tree().create_timer(12.0).timeout
+	note_deleted(id)
+	NetworkService.delete_world_object(id)
 
 ## Blasts near money: loose stacks get flung to nearby open tiles, and COMBINED
 ## money breaks DOWN a tier (vault -> two bags, bag -> two stacks). Explosions

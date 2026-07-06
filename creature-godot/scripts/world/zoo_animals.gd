@@ -142,6 +142,15 @@ func predator_hit(predator_form: String, pos: Vector2) -> bool:
 			return true
 	return false
 
+func explosion_hit(world_pos: Vector3, radius: float) -> void:
+	var center := Vector2(world_pos.x, world_pos.z)
+	for a in _animals.duplicate():
+		var node: Node3D = a["node"]
+		if not is_instance_valid(node):
+			continue
+		if center.distance_to(Vector2(node.position.x, node.position.z)) <= radius:
+			_kill_npc_animal(a)
+
 func _check_player_kills() -> void:
 	var player := GameState.player_creature
 	if player == null or not is_instance_valid(player) or player.is_dead or player.is_spawning:

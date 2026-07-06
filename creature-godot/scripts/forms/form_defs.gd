@@ -30,15 +30,15 @@ const TIER_VAULT := 3
 const FORMS := {
 	ALIEN: {"display": "Alien", "speed": 1.0, "radius": 0.35, "kind": "alien", "visual": "alien"},
 	ALTIMA: {"display": "Altima", "speed": 3.0, "radius": 0.55, "kind": "vehicle", "visual": "altima"},
-	MAGNOLIA: {"display": "Magnolia Tree", "speed": 0.5, "radius": 0.5, "kind": "tree", "visual": "magnolia"},
-	POTHOLE: {"display": "Pothole", "speed": 0.45, "radius": 0.5, "kind": "pothole", "visual": "pothole"},
+	MAGNOLIA: {"display": "Magnolia Tree", "speed": 0.9, "radius": 0.5, "kind": "tree", "visual": "magnolia"},
+	POTHOLE: {"display": "Pothole", "speed": 0.85, "radius": 0.5, "kind": "pothole", "visual": "pothole"},
 	PROPANE: {"display": "Propane Tank", "speed": 0.8, "radius": 0.45, "kind": "propane", "visual": "propane"},
-	BBQ_GRILL: {"display": "BBQ Grill", "speed": 1.15, "radius": 0.5, "kind": "propane", "visual": "bbq_grill"},
+	BBQ_GRILL: {"display": "BBQ Grill", "speed": 2.0, "radius": 0.5, "kind": "propane", "visual": "bbq_grill"},
 	SHOPPING_CART: {"display": "Shopping Cart", "speed": 1.6, "radius": 0.42, "kind": "cart", "visual": "cart"},
-	MATA_BUS: {"display": "MATA Bus", "speed": 1.3, "radius": 0.75, "kind": "mata_bus", "visual": "mata_bus"},
+	MATA_BUS: {"display": "MATA Bus", "speed": 2.2, "radius": 0.75, "kind": "mata_bus", "visual": "mata_bus"},
 	BBQ_SMOKER: {"display": "BBQ Smoker", "speed": 0.9, "radius": 0.5, "kind": "smoker", "visual": "smoker"},
 	CHARGER: {"display": "Dodge Charger With Temp Tags", "speed": 3.8, "radius": 0.55, "kind": "vehicle", "visual": "charger"},
-	TREE: {"display": "Tree", "speed": 0.5, "radius": 0.5, "kind": "tree", "visual": "tree"},
+	TREE: {"display": "Tree", "speed": 0.9, "radius": 0.5, "kind": "tree", "visual": "tree"},
 	# The Pyramid does not move. The Pyramid abducts.
 	PYRAMID: {"display": "The Pyramid", "speed": 0.0, "radius": 2.2, "kind": "building", "visual": "pyramid"},
 	# A walking house. Slow, uncrushable, claimable as a personal safe house
@@ -97,6 +97,10 @@ static func radius(key: String) -> float:
 
 static func kind(key: String) -> String:
 	return get_cfg(key).kind
+
+## Propane tanks and BBQ grills (kind "propane") detonate when caught in a blast.
+static func is_explosive_kind(k: String) -> bool:
+	return k == "propane"
 
 static func visual(key: String) -> String:
 	return get_cfg(key).visual

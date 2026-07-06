@@ -46,7 +46,6 @@ func _ready() -> void:
 	_build_lanes()
 	for i in TARGET_HUMANS:
 		_spawn_human()
-	GameState.explosion_requested.connect(_on_explosion)
 
 ## One walkable lane per sidewalk strip: two per street, along its long axis.
 ## `cross` is the fixed tile coordinate on the short axis.
@@ -128,8 +127,9 @@ func _process(delta: float) -> void:
 			_move_sidewalk(h, delta)
 		else:
 			_move_roam(h, delta)
+		_update_facing(h, delta)
 		_animate(h, delta)
-	_check_kills()
+		_check_kills()
 
 # ---------------------------------------------------------------------------
 # Movement
@@ -153,7 +153,6 @@ func _step(h: Dictionary, move_tiles: Vector2, delta: float, speed: float) -> vo
 	h["facing"] = move / step_len if step_len > 0.0 else move_tiles / dist
 	h["facing"] = (h["facing"] as Vector2).normalized()
 	h["phase"] = float(h["phase"]) + delta * (13.0 if speed > WALK_SPEED * 1.5 else 9.0)
-	node.rotation.y = ObjectMesh.quadruped_yaw(move)
 
 func _move_sidewalk(h: Dictionary, delta: float) -> void:
 	var wait := float(h["wait"])
@@ -173,6 +172,10 @@ func _move_sidewalk(h: Dictionary, delta: float) -> void:
 		_on_lane_end(h)
 		return
 	h["along"] = along
+	if lane["horizontal"]:
+		h["facing"] = Vector2(float(h["dir"]), 0.0)
+	else:
+		h["facing"] = Vector2(0.0, float(h["dir"]))
 	var here := _human_tile(h)
 	var to := _lane_point(lane, along) - here
 	_step(h, to, delta, WALK_SPEED * 1.5)
@@ -360,6 +363,18 @@ func _animate(h: Dictionary, _delta: float) -> void:
 	var panic: bool = float(h["panic_t"]) > 0.0
 	ObjectMesh.animate_biped(mesh, float(h["phase"]), 1.0 if moving else 0.06, panic)
 
+func _update_facing(h: Dictionary, delta: float) -> void:
+	if not h.get("moving", false):
+		return
+	var node: Node3D = h["node"]
+	if node == null or not is_instance_valid(node):
+		return
+	var f: Vector2 = h["facing"]
+	if f.length_squared() < 0.0001:
+		return
+	var target := atan2(f.x, f.y) + PI
+	node.rotation.y = lerp_angle(node.rotation.y, target, clampf(delta * 14.0, 0.0, 1.0))
+
 # ---------------------------------------------------------------------------
 # Deaths (anything lethal)
 # ---------------------------------------------------------------------------
@@ -402,7 +417,7 @@ func _check_kills() -> void:
 	elif player.is_moving and FormDefs.is_zoo_animal(player.form_key):
 		predator_hit(player.form_key, Vector2(player.position.x, player.position.z))
 
-func _on_explosion(world_pos: Vector3, radius: float) -> void:
+func explosion_hit(world_pos: Vector3, radius: float) -> void:
 	var center := Vector2(world_pos.x, world_pos.z)
 	for h in _humans.duplicate():
 		var node: Node3D = h["node"]
