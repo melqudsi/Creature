@@ -19,7 +19,7 @@ extends Node3D
 ##   buses, moving player zoo predators, and explosions. A replacement
 ##   spawns elsewhere so the population holds.
 
-const TARGET_HUMANS := 40
+const TARGET_HUMANS := 64
 const WALK_SPEED := 0.55
 const PANIC_SPEED := 1.75
 const CLAIM_RADIUS := 1.35
@@ -73,7 +73,10 @@ func _lane_point(lane: Dictionary, along: float) -> Vector2:
 		return Vector2(float(lane["start"]) + along, float(lane["cross"]))
 	return Vector2(float(lane["cross"]), float(lane["start"]) + along)
 
-func _spawn_human() -> void:
+## `from_building` = replacement humans (reseeds) step out of a house/tower
+## door instead of materializing on a sidewalk; they wander a beat, then the
+## normal detour logic walks them to the nearest sidewalk.
+func _spawn_human(from_building := false) -> void:
 	# Weight lane choice by length so long streets get proportional foot traffic.
 	var total := 0.0
 	for l in _lanes:
@@ -87,6 +90,8 @@ func _spawn_human() -> void:
 			break
 	var along := randf_range(0.5, float(lane["length"]) - 0.5)
 	var tile := _lane_point(lane, along)
+	if from_building:
+		tile = _building_door_tile()
 	var params := ObjectMesh.random_human_params()
 	var node := Node3D.new()
 	var mesh := ObjectMesh.build_human(params)
@@ -99,7 +104,7 @@ func _spawn_human() -> void:
 		"params": params,
 		"node": node,
 		"mesh": mesh,
-		"mode": "roam" if roamer else "sidewalk",
+		"mode": "roam" if (roamer or from_building) else "sidewalk",
 		"roamer": roamer,          # full-time roamer vs sidewalk walker on a detour
 		"lane": lane,
 		"along": along,
@@ -114,9 +119,29 @@ func _spawn_human() -> void:
 		"facing": Vector2(0, 1),
 		"moving": false,
 	}
-	if roamer:
+	if roamer or from_building:
 		h["target"] = _pick_roam_target(tile)
+	if from_building and not roamer:
+		# Fresh out the door: wander briefly, then rejoin the nearest sidewalk.
+		h["detour_t"] = randf_range(3.0, 8.0)
 	_humans.append(h)
+
+## A walkable tile beside a random house/tower — where a replacement human
+## "steps out of" a building.
+func _building_door_tile() -> Vector2:
+	var pool: Array = []
+	pool.append_array(MemphisLayout.house_tiles())
+	pool.append_array(MemphisLayout.tower_tiles())
+	if pool.is_empty():
+		return Vector2(GameConfig.LANDFILL_CENTER)
+	for _attempt in 10:
+		var b: Vector2i = pool.pick_random()
+		for off in [Vector2i(0, 1), Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, -1), Vector2i(1, 1)]:
+			var t: Vector2i = b + off
+			if not GameState.blocked_tiles.has(t) and not MemphisLayout.is_road(t) \
+					and not MemphisLayout.is_water(t):
+				return Vector2(t)
+	return Vector2(GameConfig.LANDFILL_CENTER)
 
 func _process(delta: float) -> void:
 	for h in _humans:
@@ -129,7 +154,9 @@ func _process(delta: float) -> void:
 			_move_roam(h, delta)
 		_update_facing(h, delta)
 		_animate(h, delta)
-		_check_kills()
+	# Once per FRAME, not per human — this used to sit inside the loop above,
+	# making kill checks O(humans² × vehicles) and tanking the frame rate.
+	_check_kills()
 
 # ---------------------------------------------------------------------------
 # Movement
@@ -442,7 +469,7 @@ func _respawn_later(delay: float) -> void:
 	var timer := get_tree().create_timer(delay)
 	timer.timeout.connect(func() -> void:
 		if is_instance_valid(self) and _humans.size() < TARGET_HUMANS:
-			_spawn_human())
+			_spawn_human(true))
 
 # ---------------------------------------------------------------------------
 # Player interactions (Become Human / Eat Human)

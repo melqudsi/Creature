@@ -13,6 +13,7 @@ const SHOPPING_CART := "shopping_cart"
 const MATA_BUS := "mata_bus"
 const BBQ_SMOKER := "bbq_smoker"
 const CHARGER := "dodge_charger_temp_tags"
+const TRUCK := "truck"
 const TREE := "tree"
 const PYRAMID := "pyramid"
 const HOUSE := "house"
@@ -38,6 +39,10 @@ const FORMS := {
 	MATA_BUS: {"display": "MATA Bus", "speed": 2.2, "radius": 0.75, "kind": "mata_bus", "visual": "mata_bus"},
 	BBQ_SMOKER: {"display": "BBQ Smoker", "speed": 0.9, "radius": 0.5, "kind": "smoker", "visual": "smoker"},
 	CHARGER: {"display": "Dodge Charger With Temp Tags", "speed": 3.8, "radius": 0.55, "kind": "vehicle", "visual": "charger"},
+	# Pickup truck: bigger than the Altima/Charger, smaller than a MATA bus,
+	# and the only other vault hauler (two vaults fit in the bed). Its own kind
+	# ("truck") so the kill matrix can rank it above cars but below the bus.
+	TRUCK: {"display": "Truck", "speed": 3.3, "radius": 0.65, "kind": "truck", "visual": "truck"},
 	TREE: {"display": "Tree", "speed": 0.9, "radius": 0.5, "kind": "tree", "visual": "tree"},
 	# The Pyramid does not move. The Pyramid abducts.
 	PYRAMID: {"display": "The Pyramid", "speed": 0.0, "radius": 2.2, "kind": "building", "visual": "pyramid"},
@@ -60,6 +65,7 @@ const DEATH_POTHOLE := "The pothole won."
 const DEATH_PROPANE := "Propane had other plans."
 const DEATH_HOUSE := "You crashed into a house."
 const DEATH_BUS := "MATA said move."
+const DEATH_TRUCK := "A truck totaled you."
 const DEATH_SELF_DETONATE := "You detonated. On purpose. Respect."
 const DEATH_ABDUCTED := "You got abducted. Enjoy the mothership."
 const DEATH_TIGER := "The Memphis Tiger had you for lunch."
@@ -110,7 +116,7 @@ static func is_alien(key: String) -> bool:
 
 static func is_vehicle(key: String) -> bool:
 	var k := kind(key)
-	return k == "vehicle" or k == "mata_bus"
+	return k == "vehicle" or k == "mata_bus" or k == "truck"
 
 ## Altima and MATA Bus pathfind through other creatures (kills resolve on contact).
 static func ignores_units(key: String) -> bool:
@@ -146,16 +152,31 @@ static func carry_check(form_key: String, carried_tiers: Array, new_tier: int) -
 	var has_bag := carried_tiers.has(TIER_BAG)
 	var has_vault := carried_tiers.has(TIER_VAULT)
 	var stack_count := 0
+	var vault_count := 0
 	for t in carried_tiers:
 		if int(t) == TIER_STACK:
 			stack_count += 1
+		elif int(t) == TIER_VAULT:
+			vault_count += 1
 
 	if new_tier == TIER_VAULT:
-		if form_key != MATA_BUS:
-			return fail.call("%s can't carry a vault" % display(form_key))
-		if count > 0:
-			return fail.call("Bus already hauling loot")
-		return ok
+		if form_key == MATA_BUS:
+			if count > vault_count:
+				return fail.call("Bus is hauling lighter loot — drop it first")
+			if vault_count >= 4:
+				return fail.call("Bus roof is full (4 vaults)")
+			return ok
+		if form_key == TRUCK:
+			# Truck loads: 2 vaults, or 1 vault + 1 bag/stack, or bags/stacks.
+			var smalls := count - vault_count
+			if vault_count >= 2:
+				return fail.call("Truck bed is full (2 vaults)")
+			if vault_count == 1 and smalls > 0:
+				return fail.call("Truck bed is full")
+			if vault_count == 0 and smalls > 1:
+				return fail.call("No room for a vault — drop some loot first")
+			return ok
+		return fail.call("%s can't carry a vault" % display(form_key))
 
 	if new_tier == TIER_BAG:
 		if form_key == ALIEN:
@@ -168,13 +189,33 @@ static func carry_check(form_key: String, carried_tiers: Array, new_tier: int) -
 			return ok
 		if form_key == MATA_BUS:
 			if has_vault:
-				return fail.call("Vault fills the bus")
+				return fail.call("Vaults fill the bus")
 			if count >= 3:
 				return fail.call("Bus is full of bags")
+			return ok
+		if form_key == TRUCK:
+			if vault_count >= 1:
+				# One bag may ride along with a single vault.
+				if vault_count == 1 and count == 1:
+					return ok
+				return fail.call("Truck bed is full")
+			if stack_count > 0:
+				return fail.call("Truck hauls bags OR stacks, not both")
+			if count >= 3:
+				return fail.call("Truck bed is full of bags")
 			return ok
 		return fail.call("%s can't carry a bag" % display(form_key))
 
 	if new_tier == TIER_STACK:
+		if form_key == TRUCK:
+			# One stack may ride along with a single vault.
+			if vault_count == 1 and count == 1:
+				return ok
+			if has_bag or has_vault:
+				return fail.call("Truck bed is full")
+			if stack_count >= 4:
+				return fail.call("Truck bed is full")
+			return ok
 		if has_bag or has_vault:
 			return fail.call("Already carrying heavier loot")
 		match form_key:
@@ -224,6 +265,33 @@ static func resolve_player_death(my_key: String, other_kind: String) -> Dictiona
 				"mata_bus":
 					out.die = true
 					out.reason = DEATH_BUS
+				"truck":
+					# Trucks total cars in a crash.
+					out.die = true
+					out.reason = DEATH_TRUCK
+		"truck":
+			# Crash ranking: bus > truck > cars. Trucks shrug off Altimas and
+			# Chargers, wreck each other, and lose to the MATA bus.
+			match other_kind:
+				"tree":
+					out.die = true
+					out.reason = DEATH_TREE
+				"pothole":
+					out.die = true
+					out.reason = DEATH_POTHOLE
+				"building":
+					out.die = true
+					out.reason = DEATH_HOUSE
+				"propane":
+					out.die = true
+					out.explode = true
+					out.reason = DEATH_PROPANE
+				"mata_bus":
+					out.die = true
+					out.reason = DEATH_BUS
+				"truck":
+					out.die = true
+					out.reason = DEATH_TRUCK
 		"mata_bus":
 			match other_kind:
 				"tree":
@@ -237,11 +305,15 @@ static func resolve_player_death(my_key: String, other_kind: String) -> Dictiona
 					out.explode = true
 					out.reason = DEATH_PROPANE
 			# Potholes don't faze a bus — it's a Memphis bus.
+			# Trucks don't either: the bus wins that crash.
 		"alien":
 			match other_kind:
 				"vehicle":
 					out.die = true
 					out.reason = DEATH_ALTIMA if randf() < 0.5 else DEATH_ROADKILL
+				"truck":
+					out.die = true
+					out.reason = DEATH_TRUCK
 				"mata_bus":
 					out.die = true
 					out.reason = DEATH_BUS
@@ -253,7 +325,7 @@ static func resolve_player_death(my_key: String, other_kind: String) -> Dictiona
 					out.reason = DEATH_BEAR
 		"cart":
 			match other_kind:
-				"vehicle":
+				"vehicle", "truck":
 					out.die = true
 					out.reason = DEATH_ROADKILL
 				"mata_bus":
@@ -267,7 +339,7 @@ static func resolve_player_death(my_key: String, other_kind: String) -> Dictiona
 					out.reason = DEATH_BEAR
 		"propane":
 			match other_kind:
-				"vehicle", "mata_bus":
+				"vehicle", "mata_bus", "truck":
 					out.die = true
 					out.explode = true
 					out.reason = DEATH_PROPANE
@@ -280,7 +352,7 @@ static func resolve_player_death(my_key: String, other_kind: String) -> Dictiona
 					out.reason = DEATH_BUS
 		"zoo_tiger", "zoo_bear":
 			match other_kind:
-				"vehicle", "mata_bus":
+				"vehicle", "mata_bus", "truck":
 					out.die = true
 					out.reason = DEATH_ANIMAL_VEHICLE
 				"zoo_tiger", "zoo_bear":
@@ -291,6 +363,9 @@ static func resolve_player_death(my_key: String, other_kind: String) -> Dictiona
 				"vehicle":
 					out.die = true
 					out.reason = DEATH_HUMAN_VEHICLE
+				"truck":
+					out.die = true
+					out.reason = DEATH_TRUCK
 				"mata_bus":
 					out.die = true
 					out.reason = DEATH_BUS

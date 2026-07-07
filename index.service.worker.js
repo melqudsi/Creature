@@ -4,7 +4,7 @@
 // Incrementing CACHE_VERSION will kick off the install event and force
 // previously cached resources to be updated from the network.
 /** @type {string} */
-const CACHE_VERSION = '1783369753|40525525';
+const CACHE_VERSION = '1783384707|38226451';
 /** @type {string} */
 const CACHE_PREFIX = 'CREATURE-sw-cache-';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;

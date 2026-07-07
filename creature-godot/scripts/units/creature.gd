@@ -22,6 +22,7 @@ const SEGMENT_SPECS: Array[Dictionary] = [
 ## Shapeshift interaction tuning.
 const INTERACT_RADIUS := 1.15   # how close to a world object to offer "Become"
 const PYRAMID_FACING_Y := 0.0   # creature-root yaw; mesh child adds PI/4
+const MAX_TURN_LAG := 0.55      # rad the body may trail the travel direction (~31°)
 const SHAPESHIFT_TIME := 1.0    # seconds to hold near an object to transform
 const OBJECT_RESPAWN_DELAY := 3.0 # object reappears this long after you die as it
 const EXPLOSION_RADIUS := 2.2
@@ -508,7 +509,22 @@ func _update_transform(snap: bool, delta: float) -> void:
 			# Quadrupeds and the human biped model -Z as "forward".
 			if FormDefs.is_zoo_animal(form_key) or form_key == FormDefs.HUMAN:
 				target_rot += PI
-			rotation.y = lerp_angle(rotation.y, target_rot, 0.18 if snap else delta * 14.0)
+			if snap:
+				rotation.y = lerp_angle(rotation.y, target_rot, 0.18)
+			else:
+				# Loose steering: the body lazily eases toward the travel
+				# direction — that slop is intentional. Two guards keep it from
+				# getting aggressive: the blend weight is capped so a long
+				# (hitched) frame can never overshoot the target and visibly
+				# bounce back, and once the body trails the travel direction by
+				# more than MAX_TURN_LAG (sharp 90°+ turns) an extra pull eases
+				# the excess out so it never reads as "driving sideways".
+				var diff := wrapf(target_rot - rotation.y, -PI, PI)
+				var step := diff * clampf(delta * 11.0, 0.0, 0.4)
+				var lag := absf(diff) - absf(step)
+				if lag > MAX_TURN_LAG:
+					step += signf(diff) * (lag - MAX_TURN_LAG) * clampf(delta * 8.0, 0.0, 0.35)
+				rotation.y += step
 	elif form_key == FormDefs.PYRAMID:
 		rotation.y = PYRAMID_FACING_Y
 
@@ -924,6 +940,9 @@ func _complete_shapeshift() -> void:
 		position = obj.spawn_world_pos
 		grid_pos = Vector2(GameConfig.world_to_tile(position))
 		rotation.y = PYRAMID_FACING_Y
+	else:
+		# Take on the object's parked heading (how its last driver left it).
+		rotation.y = obj.rotation.y
 	apply_form(obj.form_key)
 	# Whatever the new form can't legally hold falls to the ground here.
 	_revalidate_carried_for_form()
@@ -984,6 +1003,12 @@ func _register_claimed_house(obj: WorldObject) -> void:
 	obj.owner_name = "home:%d,%d" % [home.x, home.y]
 	if wm and is_instance_valid(wm) and wm.has_method("track_shared_object"):
 		wm.track_shared_object(obj)
+	# Claiming a house takes it out of the world's housing stock — reseed a
+	# fresh shared house at a random open tile somewhere so the supply holds.
+	var reseed_tile := GameState.free_drop_tile(GameConfig.random_open_tile())
+	NetworkService.create_world_object({
+		"type": "house", "x": reseed_tile.x, "y": reseed_tile.y, "state": "idle",
+	})
 	# Popped out (or died) before the create landed? Release the row now.
 	if _active_object != obj:
 		var t := Vector2(GameConfig.world_to_tile(obj.position))
@@ -1006,6 +1031,12 @@ func _complete_npc_shapeshift() -> void:
 	var is_bus: bool = v.get("is_bus", false)
 	var vpos: Vector3 = traffic.vehicle_world_pos(v)
 	var tile := Vector2(GameConfig.world_to_tile(vpos))
+	# Capture the NPC's heading before it despawns so the claimed vehicle (and
+	# our worn form) keeps facing the way it was parked.
+	var vyaw := 0.0
+	var vnode: Node3D = v.get("node")
+	if vnode != null and is_instance_valid(vnode):
+		vyaw = vnode.rotation.y
 	traffic.claim_vehicle(v)
 	var type_key := str(v.get("type_key", "bus" if is_bus else "altima"))
 	var wm := GameState.world_map
@@ -1015,8 +1046,10 @@ func _complete_npc_shapeshift() -> void:
 	if obj == null:
 		return
 	obj.consume()
+	obj.rotation.y = vyaw
 	_active_object = obj
 	apply_form(obj.form_key)
+	rotation.y = vyaw
 	_revalidate_carried_for_form()
 	GameState.show_toast("You became a %s" % FormDefs.display(form_key))
 	# Register the new shared row in the background (snappy transform first).
@@ -1140,6 +1173,9 @@ func pop_out() -> void:
 			var here := grid_pos
 			var here_world := GameConfig.tile_to_world(here)
 			_active_object.respawn_at(here_world)
+			# Keep the parked heading too — popping out must not snap the
+			# vehicle/grill/etc back to its default rotation.
+			_active_object.rotation.y = rotation.y
 			_active_object.spawn_world_pos = here_world
 			_active_object.spawn_tile = here
 			if not _active_object.object_id.is_empty():
@@ -1392,13 +1428,18 @@ func is_carrying() -> bool:
 	return not _carried.is_empty()
 
 ## True if there is an eligible money object nearby we're allowed to pick up right
-## now (drives the HUD "Pick Up" button visibility).
+## now (drives the HUD "Pick Up" button visibility). A truck at capacity still
+## shows the button next to money — pressing it explains why the bed is full.
 func can_pick_up_now() -> bool:
-	return _nearest_pickup() != null
+	if _nearest_pickup() != null:
+		return true
+	return form_key == FormDefs.TRUCK and _nearest_money_any() != null
 
 ## HUD Pick Up button label — names what's about to be grabbed ("Pick Up Money Bag").
 func pickup_label() -> String:
 	var obj := _nearest_pickup()
+	if obj == null and form_key == FormDefs.TRUCK:
+		obj = _nearest_money_any()
 	if obj == null:
 		return "Pick Up"
 	return "Pick Up %s" % FormDefs.tier_display(obj.tier)
@@ -1766,6 +1807,19 @@ func update_carried_display(tiers: Array) -> void:
 	_carried_root = Node3D.new()
 	_carried_root.name = "CarriedLoot"
 	add_child(_carried_root)
+	# Vehicles with real cargo space show loot IN place: the truck's open bed
+	# (vaults sit inside it, not on the roof) and the bus roof (vaults side by
+	# side in a row, never stacked). Everything else floats the loot overhead.
+	if form_key == FormDefs.TRUCK:
+		# Cancel the creature-root scale (like body_root does for object forms)
+		# so the loot lines up with the bed/roof mesh exactly.
+		_carried_root.scale = Vector3.ONE * _form_body_scale()
+		_layout_carried(tiers, _truck_bed_slots(tiers.size()))
+		return
+	if form_key == FormDefs.MATA_BUS and tiers.has(FormDefs.TIER_VAULT):
+		_carried_root.scale = Vector3.ONE * _form_body_scale()
+		_layout_carried(tiers, _bus_roof_slots(tiers.size()))
+		return
 	# Carried loot renders at full world size (it used to shrink to half size,
 	# which made a hauled vault look like pocket change).
 	var y := 0.9
@@ -1774,6 +1828,34 @@ func update_carried_display(tiers: Array) -> void:
 		node.position = Vector3(0, y, 0)
 		_carried_root.add_child(node)
 		y += 0.7
+
+func _layout_carried(tiers: Array, slots: Array) -> void:
+	for i in tiers.size():
+		var node := ObjectMesh.build(_money_visual_for_tier(int(tiers[i])))
+		node.position = slots[i % slots.size()]
+		_carried_root.add_child(node)
+
+## Truck bed slots (bed floor y=0.36, interior z -0.85..0.22 — see
+## ObjectMesh._build_truck). Two vaults sit nose-to-tail inside the bed.
+func _truck_bed_slots(count: int) -> Array:
+	if count <= 1:
+		return [Vector3(0, 0.39, -0.48)]
+	if count == 2:
+		return [Vector3(0, 0.39, -0.2), Vector3(0, 0.39, -0.78)]
+	# 3-4 smaller items (bags/stacks): two side-by-side rows.
+	return [
+		Vector3(-0.17, 0.39, -0.16), Vector3(0.17, 0.39, -0.16),
+		Vector3(-0.17, 0.39, -0.62), Vector3(0.17, 0.39, -0.62),
+	]
+
+## Bus roof: up to 4 vaults in a row along the roof length (never stacked).
+func _bus_roof_slots(count: int) -> Array:
+	var out: Array = []
+	var spacing := 0.56
+	var start := -spacing * 0.5 * float(count - 1)
+	for i in count:
+		out.append(Vector3(0, 0.78, start + spacing * float(i)))
+	return out
 
 ## Drop every carried money object at the death location as idle world objects
 ## (ownership preserved — killers/others can then grab it). No combine on death.
@@ -1807,6 +1889,11 @@ func _drop_carried_on_death() -> void:
 func _resolve_contacts() -> void:
 	var my := _world_xz()
 	var my_r := FormDefs.radius(form_key)
+	# ATMs: any moving vehicle ramming one bursts it open (3 money bags).
+	if is_moving and FormDefs.is_vehicle(form_key):
+		var wm_atm := GameState.world_map
+		if wm_atm and is_instance_valid(wm_atm) and wm_atm.has_method("try_strike_atm"):
+			wm_atm.try_strike_atm(my, my_r)
 	# World objects (trees, potholes, propane, buildings...).
 	for obj in GameState.world_objects:
 		if not is_instance_valid(obj) or obj.consumed:
@@ -1823,11 +1910,13 @@ func _resolve_contacts() -> void:
 		if res.die:
 			if res.explode:
 				GameState.explosion_requested.emit(obj.position, EXPLOSION_RADIUS)
-				# The propane tank is consumed by the blast and respawns later
-				# (shared objects reappear from the next poll; local ones on timer).
-				obj.consume()
-				if obj.object_id.is_empty():
-					_schedule_object_respawn(obj, obj.spawn_world_pos)
+				# The exploded tank/grill reseeds later at a random home-region
+				# tile — never right back on the same spot.
+				var wm := GameState.world_map
+				if wm and is_instance_valid(wm) and wm.has_method("reseed_destroyed_prop"):
+					wm.reseed_destroyed_prop(obj)
+				else:
+					obj.consume()
 			apply_death(res.reason, res.explode)
 			return
 	# Remote creatures (their form is synced; a remote Altima can squish us).
@@ -1841,7 +1930,8 @@ func _resolve_contacts() -> void:
 		var other_kind := FormDefs.kind(c.form_key)
 		# A stopped vehicle is harmless: walking up to a parked Altima/bus is
 		# safe; you only die if it actually runs you over (it's moving).
-		if (other_kind == "vehicle" or other_kind == "mata_bus") and not c.is_moving:
+		if (other_kind == "vehicle" or other_kind == "mata_bus" or other_kind == "truck") \
+				and not c.is_moving:
 			continue
 		# Zoo predators only eat you when they're actually moving.
 		if (other_kind == "zoo_tiger" or other_kind == "zoo_bear") and not c.is_moving:
@@ -1956,9 +2046,15 @@ func apply_death(reason: String, exploded: bool = false, killer_name: String = "
 
 	# If we died while shapeshifted, the worn object returns to its home spot.
 	# Shared objects release on the server (visible to everyone); client-local
-	# fallback objects use the old delayed local respawn.
+	# fallback objects use the old delayed local respawn. Exception: a worn
+	# propane tank / BBQ grill that EXPLODED is destroyed — it reseeds later at
+	# a random home-region tile instead of reappearing here.
 	if _active_object and is_instance_valid(_active_object):
-		if not _active_object.object_id.is_empty():
+		var wm := GameState.world_map
+		if exploded and _active_object.kind == "propane" \
+				and wm and is_instance_valid(wm) and wm.has_method("reseed_destroyed_prop"):
+			wm.reseed_destroyed_prop(_active_object)
+		elif not _active_object.object_id.is_empty():
 			NetworkService.release_world_object(
 				_active_object.object_id, _active_object.spawn_tile.x, _active_object.spawn_tile.y)
 			_active_object.respawn_at(_active_object.spawn_world_pos)

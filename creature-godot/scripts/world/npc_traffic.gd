@@ -17,9 +17,14 @@ extends Node3D
 const TARGET_ALTIMAS := 26
 const TARGET_BUSES := 5
 const TARGET_CHARGERS := 6
+const TARGET_TRUCKS := 4
 const ALTIMA_SPEED := 3.2
 const CHARGER_SPEED := 4.1
+const TRUCK_SPEED := 3.5
 const BUS_SPEED := 2.0
+## Fresh spawns get a short collision grace so a replacement dropped into
+## traffic doesn't instantly wreck on whoever it appeared next to.
+const SPAWN_GRACE_SEC := 2.0
 ## Lanes sit half a tile either side of the divider on a 2-tile road.
 const LANE_OFFSET := 0.5
 
@@ -59,6 +64,8 @@ func _ready() -> void:
 		_spawn_vehicle("bus")
 	for i in TARGET_CHARGERS:
 		_spawn_vehicle("charger")
+	for i in TARGET_TRUCKS:
+		_spawn_vehicle("truck")
 
 func _spawn_vehicle(type_key: String) -> void:
 	# Weight road choice by length so long roads get proportional traffic.
@@ -66,12 +73,20 @@ func _spawn_vehicle(type_key: String) -> void:
 	var total := 0
 	for r in road_pool:
 		total += int(r["length"])
-	var pick := randi_range(0, total - 1)
 	var road: Dictionary = road_pool[0]
-	for r in road_pool:
-		pick -= int(r["length"])
-		if pick < 0:
-			road = r
+	var along := 1.0
+	# Retry until the spawn spot satisfies region rules (no Altimas/Chargers in
+	# Germantown/Collierville; trucks only in Bartlett/East Memphis).
+	for _attempt in 24:
+		var pick := randi_range(0, total - 1)
+		road = road_pool[0]
+		for r in road_pool:
+			pick -= int(r["length"])
+			if pick < 0:
+				road = r
+				break
+		along = randf_range(1.0, float(road["length"]) - 1.0)
+		if _spawn_pos_ok(type_key, road, along):
 			break
 	var dir := 1 if randf() < 0.5 else -1
 	var is_bus := type_key == "bus"
@@ -84,20 +99,46 @@ func _spawn_vehicle(type_key: String) -> void:
 		"speed": _traffic_speed(type_key),
 		"cur_speed": 0.0,
 		"wait": 0.0,
-		"along": randf_range(1.0, float(road["length"]) - 1.0),
+		"grace": SPAWN_GRACE_SEC,
+		"along": along,
 	}
 	_vehicles.append(v)
 	_place(v, true)
 
 func _roads_for_vehicle(type_key: String) -> Array[Dictionary]:
-	if type_key != "charger":
-		return _roads
+	var wanted: Array = []
+	match type_key:
+		"charger":
+			wanted = ["385", "Winchester Rd"]
+		"truck":
+			# Roads crossing Bartlett / East Memphis (spawn filter narrows the
+			# actual drop point to those regions).
+			wanted = ["Stage Rd", "Summer Ave", "Walnut Grove Rd", "Poplar Ave"]
+		_:
+			return _roads
 	var out: Array[Dictionary] = []
 	for r in _roads:
-		var name := str(r.get("name", ""))
-		if name == "385" or name == "Winchester Rd":
+		if wanted.has(str(r.get("name", ""))):
 			out.append(r)
 	return out if not out.is_empty() else _roads
+
+## Region rules for where each vehicle type may APPEAR (they can still drive
+## through anywhere — u-turns happen at road ends, not region borders).
+func _spawn_pos_ok(type_key: String, road: Dictionary, along: float) -> bool:
+	var rect: Rect2i = road["rect"]
+	var tile: Vector2
+	if road["horizontal"]:
+		tile = Vector2(float(rect.position.x) + along, float(rect.position.y) + 1.0)
+	else:
+		tile = Vector2(float(rect.position.x) + 1.0, float(rect.position.y) + along)
+	match type_key:
+		"altima", "charger":
+			return not GameConfig.is_in_burbs(tile)
+		"truck":
+			var reg := MemphisLayout.region_name(tile)
+			return reg == "Bartlett" or reg == "East Memphis"
+		_:
+			return true
 
 func _traffic_speed(type_key: String) -> float:
 	match type_key:
@@ -105,6 +146,8 @@ func _traffic_speed(type_key: String) -> float:
 			return BUS_SPEED
 		"charger":
 			return CHARGER_SPEED
+		"truck":
+			return TRUCK_SPEED
 		_:
 			return ALTIMA_SPEED
 
@@ -143,7 +186,12 @@ func _place(v: Dictionary, snap: bool) -> void:
 		# Smooth toward the lane target so u-turns arc instead of teleporting
 		# sideways into the opposite lane.
 		node.position = node.position.lerp(target, 0.14)
-		node.rotation.y = lerp_angle(node.rotation.y, yaw, 0.12)
+		# Steer toward the target yaw — but a U-turn (≈180°) must always sweep
+		# COUNTER-clockwise (a left turn across the road: right-hand traffic).
+		var diff := wrapf(yaw - node.rotation.y, -PI, PI)
+		if diff < -2.6:
+			diff += TAU
+		node.rotation.y += diff * 0.12
 
 func _process(delta: float) -> void:
 	var player := GameState.player_creature
@@ -152,9 +200,10 @@ func _process(delta: float) -> void:
 	for v in _vehicles:
 		var road: Dictionary = v["road"]
 		var length := float(road["length"])
-		# Brake for a live player in our lane — until patience runs out, then
-		# the driver leans on the horn and goes (squish rule).
-		var blocked := player_ok and _player_in_path(v, player)
+		v["grace"] = maxf(0.0, float(v.get("grace", 0.0)) - delta)
+		# Brake for a live player OR another vehicle in our lane — until
+		# patience runs out, then the driver leans on the horn and goes.
+		var blocked := (player_ok and _player_in_path(v, player)) or _npc_in_path(v)
 		var target_speed: float = float(v["speed"])
 		if blocked:
 			v["wait"] = float(v["wait"]) + delta
@@ -178,8 +227,11 @@ func _process(delta: float) -> void:
 			v["dir"] = 1
 		_place(v, false)
 		# A crawling/stopped vehicle is harmless (parked-vehicle rule).
-		if player_ok and cur > SAFE_SPEED:
-			_check_kill(v, player)
+		if cur > SAFE_SPEED:
+			if player_ok:
+				_check_kill(v, player)
+			_check_atm_strike(v)
+	_resolve_npc_collisions()
 
 ## True when the player stands within the vehicle's forward stopping zone.
 ## Drivers never brake for a pothole — nobody sees a hole in the road until
@@ -202,6 +254,95 @@ func _player_in_path(v: Dictionary, player: Creature) -> bool:
 	return ahead > front * 0.5 and ahead < STOP_LOOKAHEAD * GameConfig.TILE_SIZE \
 		and lateral < STOP_LATERAL * GameConfig.TILE_SIZE
 
+## True when another NPC vehicle sits in our forward stopping zone (same lane,
+## or crossing traffic directly ahead). The lateral window is tighter than the
+## player check so oncoming traffic in the opposite lane (1 tile away) never
+## reads as blocking.
+func _npc_in_path(v: Dictionary) -> bool:
+	var node: Node3D = v["node"]
+	if not is_instance_valid(node):
+		return false
+	var road: Dictionary = v["road"]
+	var dir := float(v["dir"])
+	var front := _vehicle_radius(v)
+	for other in _vehicles:
+		if other == v:
+			continue
+		var onode: Node3D = other["node"]
+		if not is_instance_valid(onode):
+			continue
+		var ahead: float
+		var lateral: float
+		if road["horizontal"]:
+			ahead = (onode.position.x - node.position.x) * dir
+			lateral = absf(onode.position.z - node.position.z)
+		else:
+			ahead = (onode.position.z - node.position.z) * dir
+			lateral = absf(onode.position.x - node.position.x)
+		if ahead > front * 0.5 and ahead < STOP_LOOKAHEAD * GameConfig.TILE_SIZE \
+				and lateral < 0.6 * GameConfig.TILE_SIZE:
+			return true
+	return false
+
+## NPC-vs-NPC wrecks: braking usually prevents these, but an impatient driver
+## (patience expired) or crossing traffic that actually slams into another
+## vehicle wrecks BOTH. Forward-arc test so opposing-lane traffic passing one
+## tile away never counts as a collision.
+func _resolve_npc_collisions() -> void:
+	var pairs: Array = []
+	for v in _vehicles:
+		if float(v["cur_speed"]) <= SAFE_SPEED or float(v.get("grace", 0.0)) > 0.0:
+			continue
+		var node: Node3D = v["node"]
+		if not is_instance_valid(node):
+			continue
+		var road: Dictionary = v["road"]
+		var dir := float(v["dir"])
+		for other in _vehicles:
+			if other == v or float(other.get("grace", 0.0)) > 0.0:
+				continue
+			var onode: Node3D = other["node"]
+			if not is_instance_valid(onode):
+				continue
+			var ahead: float
+			var lateral: float
+			if road["horizontal"]:
+				ahead = (onode.position.x - node.position.x) * dir
+				lateral = absf(onode.position.z - node.position.z)
+			else:
+				ahead = (onode.position.z - node.position.z) * dir
+				lateral = absf(onode.position.x - node.position.x)
+			var reach := (_vehicle_radius(v) + _vehicle_radius(other)) * 0.85
+			if ahead > 0.0 and ahead < reach and lateral < 0.55 * GameConfig.TILE_SIZE:
+				pairs.append([v, other])
+	for p in pairs:
+		# Crash ranking: bus > truck > cars. The heavier vehicle survives; equal
+		# weight wrecks both. _crash_vehicle is a no-op for already-removed
+		# entries, so overlapping pairs are safe.
+		var ra := _crash_rank(p[0])
+		var rb := _crash_rank(p[1])
+		if ra < rb or ra == rb:
+			_crash_vehicle(p[0], false)
+		if rb < ra or ra == rb:
+			_crash_vehicle(p[1], false)
+
+func _crash_rank(v: Dictionary) -> int:
+	if v.get("is_bus", false):
+		return 2
+	if str(v.get("type_key", "")) == "truck":
+		return 1
+	return 0
+
+## Any moving NPC vehicle that rams an ATM busts it open (world_map handles
+## the money-bag burst + the once-per-day reseed).
+func _check_atm_strike(v: Dictionary) -> void:
+	var node: Node3D = v["node"]
+	if not is_instance_valid(node):
+		return
+	var wm := GameState.world_map
+	if wm and is_instance_valid(wm) and wm.has_method("try_strike_atm"):
+		wm.try_strike_atm(Vector2(node.position.x, node.position.z), _vehicle_radius(v))
+
 func _check_kill(v: Dictionary, player: Creature) -> void:
 	var node: Node3D = v["node"]
 	var d := Vector2(node.position.x, node.position.z).distance_to(
@@ -214,16 +355,30 @@ func _check_kill(v: Dictionary, player: Creature) -> void:
 		GameState.show_toast("A %s hit your pothole!" % vehicle_display(v))
 		_crash_vehicle(v, false)
 		return
-	var other_kind := "mata_bus" if v["is_bus"] else "vehicle"
+	var npc_type := str(v.get("type_key", "altima"))
+	var other_kind := "vehicle"
+	if v["is_bus"]:
+		other_kind = "mata_bus"
+	elif npc_type == "truck":
+		other_kind = "truck"
+	# A player-driven TRUCK plows through NPC cars — only the bus beats it
+	# (and two trucks wreck each other, resolved below).
+	if FormDefs.kind(player.form_key) == "truck" and not v["is_bus"] and npc_type != "truck":
+		GameState.show_toast("Your truck wrecked a %s!" % vehicle_display(v))
+		_crash_vehicle(v, false)
+		return
 	var res := FormDefs.resolve_player_death(player.form_key, other_kind)
 	if res.die:
 		if res.explode:
 			GameState.explosion_requested.emit(player.position, Creature.EXPLOSION_RADIUS)
 		player.apply_death(res.reason, res.explode)
 		# Ramming a player-propane/BBQ-grill takes the vehicle with it (the
-		# explosion FX just played, so no extra wreck prop).
+		# explosion FX just played, so no extra wreck prop). Truck-vs-truck
+		# crashes total BOTH trucks.
 		if res.explode:
 			_crash_vehicle(v, true)
+		elif FormDefs.kind(player.form_key) == "truck" and npc_type == "truck":
+			_crash_vehicle(v, false)
 
 ## A moving NPC vehicle hit something fatal (player pothole / propane / grill):
 ## play the wreck FX (unless an explosion already covered it), remove it, and
@@ -250,6 +405,8 @@ func _form_key_for_type(type_key: String) -> String:
 			return FormDefs.MATA_BUS
 		"charger":
 			return FormDefs.CHARGER
+		"truck":
+			return FormDefs.TRUCK
 		_:
 			return FormDefs.ALTIMA
 
@@ -287,6 +444,8 @@ func vehicle_display(v: Dictionary) -> String:
 			return "MATA Bus"
 		"charger":
 			return "Dodge Charger With Temp Tags"
+		"truck":
+			return "Truck"
 		_:
 			return "Altima"
 
@@ -346,5 +505,9 @@ func hits_position_at_speed(world_pos: Vector3, radius: float) -> bool:
 	return false
 
 func _vehicle_radius(v: Dictionary) -> float:
-	return 0.75 if v.get("is_bus", false) else 0.55
+	if v.get("is_bus", false):
+		return 0.75
+	if str(v.get("type_key", "")) == "truck":
+		return 0.65
+	return 0.55
 

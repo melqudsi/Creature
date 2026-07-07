@@ -177,7 +177,35 @@ Phase 4 + mobile input fixes (`build 2026-07-03i`):
 
 ---
 
-## Gameplay polish batch (`build 2026-07-06c`, current)
+## Trucks, ATMs, respawn rules, perf (`builds 2026-07-06d`–`g`, current)
+
+Second July 6 pass — new Truck form, ATM machines, reseed overhaul, NPC upgrades, and a big perf fix:
+
+### New content (`build 2026-07-06d`)
+
+- **Truck** — new shapeshiftable vehicle (speed **3.3**, radius **0.65**): bigger than the Altima/Charger, smaller than the MATA bus, slightly faster than the Altima. Carries **2 vaults in the truck bed** (nose-to-tail, not roof-stacked), or 3 bags / 4 stacks. Seeds parked in **Bartlett** and **East Memphis** only (3 each); 4 NPC trucks drive Stage/Summer/Walnut Grove/Poplar.
+- **ATM machines** — one per playable region. Any **moving vehicle** (player or NPC) that rams one bursts out **3 money bags**; the ATM goes dark ("spent") and respawns **24h later at a new random tile** in its region (`reseed:<due_unix>` marker in `owner_name`; any client past due processes it). Kiosk mesh with screen, keypad, cash slot — and an **"ATM" sign** on the hood band above the screen (`build 2026-07-06e`).
+- **MATA bus capacity** — now carries **4 vaults in a row along the roof** (never stacked vertically).
+- **Vault visual** — round door handle (ring + hub + spokes) and a combination dial.
+- **Pop-out / shapeshift rotation** — objects keep their parked rotation when the player pops out; shapeshifting into an object inherits its heading (NPC vehicle claims inherit the NPC's yaw).
+- **Respawn rules overhaul** — destroyed propane tanks/BBQ grills reseed **~30s later at a randomized tile** (no more instant same-spot respawns); zoo animals still respawn in their enclosures; claimed houses reseed a replacement house elsewhere; shopping carts still respawn at their Kroger.
+- **NPC-vs-NPC collisions** — NPC vehicles brake for each other and crash when contact happens (2s spawn grace).
+- **Human reseeds** — replacement humans step out of a house/tower door and wander before rejoining sidewalks.
+- **Suburb rule** — Altimas and Chargers no longer seed or drive in **Germantown/Collierville** (one-time cleanup relocates legacy ones).
+
+### Follow-ups (`builds 2026-07-06e`–`g`)
+
+- **Seeding hygiene** (`e`) — parked trucks/ATMs never seed on road tiles; every seed POST runs a spreading pass (no two seeds share a tile, none inside an existing solid object); parked vehicles spawn with a stable pseudo-random rotation (hashed from their tile) instead of identical default poses.
+- **Truck crash dominance** (`e`) — a player truck wrecks NPC and player cars ("A truck totaled you."); the **MATA bus wins** against a truck; truck-vs-truck totals both. NPC-vs-NPC crashes use the same ranking (bus > truck > car; equal wrecks both).
+- **Truck mixed cargo** (`e`) — one vault + one bag OR one stack may ride together (either pickup order). At capacity the **Pick Up button still shows** and pressing it toasts the reason ("Truck bed is full").
+- **More humans** (`e`) — pedestrian population raised 40 → **64**.
+- **NPC U-turns** (`e`) — always sweep **counter-clockwise** at dead ends (left turn across the road, right-hand traffic).
+- **Turn slop fix** (`f`) — player-form rotation eases toward the travel direction with a per-frame step cap (no more decaying overshoot oscillation on slow frames) and a **~31° max trail** (`MAX_TURN_LAG`) so sharp turns don't read as driving sideways.
+- **Perf fix** (`g`) — `npc_humans._check_kills()` accidentally ran once **per human** per frame instead of once per frame (O(humans² × vehicles) ≈ 98k distance checks/frame after the population bump). Now runs once per frame; the constant global stutter is gone.
+
+---
+
+## Gameplay polish batch (`build 2026-07-06c`)
 
 July 6 pass — speed, money, explosions, pop-out, and ownership fixes:
 
@@ -578,7 +606,7 @@ Or from the editor:
 
 ### Build stamp + PWA cache-busting
 
-- `GameConfig.BUILD_ID` (currently **`build 2026-07-06c`**) is shown bottom-right in the web shell and on the onboarding screen so users can confirm they loaded a fresh build. **Bump this string on every new build you ship** (and match the `#build-stamp` literal in `creature-godot/web/custom_shell.html`) whenever you re-export the web build.
+- `GameConfig.BUILD_ID` (currently **`build 2026-07-06g`**) is shown bottom-right in the web shell and on the onboarding screen so users can confirm they loaded a fresh build. **Bump this string on every new build you ship** (and match the `#build-stamp` literal in `creature-godot/web/custom_shell.html`) whenever you re-export the web build.
 - Godot's default service worker is cache-first and never `skipWaiting()`s, which caused the recurring "old cached build keeps loading" bug. `custom_shell.html` now runs `setupServiceWorkerAutoUpdate()`: on reload it calls `registration.update()`, and on `updatefound` posts `'update'` to the new worker → `controllerchange` triggers a one-time reload. It is skipped on the dev-server path (which already unregisters SWs).
 
 | Export setting | Value | Why |
@@ -695,6 +723,7 @@ Use `class_name Creature` and typed references. Generic `Node3D` + `grid_pos` ca
 - [x] Slice 6 — tree shapeshift, Memphis landmarks, Pyramid abduction special
 - [x] Slice 7 — pattern-lock login/register, safe houses, steal, respawn choice, exit/idle logout, pyramid resize, vehicle wreck FX, decoupled position sync, mobile tap-to-move fixes (`build 2026-07-03i`)
 - [x] Gameplay polish — form speed bumps, CREATURE tab title, all-region money seed/floor, no carry slowdown, synced lethal explosions + chain reaction, propane vehicle-only contact, pop-out object-stays fix, money ownership on pickup/combine (`build 2026-07-06c`)
+- [x] Trucks + ATMs + respawn overhaul — Truck form (bed cargo, crash dominance, mixed vault+bag/stack), ATMs with daily reseed + "ATM" sign, 4-vault bus roof, randomized prop reseeds, NPC-vs-NPC crashes, seed spreading/off-road parking/random parked rotation, 64 humans, CCW U-turns, turn-slop cap, humans kill-check perf fix (`builds 2026-07-06d`–`g`)
 
 ---
 

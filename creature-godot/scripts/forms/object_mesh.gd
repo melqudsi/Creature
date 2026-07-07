@@ -31,6 +31,10 @@ static func build(visual: String, tint: Color = Color(0.6, 0.6, 0.6)) -> Node3D:
 			return _build_smoker()
 		"charger":
 			return _build_charger()
+		"truck":
+			return _build_truck()
+		"atm":
+			return _build_atm()
 		"money_stack":
 			return _build_money_stack()
 		"money_bag":
@@ -381,6 +385,93 @@ static func _build_charger() -> Node3D:
 			root.add_child(w)
 	return root
 
+## Pickup truck: cab up front, open bed in back sized so two vaults fit inside
+## (carried vaults render IN the bed — see Creature.update_carried_display).
+## Bigger than the Altima/Charger, smaller than a MATA bus.
+static func _build_truck() -> Node3D:
+	var root := Node3D.new()
+	var paint := _mat(Color(0.55, 0.35, 0.12), 0.4, 0.35)   # work-truck brown
+	var dark := _mat(Color(0.16, 0.14, 0.12), 0.6, 0.2)
+	var glass := _mat(Color(0.1, 0.15, 0.2), 0.2, 0.4)
+	# Chassis running the full length.
+	var chassis := BoxMesh.new()
+	chassis.size = Vector3(0.78, 0.22, 1.8)
+	root.add_child(_mesh_node(chassis, paint, Vector3(0, 0.24, 0)))
+	# Cab at the front (+Z is forward for vehicle meshes).
+	var cab := BoxMesh.new()
+	cab.size = Vector3(0.72, 0.32, 0.55)
+	root.add_child(_mesh_node(cab, paint, Vector3(0, 0.5, 0.55)))
+	var windshield := BoxMesh.new()
+	windshield.size = Vector3(0.6, 0.2, 0.06)
+	root.add_child(_mesh_node(windshield, glass, Vector3(0, 0.54, 0.85)))
+	# Open bed: floor + three low walls (rear stays visually open-ish with a
+	# shorter tailgate) so cargo inside reads clearly.
+	var bed_floor := BoxMesh.new()
+	bed_floor.size = Vector3(0.72, 0.05, 1.1)
+	root.add_child(_mesh_node(bed_floor, dark, Vector3(0, 0.36, -0.32)))
+	for side in [-1.0, 1.0]:
+		var wall := BoxMesh.new()
+		wall.size = Vector3(0.05, 0.22, 1.1)
+		root.add_child(_mesh_node(wall, paint, Vector3(side * 0.365, 0.46, -0.32)))
+	var tailgate := BoxMesh.new()
+	tailgate.size = Vector3(0.72, 0.18, 0.05)
+	root.add_child(_mesh_node(tailgate, paint, Vector3(0, 0.44, -0.87)))
+	var bed_front := BoxMesh.new()
+	bed_front.size = Vector3(0.72, 0.22, 0.05)
+	root.add_child(_mesh_node(bed_front, paint, Vector3(0, 0.46, 0.24)))
+	# Wheels — chunkier than a sedan's.
+	var wheel_mat := _mat(Color(0.05, 0.05, 0.06), 0.9)
+	for wx in [-0.4, 0.4]:
+		for wz in [-0.58, 0.62]:
+			var wheel := CylinderMesh.new()
+			wheel.top_radius = 0.17
+			wheel.bottom_radius = 0.17
+			wheel.height = 0.12
+			var w := _mesh_node(wheel, wheel_mat, Vector3(wx, 0.17, wz))
+			w.rotation_degrees = Vector3(0, 0, 90)
+			root.add_child(w)
+	return root
+
+## ATM kiosk: freestanding cash machine. Not shapeshiftable — ram it with any
+## vehicle and it bursts open (3 money bags), then reseeds the next day.
+static func _build_atm() -> Node3D:
+	var root := Node3D.new()
+	var shell := _mat(Color(0.16, 0.32, 0.5), 0.45, 0.3)
+	var face := _mat(Color(0.75, 0.78, 0.8), 0.5, 0.2)
+	# Kiosk body with a slightly wider base plinth.
+	var base := BoxMesh.new()
+	base.size = Vector3(0.5, 0.12, 0.42)
+	root.add_child(_mesh_node(base, _mat(Color(0.25, 0.26, 0.28), 0.8), Vector3(0, 0.06, 0)))
+	var body := BoxMesh.new()
+	body.size = Vector3(0.42, 0.75, 0.34)
+	root.add_child(_mesh_node(body, shell, Vector3(0, 0.5, 0)))
+	# Angled top hood.
+	var hood := BoxMesh.new()
+	hood.size = Vector3(0.44, 0.1, 0.38)
+	root.add_child(_mesh_node(hood, shell, Vector3(0, 0.9, 0)))
+	# "ATM" sign printed on the hood band, above the screen (not a billboard —
+	# it reads like real signage on the kiosk face).
+	var atm_sign := Label3D.new()
+	atm_sign.text = "ATM"
+	atm_sign.font_size = 44
+	atm_sign.pixel_size = 0.004
+	atm_sign.modulate = Color(1.0, 0.95, 0.55)
+	atm_sign.outline_size = 10
+	atm_sign.outline_modulate = Color(0.04, 0.09, 0.16)
+	atm_sign.position = Vector3(0, 0.9, 0.2)
+	root.add_child(atm_sign)
+	# Screen + keypad + cash slot on the front face (+Z).
+	var screen := BoxMesh.new()
+	screen.size = Vector3(0.26, 0.2, 0.03)
+	root.add_child(_mesh_node(screen, _mat(Color(0.15, 0.85, 0.55), 0.25, 0.0), Vector3(0, 0.68, 0.18)))
+	var keypad := BoxMesh.new()
+	keypad.size = Vector3(0.26, 0.12, 0.03)
+	root.add_child(_mesh_node(keypad, face, Vector3(0, 0.48, 0.18)))
+	var slot := BoxMesh.new()
+	slot.size = Vector3(0.3, 0.05, 0.03)
+	root.add_child(_mesh_node(slot, _mat(Color(0.08, 0.08, 0.1), 0.6), Vector3(0, 0.3, 0.18)))
+	return root
+
 ## BBQ smoker trailer: big black barrel on a trailer frame, offset firebox,
 ## a tall chimney, and two wheels — reads as "Memphis BBQ rig" at a glance.
 static func _build_smoker() -> Node3D:
@@ -449,14 +540,41 @@ static func _build_money_bag() -> Node3D:
 
 static func _build_vault() -> Node3D:
 	var root := Node3D.new()
+	var steel := _mat(Color(0.28, 0.32, 0.38), 0.35, 0.55)
+	var brass := _mat(Color(0.85, 0.72, 0.2), 0.3, 0.6)
 	var box := BoxMesh.new()
 	box.size = Vector3(0.55, 0.55, 0.55)
-	root.add_child(_mesh_node(box, _mat(Color(0.28, 0.32, 0.38), 0.35, 0.55), Vector3(0, 0.28, 0)))
+	root.add_child(_mesh_node(box, steel, Vector3(0, 0.28, 0)))
+	# Door slab standing proud of the front face, with a brass frame line.
+	var door := BoxMesh.new()
+	door.size = Vector3(0.42, 0.42, 0.04)
+	root.add_child(_mesh_node(door, _mat(Color(0.22, 0.26, 0.32), 0.35, 0.6), Vector3(0, 0.28, 0.29)))
+	# Round handle wheel you'd spin to open it: brass ring + hub + 4 spokes.
+	var ring := TorusMesh.new()
+	ring.inner_radius = 0.085
+	ring.outer_radius = 0.115
+	var r := _mesh_node(ring, brass, Vector3(0, 0.28, 0.33))
+	r.rotation_degrees = Vector3(90, 0, 0)
+	root.add_child(r)
+	var hub := CylinderMesh.new()
+	hub.top_radius = 0.035
+	hub.bottom_radius = 0.035
+	hub.height = 0.07
+	var hb := _mesh_node(hub, brass, Vector3(0, 0.28, 0.33))
+	hb.rotation_degrees = Vector3(90, 0, 0)
+	root.add_child(hb)
+	for i in 4:
+		var spoke := BoxMesh.new()
+		spoke.size = Vector3(0.2, 0.025, 0.025)
+		var s := _mesh_node(spoke, brass, Vector3(0, 0.28, 0.33))
+		s.rotation_degrees = Vector3(0, 0, 45.0 * float(i))
+		root.add_child(s)
+	# Small combination dial up on top, off to the side of the wheel.
 	var dial := CylinderMesh.new()
-	dial.top_radius = 0.08
-	dial.bottom_radius = 0.08
-	dial.height = 0.04
-	var d := _mesh_node(dial, _mat(Color(0.85, 0.72, 0.2), 0.3, 0.6), Vector3(0, 0.58, 0.22))
+	dial.top_radius = 0.06
+	dial.bottom_radius = 0.06
+	dial.height = 0.035
+	var d := _mesh_node(dial, brass, Vector3(0.17, 0.45, 0.3))
 	d.rotation_degrees = Vector3(90, 0, 0)
 	root.add_child(d)
 	return root

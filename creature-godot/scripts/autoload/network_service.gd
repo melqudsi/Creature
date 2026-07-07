@@ -46,6 +46,9 @@ var _owner_name_column_available := false
 var _slice2_seed_attempted := false
 ## One-time purge of pothole/tree/propane rows left in The Dump by old seeds.
 var _landfill_cleanup_attempted := false
+## One-time purge of the legacy parked-Altima seeds at suburban Kroger lots
+## (Altimas/Chargers no longer spawn in Germantown/Collierville).
+var _burb_cleanup_attempted := false
 ## Smart money floor (Slice 9): next Time.get_ticks_msec() the auto top-up may run.
 var _money_topup_next_ms := 0
 var _jwt_refresh_t := 0.0
@@ -209,6 +212,7 @@ func _poll_world_objects() -> void:
 	else:
 		await _maybe_seed_slice2_objects(rows)
 	rows = await _maybe_cleanup_landfill_junk(rows)
+	rows = await _maybe_cleanup_burb_altimas(rows)
 	if _world_map and is_instance_valid(_world_map) and _world_map.has_method("sync_world_objects"):
 		_world_map.sync_world_objects(rows)
 	await _maybe_topup_money_stacks(rows)
@@ -242,6 +246,7 @@ func _build_world_object_seed() -> Array:
 	out.append_array(_slice5_seed_rows())
 	out.append_array(_slice6_seed_rows())
 	out.append_array(_slice8_seed_rows())
+	out.append_array(_slice9_seed_rows())
 	return out
 
 func _seed_rows_from_entries(entries: Array) -> Array:
@@ -262,12 +267,56 @@ func _free_seed_tile(tile: Vector2) -> Vector2:
 			tile = Vector2(open)
 	return tile
 
+## Spread the seed payload out: no two seeds on the same tile, and none inside
+## an existing solid world object (shapeshifting into a truck seeded on top of
+## a pothole was an instant crash). Runs on every seed POST (initial + top-up).
+func _spread_seed_rows(rows: Array) -> Array:
+	var used: Dictionary = {}
+	for row in rows:
+		if typeof(row) != TYPE_DICTIONARY:
+			continue
+		var tile := Vector2(float(row.get("x", 0.0)), float(row.get("y", 0.0)))
+		var key := Vector2i(int(floor(tile.x)), int(floor(tile.y)))
+		if used.has(key) or not _seed_tile_open(tile):
+			for _attempt in 10:
+				var cand := GameState.free_drop_tile(
+					tile + Vector2(randf_range(-2.0, 2.0), randf_range(-2.0, 2.0)))
+				var ckey := Vector2i(int(floor(cand.x)), int(floor(cand.y)))
+				if not used.has(ckey) and _seed_tile_open(cand):
+					tile = cand
+					key = ckey
+					break
+		used[key] = true
+		row["x"] = tile.x
+		row["y"] = tile.y
+	return rows
+
+## True when no SHARED solid object already sits on this tile. Local fallback
+## props are ignored (the initial seed intentionally reuses their coordinates);
+## money doesn't block either — combines rely on stacking money together.
+func _seed_tile_open(tile: Vector2) -> bool:
+	var wp := GameConfig.tile_to_world(tile)
+	var at := Vector2(wp.x, wp.z)
+	for obj in GameState.world_objects:
+		if not is_instance_valid(obj) or obj.consumed or obj.is_money():
+			continue
+		if str(obj.object_id).is_empty():
+			continue
+		if at.distance_to(Vector2(obj.position.x, obj.position.z)) < obj.radius + 0.45:
+			return false
+	return true
+
 ## Slice 6 rows: parked Altimas + carts in the Kroger lots.
 func _slice6_seed_rows() -> Array:
 	return _seed_rows_from_entries(GameConfig.slice6_seed_objects())
 
 func _slice8_seed_rows() -> Array:
 	return _seed_rows_from_entries(GameConfig.slice8_seed_objects())
+
+## Slice 9 rows: ATMs in every playable region + parked Trucks in
+## Bartlett / East Memphis.
+func _slice9_seed_rows() -> Array:
+	return _seed_rows_from_entries(GameConfig.slice9_seed_objects())
 
 ## Slice 5 rows (road potholes, Midtown/Downtown BBQ trailers). Entries flagged
 ## "free" get nudged off blocked tiles (scattered houses/trees) at seed time.
@@ -282,8 +331,10 @@ func _maybe_seed_slice2_objects(rows: Array) -> void:
 	var found := _note_seed_types(rows, {
 		"money": false, "bus": false, "smoker": false, "slice5": false, "slice6": false,
 		"slice8": false, "slice8_grill": false, "slice8_charger": false,
+		"slice9": false, "slice9_atm": false, "slice9_truck": false,
 	})
-	if found.money and found.bus and found.smoker and found.slice5 and found.slice6 and found.slice8:
+	if found.money and found.bus and found.smoker and found.slice5 and found.slice6 \
+			and found.slice8 and found.slice9:
 		_slice2_seed_attempted = true
 		return
 	_slice2_seed_attempted = true
@@ -311,14 +362,13 @@ func _maybe_seed_slice2_objects(rows: Array) -> void:
 		payload.append_array(_slice6_seed_rows())
 	if not found.slice8:
 		payload.append_array(_slice8_seed_rows())
+	if not found.slice9:
+		payload.append_array(_slice9_seed_rows())
 	if payload.is_empty():
 		return
 	var created := await seed_world_objects(payload)
 	if not created.is_empty():
-		_log("Top-up seeded %d world objects (money/bus/smoker/slice5/slice6/slice8)" % created.size())
-
-	if not created.is_empty():
-		_log("Top-up seeded %d world objects (money/bus/smoker/slice5/slice6/slice8)" % created.size())
+		_log("Top-up seeded %d world objects (money/bus/smoker/slice5-9)" % created.size())
 
 ## Legacy landfill seeds placed potholes/trees/propane in the spawn zone; strip
 ## them from shared worlds once (admin reset also omits them going forward).
@@ -348,6 +398,34 @@ func _maybe_cleanup_landfill_junk(rows: Array) -> Array:
 			continue
 		kept.append(row)
 	return kept
+
+## Altimas and Chargers no longer spawn in Germantown/Collierville: relocate
+## any legacy IDLE ones parked out in the suburbs to a random open tile in the
+## rest of Memphis (relocating instead of deleting keeps the car count).
+func _maybe_cleanup_burb_altimas(rows: Array) -> Array:
+	if _burb_cleanup_attempted or not _online or not _world_objects_available:
+		return rows
+	_burb_cleanup_attempted = true
+	for row in rows:
+		if typeof(row) != TYPE_DICTIONARY:
+			continue
+		var t := str(row.get("type", ""))
+		if t != "altima" and t != "charger":
+			continue
+		if str(row.get("state", "idle")) != "idle":
+			continue
+		var tile := Vector2(float(row.get("x", 0.0)), float(row.get("y", 0.0)))
+		if not GameConfig.is_in_burbs(tile):
+			continue
+		var id := str(row.get("id", ""))
+		if id.is_empty():
+			continue
+		var fresh := GameConfig.reseed_tile_for_type(t, tile)
+		row["x"] = fresh.x
+		row["y"] = fresh.y
+		await update_world_object(id, {"x": fresh.x, "y": fresh.y})
+		_log("Relocated a suburban %s to %s" % [t, str(fresh)])
+	return rows
 
 # ---------------------------------------------------------------------------
 # Smart money floor (Slice 9): keep a minimum number of loose stacks in play.
@@ -446,6 +524,12 @@ func _note_seed_types(rows: Array, found: Dictionary) -> Dictionary:
 		elif t == "charger":
 			found.slice8_charger = true
 			found.slice8 = bool(found.get("slice8_grill", false))
+		elif t == "atm":
+			found.slice9_atm = true
+			found.slice9 = bool(found.get("slice9_truck", false))
+		elif t == "truck":
+			found.slice9_truck = true
+			found.slice9 = bool(found.get("slice9_atm", false))
 	return found
 
 func _note_world_row_columns(row: Dictionary) -> void:
@@ -456,6 +540,7 @@ func _note_world_row_columns(row: Dictionary) -> void:
 func seed_world_objects(rows: Array) -> Array:
 	if not _online or rows.is_empty():
 		return []
+	rows = _spread_seed_rows(rows)
 	var resp := await _rest_request_raw(
 		HTTPClient.METHOD_POST,
 		"/rest/v1/world_objects",

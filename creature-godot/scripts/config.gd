@@ -24,7 +24,7 @@ const DEFAULT_CREATURE_NAME := "Creature"
 
 ## Visible build stamp so a loaded build can be identified at a glance.
 ## Keep this in sync with the build-stamp string in web/custom_shell.html.
-const BUILD_ID := "build 2026-07-06c"
+const BUILD_ID := "build 2026-07-06g"
 
 ## Landfill Dump: the spawn/respawn zone (now inside South Memphis — old-world
 ## coords + OLD_WORLD_OFFSET). All new players and respawns appear here.
@@ -148,12 +148,15 @@ static func slice5_seed_objects() -> Array:
 
 ## Slice 6: every Kroger gets a lived-in parking lot — two parked Altimas and
 ## two stray shopping carts. World coordinates (lot sits just south of the box).
+## Altimas never spawn in Germantown / Collierville (suburbs rule), so those
+## Kroger lots only get carts.
 static func slice6_seed_objects() -> Array:
 	var out: Array = []
 	for site in MemphisLayout.KROGER_SITES:
 		var s := Vector2(site)
-		out.append({"key": "altima", "tile": s + Vector2(-1, 1)})
-		out.append({"key": "altima", "tile": s + Vector2(2, 1)})
+		if not is_in_burbs(s):
+			out.append({"key": "altima", "tile": s + Vector2(-1, 1)})
+			out.append({"key": "altima", "tile": s + Vector2(2, 1)})
 		out.append({"key": "cart", "tile": s + Vector2(0, 2)})
 		out.append({"key": "cart", "tile": s + Vector2(3, 1)})
 	return out
@@ -200,6 +203,80 @@ static func slice8_seed_objects() -> Array:
 			break
 	return out
 
+## Slice 9: ATMs (one per playable region) and parked Trucks (Bartlett /
+## East Memphis only). ATMs burst into 3 money bags when a vehicle rams them,
+## then reseed in the same region the next day.
+static func slice9_seed_objects() -> Array:
+	var out: Array = []
+	for entry in money_spawn_regions():
+		out.append({"key": "atm", "tile": random_open_tile_in_rect(entry["rect"] as Rect2i, true)})
+	for region in ["Bartlett", "East Memphis"]:
+		var rect := region_rect(str(region))
+		for _i in 3:
+			out.append({"key": "truck", "tile": random_open_tile_in_rect(rect, true)})
+	return out
+
+static func region_rect(region: String) -> Rect2i:
+	for r in MemphisLayout.REGIONS:
+		if str(r.get("name", "")) == region:
+			return r["rect"] as Rect2i
+	# Fallback: the central playable area.
+	return Rect2i(15, 18, 130, 90)
+
+## Germantown + Collierville: no Altima / Charger spawns out in the suburbs.
+static func is_in_burbs(tile: Vector2) -> bool:
+	var reg := MemphisLayout.region_name(tile)
+	return reg == "Germantown" or reg == "Collierville"
+
+# ---------------------------------------------------------------------------
+# Destroyed-prop reseeding (July 6 balance pass): a destroyed prop (exploded
+# propane/grill, busted ATM) comes back at a RANDOM open tile inside its home
+# region(s) after a delay — never instantly on the same spot. Shared rows carry
+# a "reseed:<due-unix>" owner_name marker so the delay survives disconnects.
+# ---------------------------------------------------------------------------
+
+const PROP_RESEED_DELAY_SEC := 30.0
+## ATMs only spawn once per day.
+const ATM_RESEED_DELAY_SEC := 86400.0
+
+static func reseed_delay_for_type(type_key: String) -> float:
+	return ATM_RESEED_DELAY_SEC if type_key == "atm" else PROP_RESEED_DELAY_SEC
+
+## Where a destroyed prop of this type reseeds. Home regions mirror the seed
+## rules: propane in North Memphis/Midtown, grills near houses, Chargers in
+## South Memphis, Trucks in Bartlett/East Memphis, Altimas anywhere but the
+## suburbs, everything else (incl. ATMs) in the region it was destroyed in.
+static func reseed_tile_for_type(type_key: String, current_tile: Vector2) -> Vector2:
+	match type_key:
+		"propane":
+			var reg: Variant = ["North Memphis", "Midtown"].pick_random()
+			return random_open_tile_in_rect(region_rect(str(reg)))
+		"bbq_grill":
+			var houses := MemphisLayout.house_tiles()
+			if not houses.is_empty():
+				var h: Vector2i = houses.pick_random()
+				return safe_drop_tile(Vector2(h) + Vector2(1, 0))
+			return random_open_tile()
+		"charger":
+			return random_open_tile_in_rect(region_rect("South Memphis"))
+		"truck":
+			var treg: Variant = ["Bartlett", "East Memphis"].pick_random()
+			return random_open_tile_in_rect(region_rect(str(treg)), true)
+		"altima":
+			return random_open_tile_no_burbs()
+		"atm":
+			return random_open_tile_in_rect(
+				region_rect(MemphisLayout.region_name(current_tile)), true)
+		_:
+			return random_open_tile_in_rect(region_rect(MemphisLayout.region_name(current_tile)))
+
+static func random_open_tile_no_burbs() -> Vector2:
+	for _i in 12:
+		var t := random_open_tile()
+		if not is_in_burbs(t):
+			return t
+	return LANDFILL_CENTER + Vector2(2, 0)
+
 ## Starter money piles (Slice 2) — a few stacks in every playable region.
 static func money_seed_objects() -> Array:
 	var out: Array = []
@@ -219,8 +296,9 @@ static func money_spawn_regions() -> Array:
 		out.append({"name": name, "rect": r["rect"] as Rect2i})
 	return out
 
-## Pick a walkable tile inside one region rect.
-static func random_open_tile_in_rect(rect: Rect2i) -> Vector2:
+## Pick a walkable tile inside one region rect. `avoid_roads` keeps parked
+## vehicles / ATMs off the asphalt (NPC traffic would plow into them).
+static func random_open_tile_in_rect(rect: Rect2i, avoid_roads := false) -> Vector2:
 	var blocked := MemphisLayout.blocked_tiles()
 	for _attempt in 48:
 		var ti := Vector2i(
@@ -228,6 +306,8 @@ static func random_open_tile_in_rect(rect: Rect2i) -> Vector2:
 			randi_range(rect.position.y, rect.end.y - 1)
 		)
 		if blocked.has(ti) or MemphisLayout.is_water(ti):
+			continue
+		if avoid_roads and MemphisLayout.is_road(ti):
 			continue
 		return Vector2(ti)
 	var center := rect.get_center()

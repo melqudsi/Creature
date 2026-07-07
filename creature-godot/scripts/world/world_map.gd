@@ -52,7 +52,6 @@ var _explosion_chain_guard: Dictionary = {}
 var _explosion_chain_depth: int = 0
 var _explosion_chain_count: int = 0
 const EXPLOSION_CHAIN_MAX := 32
-const EXPLOSIVE_RESPAWN_DELAY := 3.0
 
 ## Slice 7: scenery houses by tile (claimable like trees), retired house home
 ## tiles, per-player carried loot rows from the latest poll (drives the Steal
@@ -845,6 +844,12 @@ func _object_cfg(key: String) -> Dictionary:
 			return {"kind": "prop", "form_key": FormDefs.ALTIMA, "visual": "altima", "radius": 0.55, "display_name": "Rusty Altima"}
 		"charger":
 			return {"kind": "prop", "form_key": FormDefs.CHARGER, "visual": "charger", "radius": 0.55, "display_name": "Dodge Charger With Temp Tags"}
+		"truck":
+			return {"kind": "prop", "form_key": FormDefs.TRUCK, "visual": "truck", "radius": 0.65, "display_name": "Truck"}
+		"atm":
+			# Not shapeshiftable — a loot piñata: any vehicle ramming it bursts
+			# out 3 money bags (see try_strike_atm), then it reseeds next day.
+			return {"kind": "prop", "form_key": "", "visual": "atm", "radius": 0.45, "display_name": "ATM"}
 		"magnolia":
 			return {"kind": "tree", "form_key": FormDefs.MAGNOLIA, "visual": "magnolia", "radius": 0.5, "display_name": "Small Tree"}
 		"propane":
@@ -878,7 +883,16 @@ func _spawn_world_object(key: String, world_pos: Vector3, parent: Node3D) -> Wor
 	obj.type_key = key
 	parent.add_child(obj)
 	obj.set_spawn_position(world_pos)
+	# Parked vehicles face a pseudo-random direction hashed from their tile —
+	# stable across clients/reloads, but no more identical default rotations.
+	# (Pop-out overwrites this with the player's actual parked heading.)
+	if FormDefs.is_vehicle(obj.form_key):
+		obj.rotation.y = _parked_yaw(world_pos)
 	return obj
+
+func _parked_yaw(world_pos: Vector3) -> float:
+	var t := GameConfig.world_to_tile(world_pos)
+	return float(absi(hash(t)) % 6283) * 0.001
 
 # ---------------------------------------------------------------------------
 # Shared / persistent interactive objects (Fix 3).
@@ -985,6 +999,24 @@ func sync_world_objects(rows: Array) -> void:
 			if _row_age_sec(row) > 12.0:
 				note_deleted(id)
 				NetworkService.delete_world_object(id)
+			continue
+		# Destroyed props awaiting reseed ("reseed:<due-unix>" owner marker):
+		# hidden for everyone until the due time, then ANY client moves the row
+		# to a fresh home-region tile and clears the marker. The marker lives on
+		# the server so the delay survives the destroyer disconnecting.
+		var owner_raw := _row_owner_name(row)
+		if owner_raw.begins_with("reseed:"):
+			if Time.get_unix_time_from_system() >= float(owner_raw.substr(7).to_int()):
+				var fresh := GameState.free_drop_tile(
+					GameConfig.reseed_tile_for_type(type_key, tile))
+				note_local_authority(id)
+				NetworkService.update_world_object(id, {
+					"x": fresh.x, "y": fresh.y, "state": "idle",
+					"possessed_by": null, "owner_name": null,
+				})
+			var hidden := _get_shared_object(id)
+			if hidden:
+				hidden.consume()
 			continue
 		# A claimed scenery tree entered the shared world: hide the original
 		# scenery tree at its home tile (encoded in owner_name) for everyone.
@@ -1615,12 +1647,7 @@ func _explosion_chain_key_for_creature(creature_id: String) -> String:
 func _consume_explosive_object(obj: WorldObject) -> void:
 	if obj == null or not is_instance_valid(obj) or obj.consumed:
 		return
-	var respawn_pos := obj.spawn_world_pos if obj.spawn_world_pos != Vector3.ZERO else obj.position
-	obj.consume()
-	if not obj.object_id.is_empty():
-		note_local_authority(obj.object_id, EXPLOSIVE_RESPAWN_DELAY)
-	else:
-		_schedule_explosive_respawn(obj, respawn_pos)
+	reseed_destroyed_prop(obj)
 
 func _detonate_explosive_creature(c: Creature) -> void:
 	if c == null or not is_instance_valid(c) or c.is_dead:
@@ -1628,13 +1655,93 @@ func _detonate_explosive_creature(c: Creature) -> void:
 	if c.is_player and c.has_method("apply_death"):
 		c.apply_death(FormDefs.DEATH_PROPANE, true)
 
-func _schedule_explosive_respawn(obj: WorldObject, pos: Vector3) -> void:
+## A prop was destroyed (exploded propane/grill, busted ATM): hide it now and
+## bring it back later at a random open tile in its home region(s) — never
+## instantly on the same spot. Shared rows get a "reseed:<due>" owner marker
+## (any client finishes the reseed, so it survives disconnects); client-local
+## fallback objects use a plain timer.
+func reseed_destroyed_prop(obj: WorldObject) -> void:
 	if obj == null or not is_instance_valid(obj):
 		return
-	var timer := get_tree().create_timer(EXPLOSIVE_RESPAWN_DELAY)
+	var type_key := obj.type_key
+	var tile := Vector2(GameConfig.world_to_tile(obj.position))
+	obj.consume()
+	var delay := GameConfig.reseed_delay_for_type(type_key)
+	if not obj.object_id.is_empty() and NetworkService.is_online():
+		var due := int(Time.get_unix_time_from_system() + delay)
+		note_local_authority(obj.object_id)
+		NetworkService.update_world_object(obj.object_id, {
+			"state": "idle", "possessed_by": null,
+			"owner_name": "reseed:%d" % due,
+		})
+		return
+	var timer := get_tree().create_timer(delay)
 	timer.timeout.connect(func() -> void:
-		if is_instance_valid(obj):
-			obj.respawn_at(pos))
+		if not is_instance_valid(obj):
+			return
+		var fresh := GameState.free_drop_tile(GameConfig.reseed_tile_for_type(type_key, tile))
+		var wp := GameConfig.tile_to_world(fresh)
+		obj.respawn_at(wp)
+		obj.spawn_world_pos = wp
+		obj.spawn_tile = fresh)
+
+# ---------------------------------------------------------------------------
+# ATMs (July 6): ram one with any moving vehicle and it bursts into 3 unowned
+# money bags, then reseeds in its region the NEXT day (reseed marker flow).
+# ---------------------------------------------------------------------------
+
+const ATM_BURST_BAGS := 3
+
+## Live ATM cache, refreshed once per frame — NPC traffic probes every vehicle
+## every frame, so scanning the full world-object list each call is too hot.
+var _atm_cache: Array = []
+var _atm_cache_frame := -1
+
+func _live_atms() -> Array:
+	var f := Engine.get_process_frames()
+	if int(f) != _atm_cache_frame:
+		_atm_cache_frame = int(f)
+		_atm_cache = []
+		for o in GameState.world_objects:
+			var obj := o as WorldObject
+			if obj != null and is_instance_valid(obj) and not obj.consumed and obj.type_key == "atm":
+				_atm_cache.append(obj)
+	return _atm_cache
+
+## Called by the local player's vehicle contacts and by local NPC traffic.
+## Returns true when an ATM within reach of `center` (world XZ) burst.
+func try_strike_atm(center: Vector2, radius: float) -> bool:
+	for o in _live_atms():
+		var obj := o as WorldObject
+		if obj == null or not is_instance_valid(obj) or obj.consumed:
+			continue
+		if center.distance_to(Vector2(obj.position.x, obj.position.z)) > radius + obj.radius:
+			continue
+		_burst_atm(obj)
+		return true
+	return false
+
+func _burst_atm(obj: WorldObject) -> void:
+	var tile := Vector2(GameConfig.world_to_tile(obj.position))
+	GameState.show_toast("The ATM burst open!")
+	spawn_money_combine_fx(obj.position)
+	reseed_destroyed_prop(obj)
+	for i in ATM_BURST_BAGS:
+		var bag_tile := GameState.free_drop_tile(
+			tile + Vector2(randf_range(-1.5, 1.5), randf_range(-1.5, 1.5)))
+		_spawn_atm_bag(bag_tile)
+
+func _spawn_atm_bag(tile: Vector2) -> void:
+	var wp := GameConfig.tile_to_world(tile)
+	if not NetworkService.is_online():
+		spawn_money_object("money_bag", wp, "")
+		return
+	var created: Dictionary = await NetworkService.create_world_object(
+		{"type": "money_bag", "x": tile.x, "y": tile.y, "state": "idle"})
+	var id := str(created.get("id", ""))
+	spawn_money_object("money_bag", wp, "", id)
+	if not id.is_empty():
+		note_local_authority(id)
 
 func _broadcast_explosion(world_pos: Vector3, radius: float) -> void:
 	if not NetworkService.is_online():
