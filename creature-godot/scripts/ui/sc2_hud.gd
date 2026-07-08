@@ -200,24 +200,31 @@ func _make_hamburger_icon() -> ImageTexture:
 				img.set_pixel(x, y, col)
 	return ImageTexture.create_from_image(img)
 
-## Tiny procedural loudspeaker icon (the default font has no emoji glyphs).
+## Handheld megaphone icon: rear body + horn + pistol-grip handle, drawn in
+## code (the default font has no emoji glyphs).
 func _make_speaker_icon() -> ImageTexture:
 	var img := Image.create(24, 24, false, Image.FORMAT_RGBA8)
 	img.fill(Color(0, 0, 0, 0))
 	var col := HELP_GOLD
-	# Speaker body (rect) + horn (expanding triangle) pointing right.
+	# Rear body (rect) + horn (expanding triangle) pointing right; the speaker
+	# sits high so the handle fits underneath.
 	for x in range(3, 9):
-		for y in range(9, 16):
+		for y in range(8, 15):
 			img.set_pixel(x, y, col)
 	for x in range(9, 16):
 		var half := 3 + int(float(x - 9) * 0.8)
-		for y in range(12 - half, 13 + half):
-			img.set_pixel(x, clampi(y, 1, 22), col)
-	# Sound waves: three dashed arcs.
+		for y in range(11 - half, 12 + half):
+			img.set_pixel(x, clampi(y, 0, 23), col)
+	# Pistol-grip handle hanging below the rear body, slanted slightly forward.
+	for i in 8:
+		var hx := 5 + int(float(i) * 0.5)
+		for w in 3:
+			img.set_pixel(clampi(hx + w, 0, 23), clampi(15 + i, 0, 23), col)
+	# Sound waves: three dashed arcs off the horn mouth.
 	for i in 3:
 		var x := 17 + i * 2
 		var span := 4 + i * 3
-		for y in range(12 - span, 13 + span, 2 + i):
+		for y in range(11 - span, 12 + span, 2 + i):
 			img.set_pixel(clampi(x, 0, 23), clampi(y, 0, 23), col)
 	return ImageTexture.create_from_image(img)
 
@@ -610,6 +617,19 @@ func _build_admin_panel() -> void:
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	root.add_child(title)
 
+	# Close button pinned to the panel's top-right corner (above the content).
+	var close_btn := Button.new()
+	close_btn.text = "X"
+	close_btn.custom_minimum_size = Vector2(48, 48)
+	close_btn.focus_mode = Control.FOCUS_NONE
+	close_btn.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	close_btn.offset_left = -56.0
+	close_btn.offset_top = 8.0
+	close_btn.offset_right = -8.0
+	close_btn.offset_bottom = 56.0
+	close_btn.pressed.connect(func() -> void: _admin_panel.visible = false)
+	_admin_panel.add_child(close_btn)
+
 	_test_mode_toggle = CheckButton.new()
 	_test_mode_toggle.text = "Test mode (tap to teleport)"
 	_test_mode_toggle.button_pressed = GameState.admin_test_mode
@@ -806,11 +826,7 @@ func _add_profile_row(row: Dictionary) -> void:
 	var profile_name := str(row.get("name", "Creature"))
 	var item := HBoxContainer.new()
 	var label := Label.new()
-	label.text = "%s  (%s, %s)" % [
-		profile_name,
-		("%.1f" % float(row.get("x", 0.0))),
-		("%.1f" % float(row.get("y", 0.0))),
-	]
+	label.text = "%s  -  %s" % [profile_name, _format_last_login(str(row.get("last_active", "")))]
 	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	item.add_child(label)
 	var delete_btn := Button.new()
@@ -818,6 +834,24 @@ func _add_profile_row(row: Dictionary) -> void:
 	delete_btn.pressed.connect(func(): _delete_profile(creature_id, profile_name))
 	item.add_child(delete_btn)
 	_profiles_list.add_child(item)
+
+## Supabase `last_active` (ISO 8601 UTC) → "YYYY-MM-DD HH:MM" in device-local
+## time for the admin profile list.
+func _format_last_login(iso: String) -> String:
+	if iso.is_empty() or iso == "<null>":
+		return "never"
+	# Trim fractional seconds / timezone suffix; Supabase stores UTC.
+	var trimmed := iso
+	for sep in [".", "+", "Z"]:
+		var idx := trimmed.find(sep)
+		if idx >= 0:
+			trimmed = trimmed.substr(0, idx)
+	var unix := Time.get_unix_time_from_datetime_string(trimmed)
+	if unix <= 0:
+		return iso
+	unix += int(Time.get_time_zone_from_system().get("bias", 0)) * 60
+	var stamp := Time.get_datetime_string_from_unix_time(unix).replace("T", " ")
+	return stamp.substr(0, 16) # drop the seconds
 
 func _delete_profile(creature_id: String, profile_name: String) -> void:
 	var ok := await NetworkService.delete_creature_profile(creature_id)
