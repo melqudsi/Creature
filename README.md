@@ -178,7 +178,7 @@ Phase 4 + mobile input fixes (`build 2026-07-03i`):
 
 ---
 
-## Big Houses, menu, announcements (`build 2026-07-07a`, current)
+## Big Houses, menu, announcements (`builds 2026-07-07a`–`b`, current)
 
 Vault storage endgame + HUD reshuffle + developer broadcasts:
 
@@ -198,6 +198,13 @@ Vault storage endgame + HUD reshuffle + developer broadcasts:
 - **Top-left menu (≡)** — dropdown with **Sign Out** (replaces the top-right X) and **Admin** (MOE only; replaces the standalone admin button).
 - **Announcements** — new `public.announcements` table ([`supabase/migration-announcements.sql`](supabase/migration-announcements.sql) — **run it in the Supabase SQL editor**; seeds a first "Test" row). Clients poll the newest row every ~30s: unseen announcements pop a centered panel with **OK** (mid-session too); OK stores the id locally (web `localStorage` / desktop `user://`) so it never auto-pops again. A **loudspeaker button** (top-right) re-opens the latest announcement anytime.
 - **Broadcasting** — admin panel has a message field + **broadcast** button. Dev path without the game: `POST {SUPABASE_URL}/rest/v1/announcements` with `apikey`/`Authorization: Bearer <anon key>` headers and body `{"message":"..."}` (PowerShell: `Invoke-RestMethod -Method Post -Uri "$url/rest/v1/announcements" -Headers @{apikey=$k; Authorization="Bearer $k"; "Content-Type"="application/json"} -Body '{"message":"Hello Memphis"}'`).
+- **Clearing announcements** — the migration now includes a temp **delete** policy so old/test rows can be wiped over REST: `Invoke-RestMethod -Method Delete -Uri "$url/rest/v1/announcements?id=not.is.null" -Headers @{apikey=$k; Authorization="Bearer $jwt"}` (needs an authed JWT from `POST /auth/v1/signup`, or just run `delete from public.announcements;` in the SQL editor). **If the table was created before this policy existed, run the `announcements_temp_delete` policy statement from [`supabase/migration-announcements.sql`](supabase/migration-announcements.sql) once.**
+
+### Testing follow-ups (`build 2026-07-07b`)
+
+- **Admin panel close button** — "X" pinned top-right of the panel.
+- **Profile list timestamps** — admin profile rows show `NAME - YYYY-MM-DD HH:MM` (last seen, `creatures.last_active` converted to device-local time) instead of last known coordinates.
+- **Megaphone icon** — the announcement button icon gained a pistol-grip handle so it reads as a handheld loudspeaker.
 
 ---
 
@@ -630,7 +637,7 @@ Or from the editor:
 
 ### Build stamp + PWA cache-busting
 
-- `GameConfig.BUILD_ID` (currently **`build 2026-07-07a`**) is shown bottom-right in the web shell and on the onboarding screen so users can confirm they loaded a fresh build. **Bump this string on every new build you ship** (and match the `#build-stamp` literal in `creature-godot/web/custom_shell.html`) whenever you re-export the web build.
+- `GameConfig.BUILD_ID` (currently **`build 2026-07-07b`**) is shown bottom-right in the web shell and on the onboarding screen so users can confirm they loaded a fresh build. **Bump this string on every new build you ship** (and match the `#build-stamp` literal in `creature-godot/web/custom_shell.html`) whenever you re-export the web build.
 - Godot's default service worker is cache-first and never `skipWaiting()`s, which caused the recurring "old cached build keeps loading" bug. `custom_shell.html` now runs `setupServiceWorkerAutoUpdate()`: on reload it calls `registration.update()`, and on `updatefound` posts `'update'` to the new worker → `controllerchange` triggers a one-time reload. It is skipped on the dev-server path (which already unregisters SWs).
 
 | Export setting | Value | Why |
@@ -748,7 +755,7 @@ Use `class_name Creature` and typed references. Generic `Node3D` + `grid_pos` ca
 - [x] Slice 7 — pattern-lock login/register, safe houses, steal, respawn choice, exit/idle logout, pyramid resize, vehicle wreck FX, decoupled position sync, mobile tap-to-move fixes (`build 2026-07-03i`)
 - [x] Gameplay polish — form speed bumps, CREATURE tab title, all-region money seed/floor, no carry slowdown, synced lethal explosions + chain reaction, propane vehicle-only contact, pop-out object-stays fix, money ownership on pickup/combine (`build 2026-07-06c`)
 - [x] Trucks + ATMs + respawn overhaul — Truck form (bed cargo, crash dominance, mixed vault+bag/stack), ATMs with daily reseed + "ATM" sign, 4-vault bus roof, randomized prop reseeds, NPC-vs-NPC crashes, seed spreading/off-road parking/random parked rotation, 64 humans, CCW U-turns, turn-slop cap, humans kill-check perf fix (`builds 2026-07-06d`–`g`)
-- [x] Big Houses + menu + announcements — 2-vault safe-house upgrade, 4-vault storage with glowing windows, auto-deposit/withdraw, once-a-day robbery with scattered stacks + owner toast, south/east house facing snap, owned-house crash immunity, top-left menu (Sign Out + MOE-only Admin), `public.announcements` broadcasts with popup/OK/loudspeaker (`build 2026-07-07a`)
+- [x] Big Houses + menu + announcements — 2-vault safe-house upgrade, 4-vault storage with glowing windows, auto-deposit/withdraw, once-a-day robbery with scattered stacks + owner toast, south/east house facing snap, owned-house crash immunity, top-left menu (Sign Out + MOE-only Admin), `public.announcements` broadcasts with popup/OK/loudspeaker; admin close button + last-login profile list + megaphone icon (`builds 2026-07-07a`–`b`)
 
 ---
 

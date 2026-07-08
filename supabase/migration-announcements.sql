@@ -32,5 +32,10 @@ create policy "announcements_select" on public.announcements
 create policy "announcements_temp_insert" on public.announcements
   for insert to anon, authenticated with check (true);
 
+-- TEMPORARY prototype policy: allows clearing old/test announcements with a
+-- plain anon-key REST call (the game UI never deletes). Same caveat as above.
+create policy "announcements_temp_delete" on public.announcements
+  for delete to anon, authenticated using (true);
+
 -- First announcement so the feature can be tested immediately.
 insert into public.announcements (message) values ('Test');
