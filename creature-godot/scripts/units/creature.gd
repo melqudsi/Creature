@@ -788,6 +788,7 @@ func _update_player_interactions(delta: float) -> void:
 	_update_shapeshift_progress(delta)
 	_resolve_contacts()
 	_update_smoker_economy(delta)
+	_update_big_house_deposit(delta)
 
 func _scan_shapeshift_target() -> void:
 	_nearby_object = null
@@ -1174,8 +1175,12 @@ func pop_out() -> void:
 			var here_world := GameConfig.tile_to_world(here)
 			_active_object.respawn_at(here_world)
 			# Keep the parked heading too — popping out must not snap the
-			# vehicle/grill/etc back to its default rotation.
-			_active_object.rotation.y = rotation.y
+			# vehicle/grill/etc back to its default rotation. Houses are the
+			# exception: their door/windows must face the camera (south/east).
+			if form_key == FormDefs.HOUSE:
+				_active_object.rotation.y = WorldMap.snap_house_yaw(rotation.y)
+			else:
+				_active_object.rotation.y = rotation.y
 			_active_object.spawn_world_pos = here_world
 			_active_object.spawn_tile = here
 			if not _active_object.object_id.is_empty():
@@ -1280,8 +1285,13 @@ func _toggle_house_claim() -> void:
 		return
 	var wm := GameState.world_map
 	if obj.safe_owner == creature_name:
-		# Unclaim: strip the safe segment, keep the home segment.
-		obj.owner_name = WorldObject.parse_home_part(obj.owner_name)
+		# A loaded Big House can't be walked away from — empty it first.
+		if obj.is_big and obj.stored_vaults > 0:
+			GameState.show_toast("Empty the vaults before unclaiming your Big House")
+			return
+		# Unclaim: strip only the safe segment — home (and any Big House
+		# upgrade segments) stay so another player can claim it as-is.
+		obj.owner_name = WorldObject.set_owner_segment(obj.owner_name, "safe:", "")
 		obj.set_safe_owner("")
 		_note_local_authority(obj.object_id)
 		NetworkService.update_world_object(obj.object_id,
@@ -1301,12 +1311,10 @@ func _toggle_house_claim() -> void:
 			var prev_home := WorldObject.parse_home_part(str(prev.get("raw", "")))
 			NetworkService.update_world_object(prev_id,
 				{"owner_name": prev_home if not prev_home.is_empty() else null})
-	var parts: Array[String] = []
-	var home_part := WorldObject.parse_home_part(obj.owner_name)
-	if not home_part.is_empty():
-		parts.append(home_part)
-	parts.append("safe:%s" % creature_name)
-	obj.owner_name = "|".join(parts)
+	# Add the safe segment, preserving home + Big House segments (claiming an
+	# abandoned Big House keeps its upgrade and stored-vault state).
+	obj.owner_name = WorldObject.set_owner_segment(obj.owner_name, "safe:",
+		"safe:%s" % creature_name)
 	obj.set_safe_owner(creature_name)
 	_stop_movement()
 	_move_target = Vector2(-1, -1)
@@ -1321,6 +1329,252 @@ func _toggle_house_claim() -> void:
 	if wm and is_instance_valid(wm) and wm.has_method("note_safe_house"):
 		wm.note_safe_house(creature_name, obj.object_id, here, obj.owner_name)
 	GameState.show_toast("Safe house claimed! It's rooted until you unclaim it")
+
+# ---------------------------------------------------------------------------
+# Big House (Slice 10): 2-vault upgrade, vault storage with glowing windows,
+# withdrawals, and once-a-day robbery.
+# ---------------------------------------------------------------------------
+
+const HOUSE_ACTION_RADIUS := 2.5   # how close to a house for its action button
+const HOUSE_VAULT_RADIUS := 2.2    # "near the house" for funds and deposits
+const HOUSE_UPGRADE_COST := 2      # vaults
+const BIG_HOUSE_CAPACITY := 4
+const ROB_COOLDOWN_SEC := 86400.0  # each Big House can be robbed once per day
+
+var _deposit_check_t := 0.0
+
+## Nearest synced house within action range (claimed or not).
+func _nearest_action_house() -> WorldObject:
+	var my := _world_xz()
+	var best: WorldObject = null
+	var best_d := HOUSE_ACTION_RADIUS
+	for obj in GameState.world_objects:
+		if not is_instance_valid(obj) or obj.consumed:
+			continue
+		if obj.form_key != FormDefs.HOUSE or obj.object_id.is_empty():
+			continue
+		var d := my.distance_to(Vector2(obj.position.x, obj.position.z))
+		if d <= best_d:
+			best_d = d
+			best = obj
+	return best
+
+## Context action for the house we're standing near, or {} when there is none.
+## Drives the HUD house button: Upgrade House / Take Vault / Rob.
+func house_action() -> Dictionary:
+	if not is_player or is_dead or is_spawning or is_asleep:
+		return {}
+	var obj := _nearest_action_house()
+	if obj == null:
+		return {}
+	if obj.safe_owner == creature_name:
+		if not obj.is_big:
+			# Always offered near your own safe house — pressing it with
+			# insufficient funds explains the price.
+			return {"label": "Upgrade House", "action": "upgrade", "obj": obj}
+		if obj.stored_vaults > 0 \
+				and FormDefs.carry_check(form_key, carried_tiers(), FormDefs.TIER_VAULT).ok:
+			return {"label": "Take Vault", "action": "take", "obj": obj}
+		return {}
+	if obj.is_big and not obj.safe_owner.is_empty() and obj.stored_vaults > 0:
+		var rob := WorldObject.parse_robbed(obj.owner_name)
+		if Time.get_unix_time_from_system() - float(int(rob.get("unix", 0))) >= ROB_COOLDOWN_SEC:
+			return {"label": "Rob", "action": "rob", "obj": obj}
+	return {}
+
+func do_house_action() -> void:
+	var act := house_action()
+	if act.is_empty():
+		return
+	var obj: WorldObject = act.get("obj")
+	if obj == null or not is_instance_valid(obj):
+		return
+	match str(act.get("action", "")):
+		"upgrade":
+			_upgrade_house(obj)
+		"take":
+			_take_house_vault(obj)
+		"rob":
+			_rob_big_house(obj)
+
+## Idle (dropped) vaults sitting near the house that we're allowed to spend:
+## ours or unlabeled.
+func _spendable_vaults_near(obj: WorldObject) -> Array:
+	var at := Vector2(obj.position.x, obj.position.z)
+	var out: Array = []
+	for m in GameState.world_objects:
+		if not is_instance_valid(m) or m.consumed or not m.is_money():
+			continue
+		if m.tier != FormDefs.TIER_VAULT or not m.carried_by.is_empty():
+			continue
+		if not m.owner_name.is_empty() and m.owner_name != creature_name:
+			continue
+		if at.distance_to(Vector2(m.position.x, m.position.z)) <= HOUSE_VAULT_RADIUS:
+			out.append(m)
+	return out
+
+## Upgrade: costs two vaults brought to (carried) or dropped near the house.
+## The old house vanishes in a puff and the Big House stands in its place.
+func _upgrade_house(obj: WorldObject) -> void:
+	var ground := _spendable_vaults_near(obj)
+	var carried_vaults: Array = []
+	for entry in _carried:
+		if int(entry.get("tier", 0)) == FormDefs.TIER_VAULT:
+			carried_vaults.append(entry)
+	if ground.size() + carried_vaults.size() < HOUSE_UPGRADE_COST:
+		GameState.show_toast("You need 2 vaults for this mane")
+		return
+	# Spend dropped vaults first, then carried ones.
+	var need := HOUSE_UPGRADE_COST
+	for m in ground:
+		if need <= 0:
+			break
+		var mo: WorldObject = m
+		mo.consume()
+		if not mo.object_id.is_empty():
+			_note_deleted(mo.object_id)
+			NetworkService.delete_world_object(mo.object_id)
+		need -= 1
+	while need > 0 and not carried_vaults.is_empty():
+		var entry: Dictionary = carried_vaults.pop_back()
+		_carried.erase(entry)
+		var mo: WorldObject = entry.get("obj")
+		if mo and is_instance_valid(mo) and not mo.object_id.is_empty():
+			_note_deleted(mo.object_id)
+			NetworkService.delete_world_object(mo.object_id)
+		need -= 1
+	update_carried_display(carried_tiers())
+	# Puff of smoke, then the Big House appears (marker syncs to everyone).
+	_puff_at(Vector2(GameConfig.world_to_tile(obj.position)))
+	var owner := WorldObject.set_owner_segment(obj.owner_name, "big", "big")
+	owner = WorldObject.set_owner_segment(owner, "vaults:", "vaults:0")
+	obj.owner_name = owner
+	obj.apply_house_state()
+	_note_local_authority(obj.object_id)
+	NetworkService.update_world_object(obj.object_id, {"owner_name": owner})
+	GameState.show_toast("Upgraded to a Big House! Drop vaults nearby to store them")
+
+## Short synced smoke puff (same transient row the BBQ smoker uses).
+func _puff_at(tile: Vector2) -> void:
+	var wpos := GameConfig.tile_to_world(tile)
+	var wm := GameState.world_map
+	var id := ""
+	if NetworkService.is_online():
+		var created: Dictionary = await NetworkService.create_world_object(
+			{"type": "smoke_cloud", "x": tile.x, "y": tile.y, "state": "idle"})
+		id = str(created.get("id", ""))
+	if wm and is_instance_valid(wm) and wm.has_method("register_smoke_cloud"):
+		wm.register_smoke_cloud(id, wpos, 3.0)
+	if not id.is_empty():
+		await get_tree().create_timer(3.0).timeout
+		_note_deleted(id)
+		NetworkService.delete_world_object(id)
+
+## Owner-only: vaults dropped near your Big House auto-deposit (one per tick,
+## up to 4); a window lights up for each one. Runs on a slow timer.
+func _update_big_house_deposit(delta: float) -> void:
+	_deposit_check_t -= delta
+	if _deposit_check_t > 0.0:
+		return
+	_deposit_check_t = 1.0
+	var obj := _nearest_action_house()
+	if obj == null or not obj.is_big or obj.safe_owner != creature_name:
+		return
+	if obj.stored_vaults >= BIG_HOUSE_CAPACITY:
+		return # full house: dropped vaults just sit there
+	var ground := _spendable_vaults_near(obj)
+	if ground.is_empty():
+		return
+	var m: WorldObject = ground[0]
+	m.consume()
+	if not m.object_id.is_empty():
+		_note_deleted(m.object_id)
+		NetworkService.delete_world_object(m.object_id)
+	var n := obj.stored_vaults + 1
+	obj.owner_name = WorldObject.set_owner_segment(obj.owner_name, "vaults:", "vaults:%d" % n)
+	obj.apply_house_state()
+	_note_local_authority(obj.object_id)
+	NetworkService.update_world_object(obj.object_id, {"owner_name": obj.owner_name})
+	GameState.show_toast("Vault deposited (%d/%d)" % [n, BIG_HOUSE_CAPACITY])
+
+## Withdraw one vault — only offered when the current form can haul it.
+func _take_house_vault(obj: WorldObject) -> void:
+	if obj.stored_vaults <= 0:
+		return
+	var check: Dictionary = FormDefs.carry_check(form_key, carried_tiers(), FormDefs.TIER_VAULT)
+	if not check.ok:
+		GameState.show_toast(str(check.reason))
+		return
+	var n := obj.stored_vaults - 1
+	obj.owner_name = WorldObject.set_owner_segment(obj.owner_name, "vaults:", "vaults:%d" % n)
+	obj.apply_house_state()
+	_note_local_authority(obj.object_id)
+	NetworkService.update_world_object(obj.object_id, {"owner_name": obj.owner_name})
+	GameState.show_toast("Took a vault out (%d left)" % n)
+	_materialize_carried_vault()
+
+## Create a carried vault row + hidden local prop and add it to our load.
+func _materialize_carried_vault() -> void:
+	var wm := GameState.world_map
+	var wp := GameConfig.tile_to_world(grid_pos)
+	var id := ""
+	if NetworkService.is_online():
+		var created: Dictionary = await NetworkService.create_world_object({
+			"type": "vault", "x": grid_pos.x, "y": grid_pos.y,
+			"state": "carried", "possessed_by": NetworkService.get_user_id(),
+			"owner_name": creature_name,
+		})
+		id = str(created.get("id", ""))
+	if wm == null or not is_instance_valid(wm):
+		return
+	var m: WorldObject = wm.spawn_money_object("vault", wp, creature_name, id)
+	if not id.is_empty():
+		_note_local_authority(id)
+	if m and is_instance_valid(m):
+		m.carried_by = NetworkService.get_user_id()
+		m.consume()
+		_carried.append({"obj": m, "id": m.object_id, "tier": m.tier})
+	update_carried_display(carried_tiers())
+
+## Rob someone's Big House: one vault gone, four loose stacks scatter outside.
+func _rob_big_house(obj: WorldObject) -> void:
+	if obj.stored_vaults <= 0 or obj.safe_owner.is_empty() or obj.safe_owner == creature_name:
+		return
+	var rob := WorldObject.parse_robbed(obj.owner_name)
+	if Time.get_unix_time_from_system() - float(int(rob.get("unix", 0))) < ROB_COOLDOWN_SEC:
+		GameState.show_toast("This Big House was already robbed today")
+		return
+	var owner := WorldObject.set_owner_segment(obj.owner_name, "vaults:",
+		"vaults:%d" % (obj.stored_vaults - 1))
+	owner = WorldObject.set_owner_segment(owner, "robbed:",
+		"robbed:%d:%s" % [int(Time.get_unix_time_from_system()), creature_name])
+	obj.owner_name = owner
+	obj.apply_house_state()
+	_note_local_authority(obj.object_id)
+	NetworkService.update_world_object(obj.object_id, {"owner_name": owner})
+	# The stolen vault bursts into 4 stacks scattered around the outside.
+	var htile := Vector2(GameConfig.world_to_tile(obj.position))
+	for i in 4:
+		var off := Vector2.RIGHT.rotated(TAU * float(i) / 4.0 + randf() * 0.7) \
+			* randf_range(1.4, 2.4)
+		_spawn_rob_stack(GameState.free_drop_tile(htile + off))
+	GameState.show_toast("You robbed %s's Big House!" % obj.safe_owner)
+	_broadcast_toast_event("%s robbed %s's Big House!" % [creature_name, obj.safe_owner])
+
+func _spawn_rob_stack(tile: Vector2) -> void:
+	var wm := GameState.world_map
+	var wp := GameConfig.tile_to_world(tile)
+	if not NetworkService.is_online():
+		if wm and is_instance_valid(wm):
+			wm.spawn_money_object("money_stack", wp, "")
+		return
+	var created: Dictionary = await NetworkService.create_world_object(
+		{"type": "money_stack", "x": tile.x, "y": tile.y, "state": "idle"})
+	var id := str(created.get("id", ""))
+	if wm and is_instance_valid(wm):
+		wm.spawn_money_object("money_stack", wp, "", id)
+	if not id.is_empty():
+		_note_local_authority(id)
 
 ## Manual propane detonation: the blast scatters/demotes nearby money and, per
 ## the design rule, the tank's pilot goes with it. The worn tank returns to its
@@ -1900,6 +2154,10 @@ func _resolve_contacts() -> void:
 			continue
 		var d := my.distance_to(Vector2(obj.position.x, obj.position.z))
 		if d > my_r + obj.radius:
+			continue
+		# You never crash into a house you own — the driveway is safe.
+		if obj.kind == "building" and not obj.safe_owner.is_empty() \
+				and obj.safe_owner == creature_name:
 			continue
 		var res := FormDefs.resolve_player_death(form_key, obj.kind)
 		# Propane / BBQ grills detonate only when rammed by a moving vehicle or

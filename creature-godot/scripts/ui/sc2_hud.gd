@@ -3,8 +3,9 @@ extends Control
 @onready var name_label: Label = $TopBar/NameLabel
 @onready var toast_panel: Panel = $ToastPanel
 @onready var toast_label: Label = $ToastPanel/ToastLabel
-@onready var admin_button: Button = $PainTestButton
-@onready var exit_button: Button = $ExitButton
+@onready var menu_button: Button = $MenuButton
+@onready var announce_button: Button = $AnnounceButton
+@onready var house_button: Button = $ActionBar/HouseButton
 @onready var become_button: Button = $ActionBar/BecomeButton
 @onready var special_button: Button = $ActionBar/SpecialButton
 @onready var pop_button: Button = $ActionBar/PopOutButton
@@ -35,18 +36,34 @@ var _object_spin: SpinBox
 var _profiles_list: VBoxContainer
 var _logs_text: TextEdit
 var _test_mode_toggle: CheckButton
+var _announce_input: LineEdit
+## Top-left menu dropdown (Sign Out + MOE-only Admin).
+var _menu_panel: PanelContainer
+var _menu_admin_btn: Button
+## Announcement popup + latest broadcast ({"id", "message"}).
+var _announce_panel: Panel
+var _announce_label: Label
+var _latest_announcement: Dictionary = {}
 
 func _ready() -> void:
 	theme = preload("res://assets/themes/sc2_theme.tres")
 	toast_panel.visible = false
-	admin_button.text = "admin"
-	admin_button.visible = false
-	admin_button.pressed.connect(_toggle_admin_panel)
-	if exit_button:
-		exit_button.pressed.connect(_on_exit_pressed)
+	menu_button.focus_mode = Control.FOCUS_NONE
+	menu_button.text = ""
+	menu_button.icon = _make_hamburger_icon()
+	menu_button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	menu_button.pressed.connect(_toggle_menu)
+	announce_button.focus_mode = Control.FOCUS_NONE
+	announce_button.icon = _make_speaker_icon()
+	announce_button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	announce_button.visible = false # appears once an announcement exists
+	announce_button.pressed.connect(_show_announcement)
+	_build_menu_dropdown()
+	_build_announcement_popup()
 	_build_help_overlay()
 	_build_admin_panel()
 	_setup_action_buttons()
+	NetworkService.announcement_received.connect(_on_announcement_received)
 	GameState.player_stats_changed.connect(_refresh_stats)
 	GameState.toast_requested.connect(_show_toast)
 	GameState.admin_log_added.connect(_append_log_line)
@@ -65,6 +82,144 @@ func _ready() -> void:
 	_apply_safe_area()
 	for delay in [0.5, 1.5, 3.0]:
 		get_tree().create_timer(delay).timeout.connect(_apply_safe_area)
+
+func _toggle_menu() -> void:
+	GameState.note_player_input()
+	_menu_panel.visible = not _menu_panel.visible
+
+func _build_menu_dropdown() -> void:
+	_menu_panel = PanelContainer.new()
+	_menu_panel.name = "MenuDropdown"
+	_menu_panel.visible = false
+	_menu_panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	_menu_panel.offset_left = 12.0
+	_menu_panel.offset_top = 70.0
+	_menu_panel.offset_right = 196.0
+	add_child(_menu_panel)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 6)
+	_menu_panel.add_child(vb)
+	var sign_out := Button.new()
+	sign_out.text = "Sign Out"
+	sign_out.custom_minimum_size = Vector2(176, 52)
+	sign_out.focus_mode = Control.FOCUS_NONE
+	sign_out.pressed.connect(func() -> void:
+		_menu_panel.visible = false
+		_on_exit_pressed())
+	vb.add_child(sign_out)
+	_menu_admin_btn = Button.new()
+	_menu_admin_btn.text = "Admin"
+	_menu_admin_btn.custom_minimum_size = Vector2(176, 52)
+	_menu_admin_btn.focus_mode = Control.FOCUS_NONE
+	_menu_admin_btn.visible = false # MOE only (kept in sync by _refresh_stats)
+	_menu_admin_btn.pressed.connect(func() -> void:
+		_menu_panel.visible = false
+		_toggle_admin_panel())
+	vb.add_child(_menu_admin_btn)
+
+# ---------------------------------------------------------------------------
+# Announcements: popup with OK + a loudspeaker button to re-read the latest.
+# ---------------------------------------------------------------------------
+
+func _build_announcement_popup() -> void:
+	_announce_panel = Panel.new()
+	_announce_panel.name = "AnnouncementPanel"
+	_announce_panel.visible = false
+	_announce_panel.set_anchors_preset(Control.PRESET_CENTER)
+	_announce_panel.offset_left = -270.0
+	_announce_panel.offset_top = -150.0
+	_announce_panel.offset_right = 270.0
+	_announce_panel.offset_bottom = 150.0
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.02, 0.03, 0.045, 0.94)
+	style.border_color = HELP_GOLD
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(12)
+	_announce_panel.add_theme_stylebox_override("panel", style)
+	add_child(_announce_panel)
+	var title := Label.new()
+	title.text = "ANNOUNCEMENT"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 24)
+	title.modulate = HELP_GOLD
+	title.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	title.offset_top = 16.0
+	title.offset_bottom = 48.0
+	_announce_panel.add_child(title)
+	_announce_label = Label.new()
+	_announce_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_announce_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_announce_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_announce_label.add_theme_font_size_override("font_size", 22)
+	_announce_label.modulate = Color(1.0, 0.96, 0.82)
+	_announce_label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_announce_label.offset_left = 24.0
+	_announce_label.offset_top = 52.0
+	_announce_label.offset_right = -24.0
+	_announce_label.offset_bottom = -76.0
+	_announce_panel.add_child(_announce_label)
+	var ok := Button.new()
+	ok.text = "OK"
+	ok.custom_minimum_size = Vector2(140, 52)
+	ok.focus_mode = Control.FOCUS_NONE
+	ok.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	ok.offset_left = -70.0
+	ok.offset_top = -66.0
+	ok.offset_right = 70.0
+	ok.offset_bottom = -14.0
+	ok.pressed.connect(_on_announcement_ok)
+	_announce_panel.add_child(ok)
+
+func _on_announcement_received(id: String, message: String) -> void:
+	_latest_announcement = {"id": id, "message": message}
+	announce_button.visible = true
+	# Auto-pop only when this broadcast hasn't been acknowledged on this device.
+	if NetworkService.seen_announcement_id() != id:
+		_show_announcement()
+
+func _show_announcement() -> void:
+	GameState.note_player_input()
+	if _latest_announcement.is_empty():
+		return
+	_announce_label.text = str(_latest_announcement.get("message", ""))
+	_announce_panel.visible = true
+
+func _on_announcement_ok() -> void:
+	_announce_panel.visible = false
+	if not _latest_announcement.is_empty():
+		NetworkService.mark_announcement_seen(str(_latest_announcement.get("id", "")))
+
+## Three-bar menu icon (drawn in code — the theme font may lack ≡/☰ glyphs).
+func _make_hamburger_icon() -> ImageTexture:
+	var img := Image.create(24, 24, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	var col := Color(0.92, 0.94, 0.98)
+	for row in [6, 11, 16]:
+		for x in range(3, 21):
+			for y in range(row, row + 3):
+				img.set_pixel(x, y, col)
+	return ImageTexture.create_from_image(img)
+
+## Tiny procedural loudspeaker icon (the default font has no emoji glyphs).
+func _make_speaker_icon() -> ImageTexture:
+	var img := Image.create(24, 24, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	var col := HELP_GOLD
+	# Speaker body (rect) + horn (expanding triangle) pointing right.
+	for x in range(3, 9):
+		for y in range(9, 16):
+			img.set_pixel(x, y, col)
+	for x in range(9, 16):
+		var half := 3 + int(float(x - 9) * 0.8)
+		for y in range(12 - half, 13 + half):
+			img.set_pixel(x, clampi(y, 1, 22), col)
+	# Sound waves: three dashed arcs.
+	for i in 3:
+		var x := 17 + i * 2
+		var span := 4 + i * 3
+		for y in range(12 - span, 13 + span, 2 + i):
+			img.set_pixel(clampi(x, 0, 23), clampi(y, 0, 23), col)
+	return ImageTexture.create_from_image(img)
 
 func _build_help_overlay() -> void:
 	_help_button = Button.new()
@@ -223,6 +378,15 @@ func _update_money_buttons(c: Creature) -> void:
 	var can_eat: bool = c.has_method("can_eat_human_now") and c.can_eat_human_now()
 	if eat_button and eat_button.visible != can_eat:
 		eat_button.visible = can_eat
+	# House context action: Upgrade House / Take Vault / Rob.
+	var act: Dictionary = c.house_action() if c.has_method("house_action") else {}
+	var show_house: bool = not act.is_empty() and not c.is_dead
+	if house_button.visible != show_house:
+		house_button.visible = show_house
+	if show_house:
+		var house_label := str(act.get("label", ""))
+		if house_button.text != house_label:
+			house_button.text = house_label
 	# The house special toggles between Claim/Unclaim as state changes.
 	if c.form_key == FormDefs.HOUSE:
 		var house_text: String = c.house_special_label()
@@ -237,6 +401,7 @@ func _setup_action_buttons() -> void:
 	drop_button.visible = false
 	steal_button.visible = false
 	eat_button.visible = false
+	house_button.visible = false
 	become_button.focus_mode = Control.FOCUS_NONE
 	special_button.focus_mode = Control.FOCUS_NONE
 	pop_button.focus_mode = Control.FOCUS_NONE
@@ -244,6 +409,7 @@ func _setup_action_buttons() -> void:
 	drop_button.focus_mode = Control.FOCUS_NONE
 	steal_button.focus_mode = Control.FOCUS_NONE
 	eat_button.focus_mode = Control.FOCUS_NONE
+	house_button.focus_mode = Control.FOCUS_NONE
 	become_button.pressed.connect(_on_become_pressed)
 	special_button.pressed.connect(_on_special_pressed)
 	pop_button.pressed.connect(_on_pop_pressed)
@@ -251,6 +417,7 @@ func _setup_action_buttons() -> void:
 	drop_button.pressed.connect(_on_drop_pressed)
 	steal_button.pressed.connect(_on_steal_pressed)
 	eat_button.pressed.connect(_on_eat_pressed)
+	house_button.pressed.connect(_on_house_pressed)
 
 func _player_form() -> String:
 	var c = GameState.player_creature
@@ -313,6 +480,11 @@ func _on_pickup_pressed() -> void:
 	var c = GameState.player_creature
 	if c and is_instance_valid(c) and c.has_method("pick_up_nearest"):
 		c.pick_up_nearest()
+
+func _on_house_pressed() -> void:
+	var c = GameState.player_creature
+	if c and is_instance_valid(c) and c.has_method("do_house_action"):
+		c.do_house_action()
 
 func _on_drop_pressed() -> void:
 	var c = GameState.player_creature
@@ -386,17 +558,21 @@ func _on_exit_pressed() -> void:
 		_main.get_tree().reload_current_scene()
 
 func consumes_pointer_at(screen_pos: Vector2) -> bool:
-	if exit_button and exit_button.get_global_rect().has_point(screen_pos):
+	if menu_button and menu_button.get_global_rect().has_point(screen_pos):
+		return true
+	if announce_button and announce_button.visible and announce_button.get_global_rect().has_point(screen_pos):
+		return true
+	if _menu_panel and _menu_panel.visible and _menu_panel.get_global_rect().has_point(screen_pos):
+		return true
+	if _announce_panel and _announce_panel.visible and _announce_panel.get_global_rect().has_point(screen_pos):
 		return true
 	if _help_button and _help_button.get_global_rect().has_point(screen_pos):
 		return true
 	if _help_panel and _help_panel.visible and _help_panel.get_global_rect().has_point(screen_pos):
 		return true
-	if admin_button.visible and admin_button.get_global_rect().has_point(screen_pos):
-		return true
 	if _admin_panel and _admin_panel.visible and _admin_panel.get_global_rect().has_point(screen_pos):
 		return true
-	for btn in [become_button, special_button, pop_button, pickup_button, drop_button, steal_button, eat_button]:
+	for btn in [become_button, special_button, pop_button, pickup_button, drop_button, steal_button, eat_button, house_button]:
 		if btn and btn.visible and btn.get_global_rect().has_point(screen_pos):
 			return true
 	if _respawn_panel and _respawn_panel.visible and _respawn_panel.get_global_rect().has_point(screen_pos):
@@ -471,6 +647,19 @@ func _build_admin_panel() -> void:
 	reset_objects_btn.text = "reset ALL world objects"
 	reset_objects_btn.pressed.connect(_on_reset_objects_pressed)
 	root.add_child(reset_objects_btn)
+
+	# Broadcast an announcement to every player (popup with OK on their end).
+	var announce_row := HBoxContainer.new()
+	announce_row.add_theme_constant_override("separation", 8)
+	root.add_child(announce_row)
+	_announce_input = LineEdit.new()
+	_announce_input.placeholder_text = "announcement message"
+	_announce_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	announce_row.add_child(_announce_input)
+	var broadcast_btn := Button.new()
+	broadcast_btn.text = "broadcast"
+	broadcast_btn.pressed.connect(_on_broadcast_pressed)
+	announce_row.add_child(broadcast_btn)
 
 	var profiles_title := Label.new()
 	profiles_title.text = "Profiles"
@@ -568,6 +757,21 @@ func _on_reset_objects_pressed() -> void:
 	var ok: bool = await NetworkService.admin_reset_world_objects()
 	GameState.show_toast("World objects reset" if ok else "Reset failed — see logs")
 
+func _on_broadcast_pressed() -> void:
+	if not _is_admin_player():
+		return
+	var msg := _announce_input.text.strip_edges()
+	if msg.is_empty():
+		GameState.show_toast("Type an announcement first")
+		return
+	if not NetworkService.is_online():
+		GameState.show_toast("Offline — can't broadcast")
+		return
+	var ok: bool = await NetworkService.create_announcement(msg)
+	GameState.show_toast("Announcement broadcast!" if ok else "Broadcast failed — see logs")
+	if ok:
+		_announce_input.text = ""
+
 func _clear_session_and_reload() -> void:
 	NetworkService.clear_saved_session()
 	GameState.player_data.clear()
@@ -640,7 +844,8 @@ func _append_log_line(line: String) -> void:
 func _refresh_stats() -> void:
 	var c = GameState.player_creature
 	if not c:
-		admin_button.visible = false
+		if _menu_admin_btn:
+			_menu_admin_btn.visible = false
 		return
 	name_label.text = c.creature_name
 	if top_bar and name_label:
@@ -650,8 +855,10 @@ func _refresh_stats() -> void:
 			var text_w := font.get_string_size(
 				name_label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 			top_bar.offset_right = top_bar.offset_left + clampf(text_w + 24.0, 120.0, 180.0)
-	admin_button.visible = _is_admin_player()
-	if not admin_button.visible and _admin_panel and _admin_panel.visible:
+	# Admin lives in the menu dropdown now — MOE only.
+	if _menu_admin_btn:
+		_menu_admin_btn.visible = _is_admin_player()
+	if not _is_admin_player() and _admin_panel and _admin_panel.visible:
 		_admin_panel.visible = false
 
 func _show_toast(msg: String) -> void:

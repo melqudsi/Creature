@@ -2,7 +2,12 @@ extends Node
 
 ## Supabase REST client for Godot — mirrors js/api.js (session + creature row).
 
+## Fired when the newest developer announcement changes (login + every poll).
+signal announcement_received(id: String, message: String)
+
 const SESSION_PATH := "user://supabase_session.json"
+const ANNOUNCE_SEEN_PATH := "user://announcement_seen.txt"
+const ANNOUNCE_POLL_SEC := 30.0
 const POSITION_SAVE_INTERVAL := 1.5
 ## DB check constraint only allows cute/ugly until migration-godot-session.sql is applied.
 const DB_APPEARANCE := "cute"
@@ -60,6 +65,13 @@ var _last_refresh_unix := 0.0
 var _creature_columns_probed := false
 var _pattern_hash_column_available := false
 var _resume_profile: Dictionary = {}
+## Developer announcements (Slice 10): polled from public.announcements; the
+## feature disables itself if the migration hasn't been run.
+var _announcements_available := true
+var _announcements_missing_logged := false
+var _announce_poll_t := ANNOUNCE_POLL_SEC - 3.0 # first check ~3s after boot
+var _announce_poll_in_flight := false
+var _last_announcement_id := ""
 
 func _log(msg: String) -> void:
 	GameState.add_admin_log(msg)
@@ -98,6 +110,10 @@ func _process(delta: float) -> void:
 		if _heartbeat_t >= PRESENCE_HEARTBEAT_SEC:
 			_heartbeat_t = 0.0
 			_touch_presence()
+		_announce_poll_t += delta
+		if _announce_poll_t >= ANNOUNCE_POLL_SEC and _announcements_available:
+			_announce_poll_t = 0.0
+			_poll_announcements()
 
 ## Proactive JWT refresh so a session older than ~1h keeps working.
 func _refresh_session_in_background() -> void:
@@ -618,6 +634,73 @@ func delete_world_object(object_id: String) -> void:
 		return
 	var path := "/rest/v1/world_objects?id=eq.%s" % object_id.uri_encode()
 	await _rest_request(HTTPClient.METHOD_DELETE, path)
+
+# ---------------------------------------------------------------------------
+# Developer announcements (Slice 10): newest row in public.announcements pops
+# up for every player until they tap OK; acknowledgement is stored locally.
+# ---------------------------------------------------------------------------
+
+func _poll_announcements() -> void:
+	if not _online or _announce_poll_in_flight:
+		return
+	_announce_poll_in_flight = true
+	var resp := await _rest_request(HTTPClient.METHOD_GET,
+		"/rest/v1/announcements?select=id,message&order=created_at.desc&limit=1")
+	_announce_poll_in_flight = false
+	if not resp.ok:
+		if _looks_like_missing_table(str(resp.get("error", ""))):
+			_announcements_available = false
+			if not _announcements_missing_logged:
+				_announcements_missing_logged = true
+				_log("announcements table not found — run supabase/migration-announcements.sql to enable broadcasts.")
+		return
+	if typeof(resp.data) != TYPE_ARRAY or (resp.data as Array).is_empty():
+		return
+	var row: Variant = (resp.data as Array)[0]
+	if typeof(row) != TYPE_DICTIONARY:
+		return
+	var id := str(row.get("id", ""))
+	var msg := str(row.get("message", ""))
+	if id.is_empty() or msg.is_empty() or id == _last_announcement_id:
+		return
+	_last_announcement_id = id
+	announcement_received.emit(id, msg)
+
+## Admin broadcast (also reachable via REST for dev tooling — see README).
+func create_announcement(message: String) -> bool:
+	if not _online or not _announcements_available:
+		return false
+	var resp := await _rest_request(HTTPClient.METHOD_POST, "/rest/v1/announcements",
+		{"message": message})
+	if not resp.ok:
+		_log("create_announcement failed: %s" % resp.error)
+		return false
+	_log("Broadcast announcement: %s" % message)
+	_announce_poll_t = ANNOUNCE_POLL_SEC # pick it up on the next frame
+	return true
+
+## Locally-persisted id of the last announcement the player tapped OK on
+## (localStorage on web so it survives reloads; user:// file on desktop).
+func seen_announcement_id() -> String:
+	if OS.has_feature("web"):
+		var raw: Variant = JavaScriptBridge.eval(
+			"localStorage.getItem('creature_announcement_seen') || ''", true)
+		return str(raw) if typeof(raw) == TYPE_STRING else ""
+	if not FileAccess.file_exists(ANNOUNCE_SEEN_PATH):
+		return ""
+	var f := FileAccess.open(ANNOUNCE_SEEN_PATH, FileAccess.READ)
+	return f.get_as_text().strip_edges() if f else ""
+
+func mark_announcement_seen(id: String) -> void:
+	if id.is_empty():
+		return
+	if OS.has_feature("web"):
+		JavaScriptBridge.eval(
+			"localStorage.setItem('creature_announcement_seen', '%s')" % id, true)
+		return
+	var f := FileAccess.open(ANNOUNCE_SEEN_PATH, FileAccess.WRITE)
+	if f:
+		f.store_string(id)
 
 ## ADMIN: delete every money object (all tiers) for everyone. Returns the count.
 func admin_delete_all_money() -> int:

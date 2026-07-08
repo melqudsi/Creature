@@ -32,6 +32,7 @@ Run in the Supabase SQL Editor (Dashboard → SQL → New query):
 | [`supabase/migration-world-objects.sql`](supabase/migration-world-objects.sql) | Adds `public.world_objects` (shared/persistent interactive objects) | **applied** |
 | [`supabase/migration-money.sql`](supabase/migration-money.sql) | Adds `world_objects.owner_name` (Slice 2 money labels) | **RUN for owner labels** |
 | [`supabase/migration-pattern-lock.sql`](supabase/migration-pattern-lock.sql) | Adds `creatures.pattern_hash` (Slice 7 pattern-lock login/register) | **RUN for pattern auth** |
+| [`supabase/migration-announcements.sql`](supabase/migration-announcements.sql) | Adds `public.announcements` (developer broadcasts, seeds a "Test" row) | **RUN for announcements** |
 
 Until `migration-world-objects.sql` is run, interactive objects stay client-local (no cross-player sync / persistence), but the game still works. Without `migration-pattern-lock.sql`, login/register still works but pattern verification is skipped gracefully (client detects missing column).
 
@@ -177,7 +178,30 @@ Phase 4 + mobile input fixes (`build 2026-07-03i`):
 
 ---
 
-## Trucks, ATMs, respawn rules, perf (`builds 2026-07-06d`–`g`, current)
+## Big Houses, menu, announcements (`build 2026-07-07a`, current)
+
+Vault storage endgame + HUD reshuffle + developer broadcasts:
+
+### Big House (safe house upgrade)
+
+- **Upgrade** — near your claimed safe house an **"Upgrade House"** button always shows. Costs **2 vaults** (dropped near the house and/or carried); insufficient funds toasts *"You need 2 vaults for this mane"*. On purchase the two vaults are consumed, a smoke puff plays (synced), and the house rebuilds as a **Big House**: two stories, American gable roof, front door, and **4 dark windows**.
+- **Vault storage** — drop a vault near your own Big House and it **auto-deposits** (up to 4); one window per stored vault glows **gold with a light beam** — visible to every player (theft bait). At max capacity dropped vaults just sit there.
+- **Withdraw** — a **"Take Vault"** button appears near your own loaded Big House **only while in a form that can haul a vault** (truck/bus); it decrements the count and puts a carried vault on you.
+- **Robbery** — near another player's loaded Big House you get **"Rob"**: one stored vault is removed and **4 money stacks scatter around the outside**. Each Big House can be robbed **once per day** (`robbed:<unix>:<name>` marker); the owner gets a toast (*"X robbed your Big House!"*) when the robbery syncs to them.
+- **Unclaim guard** — a Big House refuses to unclaim while vaults are stored. An empty unclaimed Big House keeps its upgrade and can be claimed by anyone.
+- **House facing** — ALL houses (regular + Big) now snap to face **south or east** (tile-hashed, stable across clients) so the front door/windows always face the camera; pop-out snaps a worn house to the nearest allowed facing. Random 4-way mesh rotation removed.
+- **Owned-house immunity** — you never crash into a house **you own** (any vehicle form).
+- Data model: all state rides the existing `world_objects.owner_name` pipe segments (`home:x,y|safe:NAME|big|vaults:N|robbed:<unix>:<NAME>`) — **no schema change**.
+
+### Menu + announcements
+
+- **Top-left menu (≡)** — dropdown with **Sign Out** (replaces the top-right X) and **Admin** (MOE only; replaces the standalone admin button).
+- **Announcements** — new `public.announcements` table ([`supabase/migration-announcements.sql`](supabase/migration-announcements.sql) — **run it in the Supabase SQL editor**; seeds a first "Test" row). Clients poll the newest row every ~30s: unseen announcements pop a centered panel with **OK** (mid-session too); OK stores the id locally (web `localStorage` / desktop `user://`) so it never auto-pops again. A **loudspeaker button** (top-right) re-opens the latest announcement anytime.
+- **Broadcasting** — admin panel has a message field + **broadcast** button. Dev path without the game: `POST {SUPABASE_URL}/rest/v1/announcements` with `apikey`/`Authorization: Bearer <anon key>` headers and body `{"message":"..."}` (PowerShell: `Invoke-RestMethod -Method Post -Uri "$url/rest/v1/announcements" -Headers @{apikey=$k; Authorization="Bearer $k"; "Content-Type"="application/json"} -Body '{"message":"Hello Memphis"}'`).
+
+---
+
+## Trucks, ATMs, respawn rules, perf (`builds 2026-07-06d`–`g`)
 
 Second July 6 pass — new Truck form, ATM machines, reseed overhaul, NPC upgrades, and a big perf fix:
 
@@ -606,7 +630,7 @@ Or from the editor:
 
 ### Build stamp + PWA cache-busting
 
-- `GameConfig.BUILD_ID` (currently **`build 2026-07-06g`**) is shown bottom-right in the web shell and on the onboarding screen so users can confirm they loaded a fresh build. **Bump this string on every new build you ship** (and match the `#build-stamp` literal in `creature-godot/web/custom_shell.html`) whenever you re-export the web build.
+- `GameConfig.BUILD_ID` (currently **`build 2026-07-07a`**) is shown bottom-right in the web shell and on the onboarding screen so users can confirm they loaded a fresh build. **Bump this string on every new build you ship** (and match the `#build-stamp` literal in `creature-godot/web/custom_shell.html`) whenever you re-export the web build.
 - Godot's default service worker is cache-first and never `skipWaiting()`s, which caused the recurring "old cached build keeps loading" bug. `custom_shell.html` now runs `setupServiceWorkerAutoUpdate()`: on reload it calls `registration.update()`, and on `updatefound` posts `'update'` to the new worker → `controllerchange` triggers a one-time reload. It is skipped on the dev-server path (which already unregisters SWs).
 
 | Export setting | Value | Why |
@@ -724,6 +748,7 @@ Use `class_name Creature` and typed references. Generic `Node3D` + `grid_pos` ca
 - [x] Slice 7 — pattern-lock login/register, safe houses, steal, respawn choice, exit/idle logout, pyramid resize, vehicle wreck FX, decoupled position sync, mobile tap-to-move fixes (`build 2026-07-03i`)
 - [x] Gameplay polish — form speed bumps, CREATURE tab title, all-region money seed/floor, no carry slowdown, synced lethal explosions + chain reaction, propane vehicle-only contact, pop-out object-stays fix, money ownership on pickup/combine (`build 2026-07-06c`)
 - [x] Trucks + ATMs + respawn overhaul — Truck form (bed cargo, crash dominance, mixed vault+bag/stack), ATMs with daily reseed + "ATM" sign, 4-vault bus roof, randomized prop reseeds, NPC-vs-NPC crashes, seed spreading/off-road parking/random parked rotation, 64 humans, CCW U-turns, turn-slop cap, humans kill-check perf fix (`builds 2026-07-06d`–`g`)
+- [x] Big Houses + menu + announcements — 2-vault safe-house upgrade, 4-vault storage with glowing windows, auto-deposit/withdraw, once-a-day robbery with scattered stacks + owner toast, south/east house facing snap, owned-house crash immunity, top-left menu (Sign Out + MOE-only Admin), `public.announcements` broadcasts with popup/OK/loudspeaker (`build 2026-07-07a`)
 
 ---
 

@@ -45,6 +45,8 @@ static func build(visual: String, tint: Color = Color(0.6, 0.6, 0.6)) -> Node3D:
 			return _build_cone()
 		"building":
 			return _build_building()
+		"big_house":
+			return _build_big_house()
 		"campus":
 			return _build_campus_hall()
 		"tower":
@@ -214,8 +216,95 @@ static func _build_building() -> Node3D:
 	var door_mesh := BoxMesh.new()
 	door_mesh.size = Vector3(0.28, 0.45, 0.04)
 	root.add_child(_mesh_node(door_mesh, _mat(Color(0.23, 0.13, 0.07)), Vector3(0, 0.225, -0.65)))
-	root.rotation.y = [0.0, PI * 0.5, PI, PI * 1.5][randi() % 4]
+	# No random rotation: houses are snapped to face south or east by the
+	# spawner so the door (and Big House windows) always face the camera.
 	return root
+
+## Upgraded safe house: two stories, an American gable roof, a front door, and
+## FOUR dark windows on the front face. Windows glow gold (with light beams)
+## per stored vault — see WorldObject._apply_window_glow().
+static func _build_big_house() -> Node3D:
+	var root := Node3D.new()
+	var wall := _mat(Color.from_hsv(randf_range(0.07, 0.13), 0.2, 0.86), 0.88)
+	var trim := _mat(Color(0.95, 0.94, 0.9), 0.85)
+	var body := BoxMesh.new()
+	body.size = Vector3(1.55, 1.6, 1.3)
+	root.add_child(_mesh_node(body, wall, Vector3(0, 0.8, 0)))
+	# Gable roof: triangular prism, ridge running along X so the slants face
+	# the camera-visible south side.
+	var roof := PrismMesh.new()
+	roof.size = Vector3(1.5, 0.72, 1.8)
+	var roof_mi := _mesh_node(roof, _mat(Color(0.38, 0.11, 0.08), 0.75), Vector3(0, 1.96, 0))
+	roof_mi.rotation.y = PI * 0.5
+	root.add_child(roof_mi)
+	# Eave board under the roof line.
+	var eave := BoxMesh.new()
+	eave.size = Vector3(1.7, 0.08, 1.45)
+	root.add_child(_mesh_node(eave, trim, Vector3(0, 1.62, 0)))
+	var chimney := BoxMesh.new()
+	chimney.size = Vector3(0.2, 0.6, 0.2)
+	root.add_child(_mesh_node(chimney, _mat(Color(0.22, 0.12, 0.1)), Vector3(0.5, 2.1, 0.3)))
+	# Front door (front face is -Z; the spawner rotates it toward the camera).
+	var door := BoxMesh.new()
+	door.size = Vector3(0.3, 0.52, 0.05)
+	root.add_child(_mesh_node(door, _mat(Color(0.24, 0.13, 0.07)), Vector3(0, 0.26, -0.66)))
+	var knob := SphereMesh.new()
+	knob.radius = 0.025
+	knob.height = 0.05
+	root.add_child(_mesh_node(knob, _mat(Color(0.85, 0.7, 0.3), 0.3, 0.8), Vector3(0.1, 0.28, -0.69)))
+	# Four vault-indicator windows: 2 per story, flanking the door column.
+	var windows: Array = []
+	var slots := [
+		Vector2(-0.45, 0.62), Vector2(0.45, 0.62),
+		Vector2(-0.45, 1.22), Vector2(0.45, 1.22),
+	]
+	for i in slots.size():
+		var s: Vector2 = slots[i]
+		var win := Node3D.new()
+		win.name = "Window%d" % i
+		win.position = Vector3(s.x, s.y, -0.66)
+		var frame := BoxMesh.new()
+		frame.size = Vector3(0.36, 0.42, 0.03)
+		win.add_child(_mesh_node(frame, trim, Vector3(0, 0, 0.005)))
+		var pane_mesh := BoxMesh.new()
+		pane_mesh.size = Vector3(0.3, 0.36, 0.04)
+		var pane := _mesh_node(pane_mesh, big_house_window_material(false), Vector3.ZERO)
+		pane.name = "Pane"
+		pane.set_meta("no_fade", true)
+		win.add_child(pane)
+		# Golden light beam shining out of a lit window (hidden until a vault
+		# is stored). Angled slightly downward like light spilling out.
+		var beam_mesh := BoxMesh.new()
+		beam_mesh.size = Vector3(0.3, 0.34, 1.2)
+		var beam := _mesh_node(beam_mesh, _beam_material(), Vector3(0, -0.12, -0.62))
+		beam.name = "Beam"
+		beam.rotation.x = -0.22
+		beam.visible = false
+		beam.set_meta("no_fade", true)
+		win.add_child(beam)
+		root.add_child(win)
+		windows.append(win)
+	root.set_meta("bh_windows", windows)
+	return root
+
+static func big_house_window_material(lit: bool) -> StandardMaterial3D:
+	if lit:
+		var m := _mat(Color(1.0, 0.85, 0.32), 0.35)
+		m.emission_enabled = true
+		m.emission = Color(1.0, 0.74, 0.18)
+		m.emission_energy_multiplier = 1.8
+		return m
+	# Dark, slightly reflective glass.
+	return _mat(Color(0.07, 0.09, 0.13), 0.25, 0.3)
+
+static func _beam_material() -> StandardMaterial3D:
+	var m := _mat(Color(1.0, 0.82, 0.28, 0.34), 0.2)
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.emission_enabled = true
+	m.emission = Color(1.0, 0.78, 0.22)
+	m.emission_energy_multiplier = 1.4
+	return m
 
 ## University of Memphis hall/dorm: multi-story red-brick block with limestone
 ## trim, rows of window panes, a flat parapet roof, and a columned entrance —

@@ -888,11 +888,26 @@ func _spawn_world_object(key: String, world_pos: Vector3, parent: Node3D) -> Wor
 	# (Pop-out overwrites this with the player's actual parked heading.)
 	if FormDefs.is_vehicle(obj.form_key):
 		obj.rotation.y = _parked_yaw(world_pos)
+	elif obj.form_key == FormDefs.HOUSE:
+		obj.rotation.y = house_yaw(world_pos)
 	return obj
 
 func _parked_yaw(world_pos: Vector3) -> float:
 	var t := GameConfig.world_to_tile(world_pos)
 	return float(absi(hash(t)) % 6283) * 0.001
+
+## Houses snap to face SOUTH (yaw PI) or EAST (yaw -PI/2) — the two faces the
+## camera can see — so the front door and Big House vault windows always show.
+## Tile-hashed so every client agrees.
+static func house_yaw(world_pos: Vector3) -> float:
+	var t := GameConfig.world_to_tile(world_pos)
+	return PI if absi(hash(t)) % 2 == 0 else -PI * 0.5
+
+## Nearest camera-visible facing for a given free rotation (pop-out snap).
+static func snap_house_yaw(yaw: float) -> float:
+	var south := absf(wrapf(yaw - PI, -PI, PI))
+	var east := absf(wrapf(yaw + PI * 0.5, -PI, PI))
+	return PI if south <= east else -PI * 0.5
 
 # ---------------------------------------------------------------------------
 # Shared / persistent interactive objects (Fix 3).
@@ -1403,19 +1418,20 @@ func _row_owner_name(row: Dictionary) -> String:
 ## Spawn a freshly-combined money object into the world for immediate feedback.
 ## If `object_id` is set (an online create returned a row id), it's tracked in the
 ## shared set so the next poll matches it by id instead of duplicating it.
-func spawn_money_object(type_key: String, world_pos: Vector3, owner_name: String, object_id: String = "") -> void:
+func spawn_money_object(type_key: String, world_pos: Vector3, owner_name: String, object_id: String = "") -> WorldObject:
 	_ensure_objects_root()
 	# Don't double-spawn if a poll already materialized this id.
 	if not object_id.is_empty() and _shared_objects.has(object_id):
 		var existing: WorldObject = _shared_objects[object_id]
 		if is_instance_valid(existing):
 			existing.set_money_owner(owner_name)
-			return
+			return existing
 	var obj := _spawn_world_object(type_key, world_pos, _objects_root)
 	obj.object_id = object_id
 	obj.set_money_owner(owner_name)
 	if not object_id.is_empty():
 		_shared_objects[object_id] = obj
+	return obj
 
 ## A claimed NPC vehicle becomes a real world object (possessed by the claimer).
 ## Spawned consumed-side-up by the caller; tracked once the create returns an id.
