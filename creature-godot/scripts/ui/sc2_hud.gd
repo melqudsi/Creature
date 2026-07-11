@@ -41,7 +41,7 @@ var _announce_input: LineEdit
 var _menu_panel: PanelContainer
 var _menu_admin_btn: Button
 ## Announcement popup + latest broadcast ({"id", "message"}).
-var _announce_panel: Panel
+var _announce_panel: PanelContainer
 var _announce_label: Label
 var _latest_announcement: Dictionary = {}
 
@@ -122,14 +122,11 @@ func _build_menu_dropdown() -> void:
 # ---------------------------------------------------------------------------
 
 func _build_announcement_popup() -> void:
-	_announce_panel = Panel.new()
+	# PanelContainer so the popup grows to fit the message (fixed wrap width,
+	# any height); _center_announcement_panel() re-centers it after layout.
+	_announce_panel = PanelContainer.new()
 	_announce_panel.name = "AnnouncementPanel"
 	_announce_panel.visible = false
-	_announce_panel.set_anchors_preset(Control.PRESET_CENTER)
-	_announce_panel.offset_left = -270.0
-	_announce_panel.offset_top = -150.0
-	_announce_panel.offset_right = 270.0
-	_announce_panel.offset_bottom = 150.0
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.02, 0.03, 0.045, 0.94)
 	style.border_color = HELP_GOLD
@@ -137,38 +134,46 @@ func _build_announcement_popup() -> void:
 	style.set_corner_radius_all(12)
 	_announce_panel.add_theme_stylebox_override("panel", style)
 	add_child(_announce_panel)
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 26)
+	margin.add_theme_constant_override("margin_top", 18)
+	margin.add_theme_constant_override("margin_right", 26)
+	margin.add_theme_constant_override("margin_bottom", 18)
+	_announce_panel.add_child(margin)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 14)
+	margin.add_child(vb)
 	var title := Label.new()
 	title.text = "ANNOUNCEMENT"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.add_theme_font_size_override("font_size", 24)
 	title.modulate = HELP_GOLD
-	title.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	title.offset_top = 16.0
-	title.offset_bottom = 48.0
-	_announce_panel.add_child(title)
+	vb.add_child(title)
 	_announce_label = Label.new()
 	_announce_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_announce_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_announce_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_announce_label.custom_minimum_size = Vector2(500, 0)
 	_announce_label.add_theme_font_size_override("font_size", 22)
 	_announce_label.modulate = Color(1.0, 0.96, 0.82)
-	_announce_label.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_announce_label.offset_left = 24.0
-	_announce_label.offset_top = 52.0
-	_announce_label.offset_right = -24.0
-	_announce_label.offset_bottom = -76.0
-	_announce_panel.add_child(_announce_label)
+	vb.add_child(_announce_label)
 	var ok := Button.new()
 	ok.text = "OK"
 	ok.custom_minimum_size = Vector2(140, 52)
 	ok.focus_mode = Control.FOCUS_NONE
-	ok.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
-	ok.offset_left = -70.0
-	ok.offset_top = -66.0
-	ok.offset_right = 70.0
-	ok.offset_bottom = -14.0
+	ok.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	ok.pressed.connect(_on_announcement_ok)
-	_announce_panel.add_child(ok)
+	vb.add_child(ok)
+
+## Shrink the popup to its (new) content size, then center it on screen.
+## Runs a frame after the text changes so the wrapped-label height is final.
+func _center_announcement_panel() -> void:
+	if _announce_panel == null or not _announce_panel.visible:
+		return
+	_announce_panel.reset_size()
+	await get_tree().process_frame
+	if _announce_panel == null or not _announce_panel.visible:
+		return
+	_announce_panel.position = (size - _announce_panel.size) * 0.5
 
 func _on_announcement_received(id: String, message: String) -> void:
 	_latest_announcement = {"id": id, "message": message}
@@ -183,6 +188,7 @@ func _show_announcement() -> void:
 		return
 	_announce_label.text = str(_latest_announcement.get("message", ""))
 	_announce_panel.visible = true
+	_center_announcement_panel()
 
 func _on_announcement_ok() -> void:
 	_announce_panel.visible = false
