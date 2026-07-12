@@ -1,5 +1,7 @@
 # Creature
 
+> **🤖 AI agents:** start at [`_agent_index.md`](_agent_index.md) — it routes you to focused topic docs in [`docs/`](docs/) so you don't need to read this whole file. This README is the full historical record (search it; don't read linearly).
+
 Multiplayer **alien shapeshifting** sandbox (pivot). Players spawn as aliens at a landfill, shapeshift into Memphis world objects (Rusty Altima, Magnolia Tree, Pothole, Propane Tank…), and kill/counter each other in funny ways. The old Tamagotchi creature field is the technical base being pivoted from.
 
 > **📄 GAME DESIGN — READ FIRST:** the authoritative design is the PDF in the repo root: **`Multiplayer Alien Shapeshifting Prototype.pdf`**. It defines the pitch, forms, the kill/collision matrix, the money system, shapeshift rules, and the phased build order. Future agents should read it before changing gameplay. (`_moe_brainstorming.txt` holds looser notes.)
